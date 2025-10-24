@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,6 +10,7 @@ import {
   Modal,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Task {
   id: string;
@@ -21,9 +22,10 @@ interface Task {
 interface DashboardProps {
   onLogout: () => void;
   onNavigateToFitness: () => void;
+  onNavigateToMental: () => void;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [tasks, setTasks] = useState<Task[]>([
@@ -37,29 +39,89 @@ export default function Dashboard({ onLogout, onNavigateToFitness }: DashboardPr
     { id: '8', title: 'Practice deep breathing exercises', completed: false, category: 'emotional' },
   ]);
 
+  // Load all data from AsyncStorage on component mount
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      // Load tasks
+      const savedTasks = await AsyncStorage.getItem('dashboardTasks');
+      if (savedTasks) {
+        const parsedTasks = JSON.parse(savedTasks);
+        console.log('Loading dashboard tasks:', parsedTasks);
+        setTasks(parsedTasks);
+      }
+
+      // Load check-in status
+      const savedCheckIn = await AsyncStorage.getItem('dailyCheckIn');
+      if (savedCheckIn) {
+        const checkInData = JSON.parse(savedCheckIn);
+        const today = new Date().toDateString();
+        if (checkInData.date === today) {
+          console.log('Loading check-in status:', checkInData);
+          setIsCheckedIn(checkInData.checkedIn);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    }
+  };
+
+  const saveTasks = async (tasksToSave: Task[]) => {
+    try {
+      console.log('Saving dashboard tasks:', tasksToSave);
+      await AsyncStorage.setItem('dashboardTasks', JSON.stringify(tasksToSave));
+      console.log('Dashboard tasks saved successfully');
+    } catch (error) {
+      console.error('Error saving dashboard tasks:', error);
+    }
+  };
+
+  const saveCheckInStatus = async (checkedIn: boolean) => {
+    try {
+      const checkInData = {
+        date: new Date().toDateString(),
+        checkedIn: checkedIn,
+        timestamp: new Date().toISOString()
+      };
+      console.log('Saving check-in status:', checkInData);
+      await AsyncStorage.setItem('dailyCheckIn', JSON.stringify(checkInData));
+      console.log('Check-in status saved successfully');
+    } catch (error) {
+      console.error('Error saving check-in status:', error);
+    }
+  };
+
   const quoteOfTheDay = "The only bad workout is the one that didn't happen. Every step forward is progress, no matter how small.";
 
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (!isCheckedIn) {
       setIsCheckedIn(true);
+      await saveCheckInStatus(true);
       Alert.alert('Success!', 'You\'ve checked in for today! Keep up the great work!');
     } else {
       Alert.alert('Already Checked In', 'You\'ve already checked in today. Come back tomorrow!');
     }
   };
 
-  const toggleTask = (taskId: string) => {
-    setTasks(tasks.map(task => 
+  const toggleTask = async (taskId: string) => {
+    const updatedTasks = tasks.map(task => 
       task.id === taskId ? { ...task, completed: !task.completed } : task
-    ));
+    );
+    setTasks(updatedTasks);
+    await saveTasks(updatedTasks);
   };
 
-  const completeTaskByTitle = (taskTitle: string) => {
-    setTasks(tasks.map(task => 
+  const completeTaskByTitle = async (taskTitle: string) => {
+    const updatedTasks = tasks.map(task => 
       task.title.toLowerCase().includes(taskTitle.toLowerCase()) 
         ? { ...task, completed: true } 
         : task
-    ));
+    );
+    setTasks(updatedTasks);
+    await saveTasks(updatedTasks);
   };
 
   const getTasksByCategory = (category: Task['category']) => {
@@ -92,9 +154,9 @@ export default function Dashboard({ onLogout, onNavigateToFitness }: DashboardPr
 
   const getCategoryTitle = (category: Task['category']) => {
     const titles = {
-      fitness: 'Fitness',
-      mindset: 'Mindset',
-      spiritual: 'Spiritual', 
+      fitness: 'Physical',
+      mindset: 'Mental',
+      spiritual: 'Spiritual',
       emotional: 'Emotional'
     };
     return titles[category];
@@ -248,6 +310,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness }: DashboardPr
               onPress={() => {
                 if (category === 'fitness') {
                   onNavigateToFitness();
+                } else if (category === 'mindset') {
+                  onNavigateToMental();
                 } else {
                   setSelectedCategory(category);
                 }
@@ -542,32 +606,39 @@ const styles = StyleSheet.create({
   },
   cornerButton: {
     position: 'absolute',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   cornerButtonText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     textAlign: 'center',
+    lineHeight: 13,
+    paddingHorizontal: 2,
   },
   cornerButtonProgress: {
     color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
+    fontSize: 9,
+    fontWeight: '700',
     textAlign: 'center',
-    marginTop: 2,
+    marginTop: 3,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   // Task Modal
   modalOverlay: {

@@ -15,10 +15,11 @@ import { StatusBar } from 'expo-status-bar';
 import Dashboard from './Dashboard';
 import WorkoutScreen from './WorkoutScreen';
 import FitnessScreen from './FitnessScreen';
+import MentalScreen from './MentalScreen';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental'>('login');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -78,6 +79,10 @@ export default function App() {
     setCurrentScreen('fitness');
   };
 
+  const handleNavigateToMental = () => {
+    setCurrentScreen('mental');
+  };
+
   const handleBackToDashboard = () => {
     setCurrentScreen('dashboard');
   };
@@ -95,9 +100,17 @@ export default function App() {
     }} />;
   }
 
+  // Show Mental Screen
+  if (isLoggedIn && currentScreen === 'mental') {
+    return <MentalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+      // This will be handled by the Dashboard component
+      console.log('Task completed:', taskTitle);
+    }} />;
+  }
+
   // Show Dashboard if logged in
   if (isLoggedIn && currentScreen === 'dashboard') {
-    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} />;
+    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} />;
   }
 
   // Show Login Screen
