@@ -82,7 +82,28 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   const handleExerciseComplete = () => {
     if (currentExerciseIndex < program.exercises.length - 1) {
       setCurrentExerciseIndex(currentExerciseIndex + 1);
+      // Reset inputs for the next exercise
+      resetInputsForNextExercise();
     }
+  };
+
+  const resetInputsForNextExercise = () => {
+    // Reset all sets for the next exercise to default values
+    setExerciseData(prev => prev.map((exercise, index) => {
+      if (index === currentExerciseIndex + 1) {
+        return {
+          ...exercise,
+          sets: exercise.sets.map((set, setIndex) => ({
+            setNumber: setIndex + 1,
+            reps: exercise.reps,
+            weight: 0,
+            restTime: exercise.restTime || 60,
+            completed: false
+          }))
+        };
+      }
+      return exercise;
+    }));
   };
 
   const handleWorkoutComplete = () => {
@@ -254,8 +275,75 @@ interface SetTrackerProps {
 
 const SetTracker = ({ set, setIndex, onComplete }: SetTrackerProps) => {
   // All hooks must be called before any conditional returns
-  const [weight, setWeight] = useState(set?.weight?.toString() || '0');
-  const [reps, setReps] = useState(set?.reps?.toString() || '0');
+  const [weight, setWeight] = useState(() => {
+    const weightValue = set?.weight;
+    return weightValue !== undefined && weightValue !== null ? weightValue.toString() : '0';
+  });
+  const [reps, setReps] = useState(() => {
+    const repsValue = set?.reps;
+    return repsValue !== undefined && repsValue !== null ? repsValue.toString() : '0';
+  });
+  const [weightFocused, setWeightFocused] = useState(false);
+  const [repsFocused, setRepsFocused] = useState(false);
+
+  // Update state when set data changes
+  useEffect(() => {
+    if (set) {
+      const weightValue = set.weight;
+      const repsValue = set.reps;
+      
+      if (weightValue !== undefined && weightValue !== null) {
+        setWeight(weightValue.toString());
+      }
+      if (repsValue !== undefined && repsValue !== null) {
+        setReps(repsValue.toString());
+      }
+    }
+  }, [set?.weight, set?.reps]);
+
+  const handleWeightChange = (text: string) => {
+    if (text === '0' && weightFocused) {
+      setWeight('');
+    } else {
+      setWeight(text);
+    }
+  };
+
+  const handleRepsChange = (text: string) => {
+    if (text === '0' && repsFocused) {
+      setReps('');
+    } else {
+      setReps(text);
+    }
+  };
+
+  const handleWeightFocus = () => {
+    setWeightFocused(true);
+    if (weight === '0') {
+      setWeight('');
+    }
+  };
+
+  const handleRepsFocus = () => {
+    setRepsFocused(true);
+    if (reps === '0') {
+      setReps('');
+    }
+  };
+
+  const handleWeightBlur = () => {
+    setWeightFocused(false);
+    if (weight === '') {
+      setWeight('0');
+    }
+  };
+
+  const handleRepsBlur = () => {
+    setRepsFocused(false);
+    if (reps === '') {
+      setReps('0');
+    }
+  };
 
   const handleComplete = () => {
     if (!weight || !reps) {
@@ -272,6 +360,11 @@ const SetTracker = ({ set, setIndex, onComplete }: SetTrackerProps) => {
     return null;
   }
 
+  // Safety check for set properties
+  if (set.weight === undefined || set.reps === undefined) {
+    return null;
+  }
+
   return (
     <View style={[styles.setTracker, set.completed && styles.setCompleted]}>
       <Text style={styles.setNumber}>Set {set.setNumber}</Text>
@@ -284,7 +377,9 @@ const SetTracker = ({ set, setIndex, onComplete }: SetTrackerProps) => {
             keyboardType="numeric"
             placeholder="0"
             value={weight}
-            onChangeText={setWeight}
+            onChangeText={handleWeightChange}
+            onFocus={handleWeightFocus}
+            onBlur={handleWeightBlur}
             editable={!set.completed}
           />
         </View>
@@ -296,7 +391,9 @@ const SetTracker = ({ set, setIndex, onComplete }: SetTrackerProps) => {
             keyboardType="numeric"
             placeholder={set.reps.toString()}
             value={reps}
-            onChangeText={setReps}
+            onChangeText={handleRepsChange}
+            onFocus={handleRepsFocus}
+            onBlur={handleRepsBlur}
             editable={!set.completed}
           />
         </View>
