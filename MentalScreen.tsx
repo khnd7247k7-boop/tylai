@@ -210,11 +210,31 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
   const loadMentalExercises = async () => {
     try {
       const savedExercises = await AsyncStorage.getItem('mentalExercises');
+      const lastResetDate = await AsyncStorage.getItem('mentalExercisesLastReset');
+      const today = new Date().toDateString();
+      
       console.log('Loading mental exercises:', savedExercises);
+      console.log('Last reset date:', lastResetDate);
+      console.log('Today:', today);
+      
       if (savedExercises) {
         const parsedExercises = JSON.parse(savedExercises);
         console.log('Parsed mental exercises:', parsedExercises);
-        setMentalExercises(parsedExercises);
+        
+        // If it's a new day, reset all exercise completion status
+        if (lastResetDate !== today) {
+          console.log('New day detected - resetting exercise completion status');
+          const resetExercises = parsedExercises.map(exercise => ({
+            ...exercise,
+            completed: false,
+            completedAt: undefined
+          }));
+          setMentalExercises(resetExercises);
+          await saveMentalExercises(resetExercises);
+          await AsyncStorage.setItem('mentalExercisesLastReset', today);
+        } else {
+          setMentalExercises(parsedExercises);
+        }
       }
     } catch (error) {
       console.error('Error loading mental exercises:', error);
@@ -402,10 +422,15 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
       <View style={styles.tabContent}>
         <View style={styles.progressOverview}>
           <Text style={styles.sectionTitle}>Mental Wellness Progress</Text>
+          <View style={styles.dailyResetInfo}>
+            <Text style={styles.dailyResetText}>
+              💡 Exercise progress resets daily to help you track your daily mental wellness routine
+            </Text>
+          </View>
           <View style={styles.overallProgress}>
             <Text style={styles.progressPercentage}>{stats.percentage}%</Text>
             <Text style={styles.progressText}>
-              {stats.completed} of {stats.total} exercises completed
+              {stats.completed} of {stats.total} exercises completed today
             </Text>
           </View>
         </View>
@@ -867,5 +892,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
     paddingVertical: 20,
+  },
+  dailyResetInfo: {
+    backgroundColor: 'rgba(78, 205, 196, 0.1)',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4ECDC4',
+  },
+  dailyResetText: {
+    fontSize: 14,
+    color: '#4ECDC4',
+    textAlign: 'center',
+    lineHeight: 20,
+    fontWeight: '500',
   },
 });
