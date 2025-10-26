@@ -176,7 +176,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             style={styles.input}
             value={profile.height}
             onChangeText={(text) => setProfile({ ...profile, height: text })}
-            placeholder="e.g., 5'8\" or 173cm"
+            placeholder="e.g., 5 feet 8 inches or 173cm"
             editable={isEditingProfile}
           />
         </View>
