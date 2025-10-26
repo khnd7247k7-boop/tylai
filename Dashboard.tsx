@@ -30,6 +30,7 @@ interface DashboardProps {
 export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
+  const [manualQuoteIndex, setManualQuoteIndex] = useState<number | null>(null);
   const [tasks, setTasks] = useState<Task[]>([
     { id: '1', title: '30-minute cardio workout', completed: false, category: 'fitness' },
     { id: '2', title: 'Strength training - upper body', completed: false, category: 'fitness' },
@@ -96,7 +97,94 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     }
   };
 
-  const quoteOfTheDay = "The only bad workout is the one that didn't happen. Every step forward is progress, no matter how small.";
+  // Comprehensive quote collection for daily rotation
+  const quotes = [
+    // Fitness & Health Quotes
+    "The only bad workout is the one that didn't happen. Every step forward is progress, no matter how small.",
+    "Your body can do it. It's your mind that you have to convince.",
+    "The groundwork for all happiness is good health.",
+    "Take care of your body. It's the only place you have to live.",
+    "Health is not valued until sickness comes.",
+    "The first wealth is health.",
+    "Exercise is king. Nutrition is queen. Put them together and you've got a kingdom.",
+    "Don't wish for it, work for it.",
+    "Success isn't always about greatness. It's about consistency.",
+    "The pain you feel today is the strength you feel tomorrow.",
+    
+    // Mental Wellness Quotes
+    "You are not your thoughts. You are the observer of your thoughts.",
+    "The mind is everything. What you think you become.",
+    "Peace comes from within. Do not seek it without.",
+    "Your mental health is a priority. Your happiness is essential.",
+    "It's okay to not be okay. It's okay to ask for help.",
+    "You don't have to be perfect to be amazing.",
+    "Progress, not perfection.",
+    "Self-care is not selfish. It's essential.",
+    "You are enough, just as you are.",
+    "The present moment is the only time over which we have dominion.",
+    
+    // Emotional Wellness Quotes
+    "Feelings are just visitors, let them come and go.",
+    "Your emotions are valid. Your reactions are your responsibility.",
+    "Healing is not linear. It's okay to have setbacks.",
+    "Vulnerability is not weakness; it's our greatest measure of courage.",
+    "You are allowed to feel your feelings.",
+    "Emotional pain is not a sign of weakness. It's a sign of being human.",
+    "The way you treat yourself sets the standard for others.",
+    "You don't have to be positive all the time. It's perfectly okay to feel sad.",
+    "Your feelings are temporary, but your strength is permanent.",
+    "It's okay to take breaks. It's okay to rest. It's okay to heal.",
+    
+    // Motivation & Growth Quotes
+    "The only way to do great work is to love what you do.",
+    "Believe you can and you're halfway there.",
+    "Don't be afraid to give up the good to go for the great.",
+    "Success is not final, failure is not fatal: it is the courage to continue that counts.",
+    "The future belongs to those who believe in the beauty of their dreams.",
+    "You are never too old to set another goal or to dream a new dream.",
+    "The only impossible journey is the one you never begin.",
+    "What lies behind us and what lies before us are tiny matters compared to what lies within us.",
+    "Life is 10% what happens to you and 90% how you react to it.",
+    "The way to get started is to quit talking and begin doing.",
+    
+    // Mindfulness & Spirituality Quotes
+    "Be present in all things and thankful for all things.",
+    "The present moment is the only time over which we have dominion.",
+    "Mindfulness is about being fully awake in our lives.",
+    "Wherever you are, be there totally.",
+    "The mind is like water. When agitated, it becomes difficult to see. When calm, everything becomes clear.",
+    "Peace is the result of retraining your mind to process life as it is, rather than as you think it should be.",
+    "The best way to take care of the future is to take care of the present moment.",
+    "You have power over your mind - not outside events. Realize this, and you will find strength.",
+    "The soul always knows what to do to heal itself. The challenge is to silence the mind.",
+    "In the end, only three things matter: how much you loved, how gently you lived, and how gracefully you let go.",
+  ];
+
+  // Get quote of the day based on current date or manual selection
+  const getQuoteOfTheDay = () => {
+    if (manualQuoteIndex !== null) {
+      return quotes[manualQuoteIndex];
+    }
+    
+    const today = new Date();
+    const startOfYear = new Date(today.getFullYear(), 0, 1);
+    const dayOfYear = Math.floor((today.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const quoteIndex = dayOfYear % quotes.length;
+    return quotes[quoteIndex];
+  };
+
+  const quoteOfTheDay = getQuoteOfTheDay();
+
+  // Function to refresh quote manually
+  const refreshQuote = () => {
+    const randomIndex = Math.floor(Math.random() * quotes.length);
+    setManualQuoteIndex(randomIndex);
+  };
+
+  // Function to reset to daily quote
+  const resetToDailyQuote = () => {
+    setManualQuoteIndex(null);
+  };
 
   const handleCheckIn = async () => {
     if (!isCheckedIn) {
@@ -371,10 +459,26 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
 
         {/* Quote of the Day */}
         <View style={styles.quoteSection}>
-          <Text style={styles.quoteTitle}>Quote of the Day</Text>
+          <View style={styles.quoteHeader}>
+            <Text style={styles.quoteTitle}>Quote of the Day</Text>
+            <TouchableOpacity style={styles.refreshButton} onPress={refreshQuote}>
+              <Text style={styles.refreshButtonText}>↻</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.quoteDate}>{new Date().toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          })}</Text>
           <View style={styles.quoteContainer}>
             <Text style={styles.quoteText}>"{quoteOfTheDay}"</Text>
           </View>
+          {manualQuoteIndex !== null && (
+            <TouchableOpacity style={styles.resetButton} onPress={resetToDailyQuote}>
+              <Text style={styles.resetButtonText}>Reset to Daily Quote</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Big Circle Focus Areas */}
@@ -485,12 +589,51 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 20,
   },
+  quoteHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   quoteTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 15,
+    flex: 1,
     textAlign: 'center',
+  },
+  refreshButton: {
+    backgroundColor: '#4ECDC4',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  refreshButtonText: {
+    fontSize: 18,
+    color: '#1a1a1a',
+    fontWeight: 'bold',
+  },
+  quoteDate: {
+    fontSize: 14,
+    color: '#4ECDC4',
+    textAlign: 'center',
+    marginBottom: 12,
+    fontStyle: 'italic',
+  },
+  resetButton: {
+    backgroundColor: '#3a3a3a',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 12,
+    alignSelf: 'center',
+  },
+  resetButtonText: {
+    fontSize: 12,
+    color: '#4ECDC4',
+    fontWeight: '600',
   },
   quoteContainer: {
     backgroundColor: '#3a3a3a',
