@@ -23,9 +23,10 @@ interface DashboardProps {
   onLogout: () => void;
   onNavigateToFitness: () => void;
   onNavigateToMental: () => void;
+  onNavigateToEmotional: () => void;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [tasks, setTasks] = useState<Task[]>([
@@ -307,15 +308,17 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                   top: 140 + y - 30,  // Center circle + offset - half button height
                 }
               ]}
-              onPress={() => {
-                if (category === 'fitness') {
-                  onNavigateToFitness();
-                } else if (category === 'mindset') {
-                  onNavigateToMental();
-                } else {
-                  setSelectedCategory(category);
-                }
-              }}
+                   onPress={() => {
+                     if (category === 'fitness') {
+                       onNavigateToFitness();
+                     } else if (category === 'mindset') {
+                       onNavigateToMental();
+                     } else if (category === 'emotional') {
+                       onNavigateToEmotional();
+                     } else {
+                       setSelectedCategory(category);
+                     }
+                   }}
             >
               <Text style={styles.cornerButtonText}>
                 {getCategoryTitle(category)}

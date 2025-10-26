@@ -16,10 +16,11 @@ import Dashboard from './Dashboard';
 import WorkoutScreen from './WorkoutScreen';
 import FitnessScreen from './FitnessScreen';
 import MentalScreen from './MentalScreen';
+import EmotionalScreen from './EmotionalScreen';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional'>('login');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -83,6 +84,10 @@ export default function App() {
     setCurrentScreen('mental');
   };
 
+  const handleNavigateToEmotional = () => {
+    setCurrentScreen('emotional');
+  };
+
   const handleBackToDashboard = () => {
     setCurrentScreen('dashboard');
   };
@@ -108,9 +113,17 @@ export default function App() {
     }} />;
   }
 
+  // Show Emotional Screen
+  if (isLoggedIn && currentScreen === 'emotional') {
+    return <EmotionalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+      // This will be handled by the Dashboard component
+      console.log('Task completed:', taskTitle);
+    }} />;
+  }
+
   // Show Dashboard if logged in
   if (isLoggedIn && currentScreen === 'dashboard') {
-    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} />;
+    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} />;
   }
 
   // Show Login Screen
