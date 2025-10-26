@@ -17,15 +17,28 @@ import WorkoutScreen from './WorkoutScreen';
 import FitnessScreen from './FitnessScreen';
 import MentalScreen from './MentalScreen';
 import EmotionalScreen from './EmotionalScreen';
+import AIComponent from './AIComponent';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai'>('login');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
+  
+  // User data for AI analysis
+  const [userData, setUserData] = useState({
+    moodEntries: [],
+    workoutHistory: [],
+    mentalExercises: [],
+    nutritionData: {
+      dailyMeals: [],
+      goals: { calories: 2000, protein: 150, carbs: 250, fat: 80 }
+    },
+    completedTasks: []
+  });
 
   const handleSubmit = () => {
     if (!email || !password) {
@@ -88,6 +101,10 @@ export default function App() {
     setCurrentScreen('emotional');
   };
 
+  const handleNavigateToAI = () => {
+    setCurrentScreen('ai');
+  };
+
   const handleBackToDashboard = () => {
     setCurrentScreen('dashboard');
   };
@@ -121,9 +138,31 @@ export default function App() {
     }} />;
   }
 
+  // Show AI Screen
+  if (isLoggedIn && currentScreen === 'ai') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
+        <StatusBar style="light" />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' }}>
+          <TouchableOpacity onPress={handleBackToDashboard} style={{ padding: 5 }}>
+            <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>← Back</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#fff' }}>AI Insights</Text>
+          <View style={{ width: 50 }} />
+        </View>
+        <AIComponent 
+          userData={userData} 
+          onRecommendationAction={(recommendation) => {
+            console.log('AI Recommendation action:', recommendation.title);
+          }} 
+        />
+      </SafeAreaView>
+    );
+  }
+
   // Show Dashboard if logged in
   if (isLoggedIn && currentScreen === 'dashboard') {
-    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} />;
+    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} />;
   }
 
   // Show Login Screen

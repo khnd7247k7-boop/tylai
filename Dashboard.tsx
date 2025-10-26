@@ -24,9 +24,10 @@ interface DashboardProps {
   onNavigateToFitness: () => void;
   onNavigateToMental: () => void;
   onNavigateToEmotional: () => void;
+  onNavigateToAI: () => void;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [tasks, setTasks] = useState<Task[]>([
@@ -398,6 +399,16 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
             {tasks.filter(t => t.completed).length} of {tasks.length} tasks completed
           </Text>
         </View>
+
+        {/* AI Insights Button */}
+        <TouchableOpacity style={styles.aiButton} onPress={onNavigateToAI}>
+          <Text style={styles.aiButtonIcon}>🤖</Text>
+          <View style={styles.aiButtonContent}>
+            <Text style={styles.aiButtonTitle}>AI Insights</Text>
+            <Text style={styles.aiButtonSubtitle}>Get personalized recommendations</Text>
+          </View>
+          <Text style={styles.aiButtonArrow}>→</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -733,5 +744,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888',
     textAlign: 'center',
+  },
+  aiButton: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#4ECDC4',
+  },
+  aiButtonIcon: {
+    fontSize: 32,
+    marginRight: 15,
+  },
+  aiButtonContent: {
+    flex: 1,
+  },
+  aiButtonTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4ECDC4',
+    marginBottom: 4,
+  },
+  aiButtonSubtitle: {
+    fontSize: 14,
+    color: '#ccc',
+  },
+  aiButtonArrow: {
+    fontSize: 20,
+    color: '#4ECDC4',
+    fontWeight: 'bold',
   },
 }); 
