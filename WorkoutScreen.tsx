@@ -221,7 +221,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }) {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Workout Planner</Text>
         <View style={styles.placeholder} />
@@ -303,7 +303,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }) {
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowWorkoutModal(false)}>
-              <Text style={styles.closeButton}>✕</Text>
+              <Text style={styles.closeButton}>X</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>{currentWorkout?.name}</Text>
             <View style={styles.placeholder} />
@@ -411,7 +411,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }) {
                     exerciseLogs[index]?.completed && styles.exerciseCompleted
                   ]}>
                     <Text style={styles.exerciseStatusText}>
-                      {exerciseLogs[index]?.completed ? '✓' : '○'}
+                      {exerciseLogs[index]?.completed ? 'DONE' : 'PENDING'}
                     </Text>
                   </View>
                 </View>

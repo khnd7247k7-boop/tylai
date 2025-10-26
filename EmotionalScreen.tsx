@@ -612,7 +612,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
               style={[styles.checkbox, exercise.completed && styles.checkedBox]}
               onPress={() => toggleExerciseCompletion(exercise.id)}
             >
-              {exercise.completed && <Text style={styles.checkmark}>✓</Text>}
+              {exercise.completed && <Text style={styles.checkmark}>DONE</Text>}
             </TouchableOpacity>
           </View>
           
@@ -740,7 +740,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
       <StatusBar style="light" />
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Emotional Wellness</Text>
         <View style={styles.placeholder} />

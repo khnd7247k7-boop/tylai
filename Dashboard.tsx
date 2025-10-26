@@ -203,7 +203,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                 style={styles.closeButton}
                 onPress={() => setSelectedCategory(null)}
               >
-                <Text style={styles.closeButtonText}>✕</Text>
+                <Text style={styles.closeButtonText}>X</Text>
               </TouchableOpacity>
             </View>
             
@@ -218,7 +218,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                     styles.modalCheckbox,
                     task.completed && { backgroundColor: categoryColor }
                   ]}>
-                    {task.completed && <Text style={styles.modalCheckmark}>✓</Text>}
+                    {task.completed && <Text style={styles.modalCheckmark}>DONE</Text>}
                   </View>
                   <Text style={[
                     styles.modalTaskText,
@@ -363,7 +363,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
             disabled={isCheckedIn}
           >
             <Text style={styles.checkInButtonText}>
-              {isCheckedIn ? '✓ Checked In' : 'Check In Today'}
+              {isCheckedIn ? 'Checked In' : 'Check In Today'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -402,12 +402,12 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
 
         {/* AI Insights Button */}
         <TouchableOpacity style={styles.aiButton} onPress={onNavigateToAI}>
-          <Text style={styles.aiButtonIcon}>🤖</Text>
+          <Text style={styles.aiButtonIcon}>AI</Text>
           <View style={styles.aiButtonContent}>
             <Text style={styles.aiButtonTitle}>AI Insights</Text>
             <Text style={styles.aiButtonSubtitle}>Get personalized recommendations</Text>
           </View>
-          <Text style={styles.aiButtonArrow}>→</Text>
+          <Text style={styles.aiButtonArrow}>{'>'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>

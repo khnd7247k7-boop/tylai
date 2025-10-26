@@ -145,7 +145,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         <StatusBar style="light" />
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={onBack}>
-            <Text style={styles.backButtonText}>← Back</Text>
+            <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Error</Text>
           <View style={styles.placeholder} />
@@ -228,7 +228,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                 index < currentExerciseIndex && styles.exerciseCompleted
               ]}>
                 <Text style={styles.exerciseStatusText}>
-                  {index < currentExerciseIndex ? '✓' : index === currentExerciseIndex ? '●' : '○'}
+                  {index < currentExerciseIndex ? 'DONE' : index === currentExerciseIndex ? 'CURRENT' : 'PENDING'}
                 </Text>
               </View>
             </View>
@@ -405,7 +405,7 @@ const SetTracker = ({ set, setIndex, onComplete }: SetTrackerProps) => {
         </TouchableOpacity>
       ) : (
         <View style={styles.completedSet}>
-          <Text style={styles.completedSetText}>✓ Completed</Text>
+          <Text style={styles.completedSetText}>DONE</Text>
         </View>
       )}
     </View>

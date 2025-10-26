@@ -400,7 +400,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
           style={[styles.checkbox, exercise.completed && styles.checkedBox]}
           onPress={() => toggleExerciseCompletion(exercise.id)}
         >
-          {exercise.completed && <Text style={styles.checkmark}>✓</Text>}
+          {exercise.completed && <Text style={styles.checkmark}>DONE</Text>}
         </TouchableOpacity>
       </View>
       
@@ -424,7 +424,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
           <Text style={styles.sectionTitle}>Mental Wellness Progress</Text>
           <View style={styles.dailyResetInfo}>
             <Text style={styles.dailyResetText}>
-              💡 Exercise progress resets daily to help you track your daily mental wellness routine
+              Exercise progress resets daily to help you track your daily mental wellness routine
             </Text>
           </View>
           <View style={styles.overallProgress}>
@@ -512,7 +512,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Mental Wellness</Text>
         <View style={styles.placeholder} />

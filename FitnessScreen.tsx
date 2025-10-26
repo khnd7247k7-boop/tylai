@@ -1019,7 +1019,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 styles.taskCheckbox,
                 task.completed && { backgroundColor: categoryColor }
               ]}>
-                {task.completed && <Text style={styles.taskCheckmark}>✓</Text>}
+                {task.completed && <Text style={styles.taskCheckmark}>DONE</Text>}
               </View>
               <Text style={[
                 styles.taskText,
@@ -1066,7 +1066,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Fitness</Text>
         <View style={styles.placeholder} />

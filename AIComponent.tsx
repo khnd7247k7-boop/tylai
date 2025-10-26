@@ -60,14 +60,14 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'mood': return '😊';
-      case 'fitness': return '💪';
-      case 'mental': return '🧠';
-      case 'nutrition': return '🥗';
-      case 'overall': return '🌟';
-      case 'exercise': return '🏃';
-      case 'lifestyle': return '🌱';
-      default: return '💡';
+      case 'mood': return 'MOOD';
+      case 'fitness': return 'FIT';
+      case 'mental': return 'MIND';
+      case 'nutrition': return 'NUTR';
+      case 'overall': return 'ALL';
+      case 'exercise': return 'EXER';
+      case 'lifestyle': return 'LIFE';
+      default: return 'INFO';
     }
   };
 
@@ -121,14 +121,14 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
         {recommendation.description}
       </Text>
       <Text style={styles.recommendationReason}>
-        💡 {recommendation.reason}
+        {recommendation.reason}
       </Text>
       <View style={styles.recommendationFooter}>
         <Text style={styles.recommendationTime}>
-          ⏱️ {recommendation.estimatedTime} min
+          {recommendation.estimatedTime} min
         </Text>
         <Text style={styles.recommendationAction}>
-          Tap to start →
+          Tap to start
         </Text>
       </View>
     </TouchableOpacity>
@@ -145,11 +145,10 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
 
       {isAnalyzing ? (
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>🤖 Analyzing your data...</Text>
+          <Text style={styles.loadingText}>Analyzing your data...</Text>
         </View>
       ) : insights.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>📊</Text>
           <Text style={styles.emptyTitle}>No insights yet</Text>
           <Text style={styles.emptyMessage}>
             Complete more activities to get personalized insights
@@ -174,11 +173,10 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
 
       {isAnalyzing ? (
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>🤖 Generating recommendations...</Text>
+          <Text style={styles.loadingText}>Generating recommendations...</Text>
         </View>
       ) : recommendations.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>💡</Text>
           <Text style={styles.emptyTitle}>No recommendations yet</Text>
           <Text style={styles.emptyMessage}>
             Complete more activities to get personalized recommendations
@@ -239,7 +237,7 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
                     style={styles.closeButton}
                     onPress={() => setSelectedInsight(null)}
                   >
-                    <Text style={styles.closeButtonText}>✕</Text>
+                    <Text style={styles.closeButtonText}>X</Text>
                   </TouchableOpacity>
                 </View>
                 

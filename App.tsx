@@ -145,7 +145,7 @@ export default function App() {
         <StatusBar style="light" />
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' }}>
           <TouchableOpacity onPress={handleBackToDashboard} style={{ padding: 5 }}>
-            <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>← Back</Text>
+            <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>Back</Text>
           </TouchableOpacity>
           <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#fff' }}>AI Insights</Text>
           <View style={{ width: 50 }} />
