@@ -18,12 +18,13 @@ import FitnessScreen from './FitnessScreen';
 import MentalScreen from './MentalScreen';
 import EmotionalScreen from './EmotionalScreen';
 import AIComponent from './AIComponent';
+import SettingsScreen from './SettingsScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings'>('login');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -107,6 +108,10 @@ export default function App() {
     setCurrentScreen('ai');
   };
 
+  const handleNavigateToSettings = () => {
+    setCurrentScreen('settings');
+  };
+
   const handleBackToDashboard = () => {
     setCurrentScreen('dashboard');
   };
@@ -164,27 +169,12 @@ export default function App() {
     );
   }
 
-  // Show AI Screen
-  if (isLoggedIn && currentScreen === 'ai') {
+  // Show Settings Screen
+  if (isLoggedIn && currentScreen === 'settings') {
     return (
       <SmoothTransition isVisible={true} direction="slideInRight">
         <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-            <StatusBar style="light" />
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' }}>
-              <TouchableOpacity onPress={handleBackToDashboard} style={{ padding: 5 }}>
-                <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>Back</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#fff' }}>AI Insights</Text>
-              <View style={{ width: 50 }} />
-            </View>
-            <AIComponent 
-              userData={userData} 
-              onRecommendationAction={(recommendation) => {
-                console.log('AI Recommendation action:', recommendation.title);
-              }} 
-            />
-          </SafeAreaView>
+          <SettingsScreen onBack={handleBackToDashboard} onLogout={handleLogout} />
         </SwipeNavigation>
       </SmoothTransition>
     );
@@ -194,7 +184,7 @@ export default function App() {
   if (isLoggedIn && currentScreen === 'dashboard') {
     return (
       <SmoothTransition isVisible={true} direction="fadeIn">
-        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} />
+        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} />
       </SmoothTransition>
     );
   }

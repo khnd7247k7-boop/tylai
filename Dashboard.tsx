@@ -25,9 +25,10 @@ interface DashboardProps {
   onNavigateToMental: () => void;
   onNavigateToEmotional: () => void;
   onNavigateToAI: () => void;
+  onNavigateToSettings: () => void;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [manualQuoteIndex, setManualQuoteIndex] = useState<number | null>(null);
@@ -430,8 +431,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <Text style={styles.greeting}>Welcome back!</Text>
-            <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-              <Text style={styles.logoutText}>Logout</Text>
+            <TouchableOpacity style={styles.settingsButton} onPress={onNavigateToSettings}>
+              <Text style={styles.settingsText}>⚙️</Text>
             </TouchableOpacity>
           </View>
           <Text style={styles.date}>{new Date().toLocaleDateString('en-US', { 
@@ -541,16 +542,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
   },
-  logoutButton: {
-    backgroundColor: '#FF6B6B',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  settingsButton: {
+    backgroundColor: '#4ECDC4',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  logoutText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+  settingsText: {
+    fontSize: 18,
+    color: '#1a1a1a',
+    fontWeight: 'bold',
   },
   date: {
     fontSize: 16,
