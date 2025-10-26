@@ -26,9 +26,10 @@ interface DashboardProps {
   onNavigateToEmotional: () => void;
   onNavigateToAI: () => void;
   onNavigateToSettings: () => void;
+  onNavigateToSpiritual: () => void;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings, onNavigateToSpiritual }: DashboardProps) {
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [manualQuoteIndex, setManualQuoteIndex] = useState<number | null>(null);
@@ -405,6 +406,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                        onNavigateToMental();
                      } else if (category === 'emotional') {
                        onNavigateToEmotional();
+                     } else if (category === 'spiritual') {
+                       onNavigateToSpiritual();
                      } else {
                        setSelectedCategory(category);
                      }

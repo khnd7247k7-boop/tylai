@@ -19,12 +19,13 @@ import MentalScreen from './MentalScreen';
 import EmotionalScreen from './EmotionalScreen';
 import AIComponent from './AIComponent';
 import SettingsScreen from './SettingsScreen';
+import SpiritualScreen from './SpiritualScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings' | 'spiritual'>('login');
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -112,6 +113,10 @@ export default function App() {
     setCurrentScreen('settings');
   };
 
+  const handleNavigateToSpiritual = () => {
+    setCurrentScreen('spiritual');
+  };
+
   const handleBackToDashboard = () => {
     setCurrentScreen('dashboard');
   };
@@ -169,12 +174,15 @@ export default function App() {
     );
   }
 
-  // Show Settings Screen
-  if (isLoggedIn && currentScreen === 'settings') {
+  // Show Spiritual Screen
+  if (isLoggedIn && currentScreen === 'spiritual') {
     return (
       <SmoothTransition isVisible={true} direction="slideInRight">
         <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <SettingsScreen onBack={handleBackToDashboard} onLogout={handleLogout} />
+          <SpiritualScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+            // This will be handled by the Dashboard component
+            console.log('Task completed:', taskTitle);
+          }} />
         </SwipeNavigation>
       </SmoothTransition>
     );
@@ -184,7 +192,7 @@ export default function App() {
   if (isLoggedIn && currentScreen === 'dashboard') {
     return (
       <SmoothTransition isVisible={true} direction="fadeIn">
-        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} />
+        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} onNavigateToSpiritual={handleNavigateToSpiritual} />
       </SmoothTransition>
     );
   }
