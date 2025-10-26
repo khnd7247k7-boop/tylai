@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import TabSwipeNavigation from './TabSwipeNavigation';
 
 interface MentalExercise {
   id: string;
@@ -527,7 +528,12 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
       </View>
 
       {/* Content */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <TabSwipeNavigation
+        tabs={['breathing', 'visualization', 'mindfulness', 'progress']}
+        activeTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab as any)}
+      >
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {activeTab === 'breathing' && (
           <View style={styles.tabContent}>
             <Text style={styles.sectionTitle}>Breathing Exercises</Text>
@@ -559,7 +565,8 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
         )}
 
         {activeTab === 'progress' && renderProgress()}
-      </ScrollView>
+        </ScrollView>
+      </TabSwipeNavigation>
     </SafeAreaView>
   );
 }

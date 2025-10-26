@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import TabSwipeNavigation from './TabSwipeNavigation';
 
 interface MoodEntry {
   id: string;
@@ -773,12 +774,18 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {activeTab === 'mood' && renderMoodTracker()}
-        {activeTab === 'exercises' && renderExercises()}
-        {activeTab === 'history' && renderHistory()}
-        {activeTab === 'insights' && renderInsights()}
-      </ScrollView>
+      <TabSwipeNavigation
+        tabs={['mood', 'exercises', 'history', 'insights']}
+        activeTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab as any)}
+      >
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          {activeTab === 'mood' && renderMoodTracker()}
+          {activeTab === 'exercises' && renderExercises()}
+          {activeTab === 'history' && renderHistory()}
+          {activeTab === 'insights' && renderInsights()}
+        </ScrollView>
+      </TabSwipeNavigation>
     </SafeAreaView>
   );
 }

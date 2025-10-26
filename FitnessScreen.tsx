@@ -14,6 +14,7 @@ import { StatusBar } from 'expo-status-bar';
 import WorkoutScreen from './WorkoutScreen';
 import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
+import TabSwipeNavigation from './TabSwipeNavigation';
 
 interface MacroLog {
   id: string;
@@ -1081,12 +1082,18 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       </View>
 
       {/* Content */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {activeTab === 'workouts' && renderWorkouts()}
-        {activeTab === 'nutrition' && renderNutrition()}
-        {activeTab === 'history' && renderHistory()}
-        {activeTab === 'tasks' && renderTasks()}
-      </ScrollView>
+      <TabSwipeNavigation
+        tabs={['workouts', 'nutrition', 'history', 'tasks']}
+        activeTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab as any)}
+      >
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          {activeTab === 'workouts' && renderWorkouts()}
+          {activeTab === 'nutrition' && renderNutrition()}
+          {activeTab === 'history' && renderHistory()}
+          {activeTab === 'tasks' && renderTasks()}
+        </ScrollView>
+      </TabSwipeNavigation>
     </SafeAreaView>
   );
 }

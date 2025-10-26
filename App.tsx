@@ -18,6 +18,8 @@ import FitnessScreen from './FitnessScreen';
 import MentalScreen from './MentalScreen';
 import EmotionalScreen from './EmotionalScreen';
 import AIComponent from './AIComponent';
+import SwipeNavigation from './SwipeNavigation';
+import SmoothTransition from './SmoothTransition';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -111,58 +113,90 @@ export default function App() {
 
   // Show Workout Screen
   if (isLoggedIn && currentScreen === 'workout') {
-    return <WorkoutScreen onBack={handleBackToDashboard} />;
+    return (
+      <SmoothTransition isVisible={true} direction="slideInRight">
+        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+          <WorkoutScreen onBack={handleBackToDashboard} />
+        </SwipeNavigation>
+      </SmoothTransition>
+    );
   }
 
   // Show Fitness Screen
   if (isLoggedIn && currentScreen === 'fitness') {
-    return <FitnessScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-      // This will be handled by the Dashboard component
-      console.log('Task completed:', taskTitle);
-    }} />;
+    return (
+      <SmoothTransition isVisible={true} direction="slideInRight">
+        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+          <FitnessScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+            // This will be handled by the Dashboard component
+            console.log('Task completed:', taskTitle);
+          }} />
+        </SwipeNavigation>
+      </SmoothTransition>
+    );
   }
 
   // Show Mental Screen
   if (isLoggedIn && currentScreen === 'mental') {
-    return <MentalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-      // This will be handled by the Dashboard component
-      console.log('Task completed:', taskTitle);
-    }} />;
+    return (
+      <SmoothTransition isVisible={true} direction="slideInRight">
+        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+          <MentalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+            // This will be handled by the Dashboard component
+            console.log('Task completed:', taskTitle);
+          }} />
+        </SwipeNavigation>
+      </SmoothTransition>
+    );
   }
 
   // Show Emotional Screen
   if (isLoggedIn && currentScreen === 'emotional') {
-    return <EmotionalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-      // This will be handled by the Dashboard component
-      console.log('Task completed:', taskTitle);
-    }} />;
+    return (
+      <SmoothTransition isVisible={true} direction="slideInRight">
+        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+          <EmotionalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+            // This will be handled by the Dashboard component
+            console.log('Task completed:', taskTitle);
+          }} />
+        </SwipeNavigation>
+      </SmoothTransition>
+    );
   }
 
   // Show AI Screen
   if (isLoggedIn && currentScreen === 'ai') {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-        <StatusBar style="light" />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' }}>
-          <TouchableOpacity onPress={handleBackToDashboard} style={{ padding: 5 }}>
-            <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>Back</Text>
-          </TouchableOpacity>
-          <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#fff' }}>AI Insights</Text>
-          <View style={{ width: 50 }} />
-        </View>
-        <AIComponent 
-          userData={userData} 
-          onRecommendationAction={(recommendation) => {
-            console.log('AI Recommendation action:', recommendation.title);
-          }} 
-        />
-      </SafeAreaView>
+      <SmoothTransition isVisible={true} direction="slideInRight">
+        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
+            <StatusBar style="light" />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' }}>
+              <TouchableOpacity onPress={handleBackToDashboard} style={{ padding: 5 }}>
+                <Text style={{ color: '#4ECDC4', fontSize: 16, fontWeight: 'bold' }}>Back</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#fff' }}>AI Insights</Text>
+              <View style={{ width: 50 }} />
+            </View>
+            <AIComponent 
+              userData={userData} 
+              onRecommendationAction={(recommendation) => {
+                console.log('AI Recommendation action:', recommendation.title);
+              }} 
+            />
+          </SafeAreaView>
+        </SwipeNavigation>
+      </SmoothTransition>
     );
   }
 
   // Show Dashboard if logged in
   if (isLoggedIn && currentScreen === 'dashboard') {
-    return <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} />;
+    return (
+      <SmoothTransition isVisible={true} direction="fadeIn">
+        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} />
+      </SmoothTransition>
+    );
   }
 
   // Show Login Screen
