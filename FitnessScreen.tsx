@@ -877,22 +877,14 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         <View style={styles.mealSection}>
           <View style={styles.mealSectionHeader}>
             <Text style={styles.sectionTitle}>Add Meal</Text>
-            <View style={styles.mealHeaderButtons}>
-              <TouchableOpacity 
-                style={styles.barcodeButton} 
-                onPress={() => setShowBarcodeScanner(true)}
-              >
-                <Text style={styles.barcodeButtonText}>📷 Scan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.savedMealsButton} 
-                onPress={() => setShowSavedMeals(!showSavedMeals)}
-              >
-                <Text style={styles.savedMealsButtonText}>
-                  {showSavedMeals ? 'Hide' : 'Show'} Saved Meals
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity 
+              style={styles.savedMealsButton} 
+              onPress={() => setShowSavedMeals(!showSavedMeals)}
+            >
+              <Text style={styles.savedMealsButtonText}>
+                {showSavedMeals ? 'Hide' : 'Show'} Saved Meals
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Saved Meals Search */}
@@ -986,9 +978,17 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               </View>
             )}
           </View>
-          <TouchableOpacity style={styles.logButton} onPress={handleMealSubmit}>
-            <Text style={styles.logButtonText}>Add Meal</Text>
-          </TouchableOpacity>
+          <View style={styles.mealButtons}>
+            <TouchableOpacity style={styles.logButton} onPress={handleMealSubmit}>
+              <Text style={styles.logButtonText}>Add Meal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.scanButton} 
+              onPress={() => setShowBarcodeScanner(true)}
+            >
+              <Text style={styles.scanButtonText}>📷 Scan</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Today's Meals */}
@@ -1303,11 +1303,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   logButton: {
-    backgroundColor: '#00ff88',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#4ECDC4',
+    borderRadius: 10,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    flex: 1,
+    marginRight: 10,
     alignItems: 'center',
-    marginBottom: 30,
   },
   logButtonText: {
     fontSize: 18,
@@ -1654,20 +1656,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
-  mealHeaderButtons: {
+  mealButtons: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  scanButton: {
+    backgroundColor: '#00ff88',
+    borderRadius: 10,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    flex: 1,
+    marginLeft: 10,
     alignItems: 'center',
   },
-  barcodeButton: {
-    backgroundColor: '#00ff88',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 10,
-  },
-  barcodeButtonText: {
+  scanButtonText: {
     color: '#1a1a1a',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   savedMealsButton: {
