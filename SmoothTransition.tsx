@@ -24,13 +24,13 @@ export default function SmoothTransition({
         Animated.timing(animatedValue, {
           toValue: 1,
           duration,
-          easing: Easing.out(Easing.cubic),
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1), // iOS-style easing
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
           toValue: 1,
           duration: duration * 0.8,
-          easing: Easing.out(Easing.cubic),
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1), // iOS-style easing
           useNativeDriver: true,
         }),
       ]).start();
@@ -40,13 +40,13 @@ export default function SmoothTransition({
         Animated.timing(animatedValue, {
           toValue: 0,
           duration: duration * 0.7,
-          easing: Easing.in(Easing.cubic),
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1), // iOS-style easing
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
           toValue: 0,
           duration: duration * 0.5,
-          easing: Easing.in(Easing.cubic),
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1), // iOS-style easing
           useNativeDriver: true,
         }),
       ]).start();

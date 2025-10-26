@@ -34,10 +34,16 @@ export default function TabSwipeNavigation({
         translateX.setValue(0);
       },
       onPanResponderMove: (_, gestureState) => {
-        // Limit swipe distance
-        const maxSwipe = screenWidth * 0.2;
+        // Limit swipe distance with smoother curve
+        const maxSwipe = screenWidth * 0.25;
         const clampedDx = Math.max(-maxSwipe, Math.min(maxSwipe, gestureState.dx));
-        translateX.setValue(clampedDx);
+        
+        // Apply smooth easing curve to the translation
+        const progress = Math.abs(clampedDx) / maxSwipe;
+        const easedProgress = 1 - Math.pow(1 - progress, 2); // Quadratic ease-out
+        const finalDx = clampedDx * easedProgress;
+        
+        translateX.setValue(finalDx);
       },
       onPanResponderRelease: (_, gestureState) => {
         setIsSwipeInProgress(false);
@@ -58,12 +64,13 @@ export default function TabSwipeNavigation({
           onTabChange(newTab);
         }
         
-        // Snap back to original position
+        // Snap back to original position with smoother spring
         Animated.spring(translateX, {
           toValue: 0,
           useNativeDriver: true,
-          tension: 100,
-          friction: 8,
+          tension: 140,
+          friction: 10,
+          overshootClamping: true,
         }).start();
       },
     })

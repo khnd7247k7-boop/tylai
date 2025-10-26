@@ -41,15 +41,20 @@ export default function SwipeNavigation({
         if (gestureState.dx > 0 && !enableSwipeBack) return;
         if (gestureState.dx < 0 && !enableSwipeForward) return;
         
-        // Limit the swipe distance
-        const maxSwipe = screenWidth * 0.3;
+        // Limit the swipe distance with smoother curve
+        const maxSwipe = screenWidth * 0.4;
         const clampedDx = Math.max(-maxSwipe, Math.min(maxSwipe, gestureState.dx));
         
-        translateX.setValue(clampedDx);
-        
-        // Add opacity effect for visual feedback
+        // Apply smooth easing curve to the translation
         const progress = Math.abs(clampedDx) / maxSwipe;
-        opacity.setValue(1 - progress * 0.3);
+        const easedProgress = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
+        const finalDx = clampedDx * easedProgress;
+        
+        translateX.setValue(finalDx);
+        
+        // Smoother opacity effect - no white flash
+        const opacityProgress = Math.abs(finalDx) / maxSwipe;
+        opacity.setValue(1 - opacityProgress * 0.15); // Reduced opacity change
       },
       onPanResponderRelease: (_, gestureState) => {
         translateX.flattenOffset();
@@ -66,7 +71,7 @@ export default function SwipeNavigation({
           Animated.parallel([
             Animated.timing(translateX, {
               toValue: screenWidth,
-              duration: 200,
+              duration: 250,
               useNativeDriver: true,
             }),
             Animated.timing(opacity, {
@@ -88,7 +93,7 @@ export default function SwipeNavigation({
           Animated.parallel([
             Animated.timing(translateX, {
               toValue: -screenWidth,
-              duration: 200,
+              duration: 250,
               useNativeDriver: true,
             }),
             Animated.timing(opacity, {
@@ -103,19 +108,21 @@ export default function SwipeNavigation({
             opacity.setValue(1);
           });
         } else {
-          // Snap back to original position
+          // Snap back to original position with smoother spring
           Animated.parallel([
             Animated.spring(translateX, {
               toValue: 0,
               useNativeDriver: true,
-              tension: 100,
-              friction: 8,
+              tension: 120,
+              friction: 9,
+              overshootClamping: true,
             }),
             Animated.spring(opacity, {
               toValue: 1,
               useNativeDriver: true,
-              tension: 100,
-              friction: 8,
+              tension: 120,
+              friction: 9,
+              overshootClamping: true,
             }),
           ]).start();
         }
