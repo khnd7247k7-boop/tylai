@@ -15,6 +15,7 @@ import WorkoutScreen from './WorkoutScreen';
 import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
 import TabSwipeNavigation from './TabSwipeNavigation';
+import BarcodeScanner from './BarcodeScanner';
 
 interface MacroLog {
   id: string;
@@ -79,6 +80,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSavedMeals, setShowSavedMeals] = useState(false);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [nutritionGoals, setNutritionGoals] = useState<NutritionGoals>({
     calories: 2000,
     protein: 150,
@@ -426,6 +428,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     onCompleteTask('workout');
     onCompleteTask('cardio');
     onCompleteTask('strength');
+  };
+
+  const handleFoodScanned = (scannedFood: any) => {
+    // Populate the meal form with scanned food data
+    setMealName(scannedFood.name);
+    setMealCalories(scannedFood.calories.toString());
+    setMealProtein(scannedFood.protein.toString());
+    setMealCarbs(scannedFood.carbs.toString());
+    setMealFat(scannedFood.fat.toString());
+    
+    // Show success message
+    Alert.alert(
+      'Food Scanned Successfully!',
+      `${scannedFood.name} (${scannedFood.brand || 'Generic'})\nServing: ${scannedFood.servingSize}\n\nMacros populated automatically.`,
+      [{ text: 'OK' }]
+    );
   };
 
   const toggleTaskCompletion = (taskId: string) => {
@@ -859,14 +877,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         <View style={styles.mealSection}>
           <View style={styles.mealSectionHeader}>
             <Text style={styles.sectionTitle}>Add Meal</Text>
-            <TouchableOpacity 
-              style={styles.savedMealsButton} 
-              onPress={() => setShowSavedMeals(!showSavedMeals)}
-            >
-              <Text style={styles.savedMealsButtonText}>
-                {showSavedMeals ? 'Hide' : 'Show'} Saved Meals
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.mealHeaderButtons}>
+              <TouchableOpacity 
+                style={styles.barcodeButton} 
+                onPress={() => setShowBarcodeScanner(true)}
+              >
+                <Text style={styles.barcodeButtonText}>📷 Scan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.savedMealsButton} 
+                onPress={() => setShowSavedMeals(!showSavedMeals)}
+              >
+                <Text style={styles.savedMealsButtonText}>
+                  {showSavedMeals ? 'Hide' : 'Show'} Saved Meals
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Saved Meals Search */}
@@ -1094,6 +1120,13 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           {activeTab === 'tasks' && renderTasks()}
         </ScrollView>
       </TabSwipeNavigation>
+
+      {/* Barcode Scanner Modal */}
+      <BarcodeScanner
+        visible={showBarcodeScanner}
+        onClose={() => setShowBarcodeScanner(false)}
+        onFoodScanned={handleFoodScanned}
+      />
     </SafeAreaView>
   );
 }
@@ -1620,6 +1653,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 15,
+  },
+  mealHeaderButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  barcodeButton: {
+    backgroundColor: '#00ff88',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 10,
+  },
+  barcodeButtonText: {
+    color: '#1a1a1a',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   savedMealsButton: {
     backgroundColor: '#4ECDC4',
