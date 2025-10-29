@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   SafeAreaView,
 } from 'react-native';
-import { Camera } from 'expo-camera';
+import { CameraView, Camera } from 'expo-camera';
 import { BarCodeScanner } from 'expo-barcode-scanner';
 
 interface ScannedFood {
@@ -45,7 +45,7 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
     }
   }, [visible]);
 
-  const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
+  const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (scanned) return;
     
     setScanned(true);
@@ -192,10 +192,12 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
         </View>
 
         <View style={styles.scannerContainer}>
-          <BarCodeScanner
-            onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+          <CameraView
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
             style={styles.scanner}
-            barCodeTypes={[BarCodeScanner.Constants.BarCodeType.ean13, BarCodeScanner.Constants.BarCodeType.ean8]}
+            barcodeScannerSettings={{
+              barcodeTypes: ["ean13", "ean8"],
+            }}
           />
           
           {/* Scanner overlay */}
