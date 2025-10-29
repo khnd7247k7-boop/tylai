@@ -95,9 +95,9 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
           ...exercise,
           sets: exercise.sets.map((set, setIndex) => ({
             setNumber: setIndex + 1,
-            reps: exercise.reps,
+            reps: (exercise as any).reps,
             weight: 0,
-            restTime: exercise.restTime || 60,
+            restTime: (exercise as any).restTime || 60,
             completed: false
           }))
         };

@@ -284,8 +284,8 @@ class AIService {
     
     if (recentMeals.length < 3) return;
 
-    const avgCalories = recentMeals.reduce((sum, meal) => sum + meal.calories, 0) / recentMeals.length;
-    const avgProtein = recentMeals.reduce((sum, meal) => sum + meal.protein, 0) / recentMeals.length;
+    const avgCalories = recentMeals.reduce((sum: number, meal: any) => sum + meal.calories, 0) / recentMeals.length;
+    const avgProtein = recentMeals.reduce((sum: number, meal: any) => sum + meal.protein, 0) / recentMeals.length;
     
     // Calorie goal achievement
     const calorieAchievement = (avgCalories / goals.calories) * 100;
@@ -498,7 +498,7 @@ class AIService {
     
     if (recentMeals.length === 0) return;
 
-    const avgProtein = recentMeals.reduce((sum, meal) => sum + meal.protein, 0) / recentMeals.length;
+    const avgProtein = recentMeals.reduce((sum: number, meal: any) => sum + meal.protein, 0) / recentMeals.length;
     const proteinDeficit = goals.protein - avgProtein;
 
     if (proteinDeficit > 20) {

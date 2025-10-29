@@ -31,11 +31,11 @@ export default function SwipeNavigation({
         return Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && 
                Math.abs(gestureState.dx) > 10;
       },
-      onPanResponderGrant: () => {
-        // Reset any ongoing animations
-        translateX.setOffset(translateX._value);
-        translateX.setValue(0);
-      },
+             onPanResponderGrant: () => {
+               // Reset any ongoing animations
+               translateX.setOffset((translateX as any)._value);
+               translateX.setValue(0);
+             },
       onPanResponderMove: (_, gestureState) => {
         // Only allow swiping in enabled directions
         if (gestureState.dx > 0 && !enableSwipeBack) return;

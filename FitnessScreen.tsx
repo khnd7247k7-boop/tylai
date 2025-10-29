@@ -432,11 +432,14 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const handleFoodScanned = (scannedFood: any) => {
     // Populate the meal form with scanned food data
-    setMealName(scannedFood.name);
-    setMealCalories(scannedFood.calories.toString());
-    setMealProtein(scannedFood.protein.toString());
-    setMealCarbs(scannedFood.carbs.toString());
-    setMealFat(scannedFood.fat.toString());
+    setMealInput({
+      name: scannedFood.name,
+      calories: scannedFood.calories.toString(),
+      protein: scannedFood.protein.toString(),
+      carbs: scannedFood.carbs.toString(),
+      fat: scannedFood.fat.toString(),
+      time: new Date().toLocaleTimeString()
+    });
     
     // Show success message
     Alert.alert(

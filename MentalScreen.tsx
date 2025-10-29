@@ -225,7 +225,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
         // If it's a new day, reset all exercise completion status
         if (lastResetDate !== today) {
           console.log('New day detected - resetting exercise completion status');
-          const resetExercises = parsedExercises.map(exercise => ({
+          const resetExercises = parsedExercises.map((exercise: any) => ({
             ...exercise,
             completed: false,
             completedAt: undefined
@@ -766,10 +766,9 @@ const styles = StyleSheet.create({
     color: '#e0e0e0',
     marginBottom: 10,
     lineHeight: 22,
-    paddingLeft: 8,
+    paddingLeft: 12,
     borderLeftWidth: 2,
     borderLeftColor: 'rgba(78, 205, 196, 0.3)',
-    paddingLeft: 12,
   },
   progressOverview: {
     backgroundColor: '#2a2a2a',

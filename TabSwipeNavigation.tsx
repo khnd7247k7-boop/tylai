@@ -28,11 +28,11 @@ export default function TabSwipeNavigation({
                Math.abs(gestureState.dx) > 15 &&
                !isSwipeInProgress;
       },
-      onPanResponderGrant: () => {
-        setIsSwipeInProgress(true);
-        translateX.setOffset(translateX._value);
-        translateX.setValue(0);
-      },
+             onPanResponderGrant: () => {
+               setIsSwipeInProgress(true);
+               translateX.setOffset((translateX as any)._value);
+               translateX.setValue(0);
+             },
       onPanResponderMove: (_, gestureState) => {
         // Limit swipe distance with smoother curve
         const maxSwipe = screenWidth * 0.25;
