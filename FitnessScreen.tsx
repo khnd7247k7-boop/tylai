@@ -391,7 +391,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const handleSaveGoals = () => {
     if (!editGoals.protein || !editGoals.carbs || !editGoals.fat || !editGoals.water) {
-      Alert.alert('Error', 'Please fill in all macro goal fields');
+      showToast('Please fill in all macro goal fields', 'error');
       return;
     }
 
@@ -410,7 +410,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     setNutritionGoals(newGoals);
     saveNutritionGoals(newGoals);
     setIsEditingGoals(false);
-    Alert.alert('Success', 'Goals updated successfully!');
+    showToast('Goals updated successfully!', 'success');
   };
 
   const handleCancelEdit = () => {

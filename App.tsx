@@ -23,8 +23,10 @@ import SpiritualScreen from './SpiritualScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 import { ToastProvider } from './src/components/ToastProvider';
+import { useToast } from './src/components/ToastProvider';
 
-export default function App() {
+function AppInner() {
+  const { showToast } = useToast();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings' | 'spiritual'>('login');
   const [isLogin, setIsLogin] = useState(true);
@@ -47,27 +49,27 @@ export default function App() {
 
   const handleSubmit = () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all required fields');
+      showToast('Please fill in all required fields', 'error');
       return;
     }
 
     if (!isLogin && password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      showToast('Passwords do not match', 'error');
       return;
     }
 
     if (!isLogin && !name) {
-      Alert.alert('Error', 'Please enter your name');
+      showToast('Please enter your name', 'error');
       return;
     }
 
     // Here you would typically integrate with Firebase Auth
     if (isLogin) {
-      Alert.alert('Success', 'Login successful!');
+      showToast('Login successful!', 'success');
       setIsLoggedIn(true);
       setCurrentScreen('dashboard');
     } else {
-      Alert.alert('Success', 'Account created successfully!');
+      showToast('Account created successfully!', 'success');
       setIsLoggedIn(true);
       setCurrentScreen('dashboard');
     }
@@ -307,6 +309,14 @@ export default function App() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </ToastProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AppInner />
     </ToastProvider>
   );
 }
