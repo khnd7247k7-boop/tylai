@@ -107,6 +107,13 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     { id: '6', title: 'HIIT workout (20 minutes)', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
   ]);
 
+  // Lightweight, non-blocking toast
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2000);
+  };
+
   // Load all data from AsyncStorage on component mount
   useEffect(() => {
     loadWorkoutHistory();
@@ -256,7 +263,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const handleMacroSubmit = () => {
     if (!todayMacros.calories || !todayMacros.protein || !todayMacros.carbs || !todayMacros.fat) {
-      Alert.alert('Error', 'Please fill in all macro fields');
+      showToast('Please fill in all macro fields', 'error');
       return;
     }
 
@@ -272,7 +279,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
     setMacroLogs(prev => [newLog, ...prev]);
     setTodayMacros({ calories: '', protein: '', carbs: '', fat: '', water: '' });
-    Alert.alert('Success', 'Macros logged successfully!');
+    showToast('Macros logged successfully!', 'success');
   };
 
   // Calculate calories from macros (4 cal/g protein, 4 cal/g carbs, 9 cal/g fat)
@@ -282,7 +289,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const handleMealSubmit = () => {
     if (!mealInput.name || !mealInput.protein || !mealInput.carbs || !mealInput.fat) {
-      Alert.alert('Error', 'Please fill in meal name and all macro fields');
+      showToast('Please fill in meal name and all macro fields', 'error');
       return;
     }
 
@@ -341,7 +348,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     }
 
     setMealInput({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '', servings: '1' });
-    Alert.alert('Success', 'Meal logged successfully!');
+    showToast('Meal logged successfully!', 'success');
   };
 
   const handleUseSavedMeal = (savedMeal: SavedMeal) => {
@@ -369,7 +376,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     setSavedMeals(updatedSavedMeals);
     saveSavedMeals(updatedSavedMeals);
 
-    Alert.alert('Success', `${savedMeal.name} added to today's meals!`);
+    showToast(`${savedMeal.name} added to today's meals!`, 'success');
   };
 
   const handleEditGoals = () => {
@@ -1162,6 +1169,16 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         onClose={() => setShowBarcodeScanner(false)}
         onFoodScanned={handleFoodScanned}
       />
+
+      {/* Non-blocking toast */}
+      {toast && (
+        <View style={[
+          styles.toastContainer,
+          toast.type === 'success' ? styles.toastSuccess : styles.toastError
+        ]}>
+          <Text style={styles.toastText}>{toast.message}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1906,5 +1923,28 @@ const styles = StyleSheet.create({
     color: '#00ff88',
     marginRight: 10,
     marginBottom: 5,
+  },
+  // Toast styles
+  toastContainer: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 20,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  toastSuccess: {
+    backgroundColor: 'rgba(0, 200, 120, 0.9)',
+  },
+  toastError: {
+    backgroundColor: 'rgba(255, 80, 80, 0.9)',
+  },
+  toastText: {
+    color: '#1a1a1a',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
