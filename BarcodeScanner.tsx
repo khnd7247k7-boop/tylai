@@ -51,11 +51,11 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
       if (foodData) {
         onFoodScanned(foodData);
       } else {
-        showToast('Barcode not found. You can add the food manually.', 'info');
+        // no notification
       }
     } catch (error) {
       console.error('Error looking up food:', error);
-      showToast('Failed to look up food information.', 'error');
+      // no notification
     } finally {
       setIsLoading(false);
     }

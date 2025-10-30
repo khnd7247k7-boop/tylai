@@ -49,27 +49,27 @@ function AppInner() {
 
   const handleSubmit = () => {
     if (!email || !password) {
-      showToast('Please fill in all required fields', 'error');
+      // no notification
       return;
     }
 
     if (!isLogin && password !== confirmPassword) {
-      showToast('Passwords do not match', 'error');
+      // no notification
       return;
     }
 
     if (!isLogin && !name) {
-      showToast('Please enter your name', 'error');
+      // no notification
       return;
     }
 
     // Here you would typically integrate with Firebase Auth
     if (isLogin) {
-      showToast('Login successful!', 'success');
+      // no notification
       setIsLoggedIn(true);
       setCurrentScreen('dashboard');
     } else {
-      showToast('Account created successfully!', 'success');
+      // no notification
       setIsLoggedIn(true);
       setCurrentScreen('dashboard');
     }

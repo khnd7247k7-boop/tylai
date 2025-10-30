@@ -29,7 +29,7 @@ function AppInner() {
 
   const handleAuth = async () => {
     if (!email || !password) {
-      showToast('Please fill in all fields', 'error');
+      // no notification
       return;
     }
 
@@ -37,10 +37,10 @@ function AppInner() {
     try {
       if (isSignup) {
         await createUserWithEmailAndPassword(auth, email, password);
-        showToast('Account created successfully!', 'success');
+        // no notification
       } else {
         await signInWithEmailAndPassword(auth, email, password);
-        showToast('Logged in successfully!', 'success');
+        // no notification
       }
     } catch (error) {
       let errorMessage = 'An error occurred';
@@ -61,7 +61,7 @@ function AppInner() {
           errorMessage = 'Invalid password';
           break;
       }
-      showToast(errorMessage, 'error');
+      // no notification
     } finally {
       setLoading(false);
     }

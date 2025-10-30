@@ -194,9 +194,9 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     if (!isCheckedIn) {
       setIsCheckedIn(true);
       await saveCheckInStatus(true);
-      showToast("Checked in for today! Keep up the great work!", 'success');
+      // no notification
     } else {
-      showToast('Already checked in for today. Come back tomorrow!', 'info');
+      // no notification
     }
   };
 
