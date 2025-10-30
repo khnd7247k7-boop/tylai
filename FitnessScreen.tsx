@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import WorkoutScreen from './WorkoutScreen';
@@ -304,6 +305,12 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const cancelEditMeal = () => {
     setEditingMeal(null);
+  };
+
+  const deleteMeal = (mealId: string) => {
+    const updatedMeals = meals.filter(m => m.id !== mealId);
+    setMeals(updatedMeals);
+    saveMeals(updatedMeals);
   };
 
   const handleMacroSubmit = () => {
@@ -1082,23 +1089,32 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
             <Text style={styles.sectionTitle}>Today's Meals</Text>
             <ScrollView style={styles.mealsScroll} contentContainerStyle={styles.mealsScrollContent}>
               {todayMeals.map(meal => (
-                <View key={meal.id} style={styles.mealItem}>
-                  <View style={styles.mealHeader}>
-                    <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
-                    <Text style={styles.mealTime} numberOfLines={1} ellipsizeMode="tail">{meal.time}</Text>
+                <Swipeable
+                  key={meal.id}
+                  renderRightActions={() => (
+                    <View style={styles.swipeActions}>
+                      <TouchableOpacity style={[styles.swipeButton, styles.swipeEdit]} onPress={() => openEditMeal(meal)}>
+                        <Text style={styles.swipeButtonText}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.swipeButton, styles.swipeDelete]} onPress={() => deleteMeal(meal.id)}>
+                        <Text style={styles.swipeButtonText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                >
+                  <View style={styles.mealItem}>
+                    <View style={styles.mealHeader}>
+                      <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
+                      <Text style={styles.mealTime} numberOfLines={1} ellipsizeMode="tail">{meal.time}</Text>
+                    </View>
+                    <View style={styles.mealMacros}>
+                      <Text style={styles.mealMacro}>{meal.calories} cal</Text>
+                      <Text style={styles.mealMacro}>{meal.protein}g protein</Text>
+                      <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
+                      <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
+                    </View>
                   </View>
-                  <View style={styles.mealMacros}>
-                    <Text style={styles.mealMacro}>{meal.calories} cal</Text>
-                    <Text style={styles.mealMacro}>{meal.protein}g protein</Text>
-                    <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
-                    <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
-                  </View>
-                  <View style={styles.mealActionsRow}>
-                    <TouchableOpacity style={styles.mealEditButton} onPress={() => openEditMeal(meal)}>
-                      <Text style={styles.mealEditButtonText}>Edit</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                </Swipeable>
               ))}
             </ScrollView>
           </View>
@@ -2109,6 +2125,30 @@ const styles = StyleSheet.create({
   },
   modalSaveText: {
     color: '#1a1a1a',
+  },
+  // Swipe actions
+  swipeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  swipeButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    marginLeft: 6,
+    borderRadius: 8,
+    height: '85%',
+    alignSelf: 'center',
+  },
+  swipeEdit: {
+    backgroundColor: '#4ECDC4',
+  },
+  swipeDelete: {
+    backgroundColor: '#ff6b6b',
+  },
+  swipeButtonText: {
+    color: '#1a1a1a',
+    fontWeight: 'bold',
   },
   // notifications removed
 });
