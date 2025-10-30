@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   TextInput,
   Alert,
+  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -256,6 +257,54 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     time: '',
     servings: '1',
   });
+
+  // Edit meal state
+  const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
+  const [editMealFields, setEditMealFields] = useState({
+    name: '',
+    protein: '',
+    carbs: '',
+    fat: '',
+    time: '',
+  });
+
+  const openEditMeal = (meal: Meal) => {
+    setEditingMeal(meal);
+    setEditMealFields({
+      name: meal.name,
+      protein: String(meal.protein),
+      carbs: String(meal.carbs),
+      fat: String(meal.fat),
+      time: meal.time,
+    });
+  };
+
+  const saveEditedMeal = () => {
+    if (!editingMeal) return;
+    const protein = parseInt(editMealFields.protein) || 0;
+    const carbs = parseInt(editMealFields.carbs) || 0;
+    const fat = parseInt(editMealFields.fat) || 0;
+    const calories = calculateCaloriesFromMacros(protein, carbs, fat);
+
+    const updated: Meal = {
+      ...editingMeal,
+      name: editMealFields.name || editingMeal.name,
+      protein,
+      carbs,
+      fat,
+      calories,
+      time: editMealFields.time || editingMeal.time,
+    };
+
+    const updatedMeals = meals.map(m => (m.id === editingMeal.id ? updated : m));
+    setMeals(updatedMeals);
+    saveMeals(updatedMeals);
+    setEditingMeal(null);
+  };
+
+  const cancelEditMeal = () => {
+    setEditingMeal(null);
+  };
 
   const handleMacroSubmit = () => {
     if (!todayMacros.calories || !todayMacros.protein || !todayMacros.carbs || !todayMacros.fat) {
@@ -1044,6 +1093,11 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                     <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
                     <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
                   </View>
+                  <View style={styles.mealActionsRow}>
+                    <TouchableOpacity style={styles.mealEditButton} onPress={() => openEditMeal(meal)}>
+                      <Text style={styles.mealEditButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </ScrollView>
@@ -1165,6 +1219,67 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         onClose={() => setShowBarcodeScanner(false)}
         onFoodScanned={handleFoodScanned}
       />
+
+      {/* Edit Meal Modal */}
+      <Modal visible={!!editingMeal} transparent animationType="fade" onRequestClose={cancelEditMeal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Meal</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Meal name"
+              value={editMealFields.name}
+              onChangeText={(t) => setEditMealFields(prev => ({ ...prev, name: t }))}
+            />
+            <View style={styles.modalRow}>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Protein (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="0"
+                  keyboardType="numeric"
+                  value={editMealFields.protein}
+                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, protein: t }))}
+                />
+              </View>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Carbs (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="0"
+                  keyboardType="numeric"
+                  value={editMealFields.carbs}
+                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, carbs: t }))}
+                />
+              </View>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Fat (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="0"
+                  keyboardType="numeric"
+                  value={editMealFields.fat}
+                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, fat: t }))}
+                />
+              </View>
+            </View>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Time (e.g., 12:15 PM)"
+              value={editMealFields.time}
+              onChangeText={(t) => setEditMealFields(prev => ({ ...prev, time: t }))}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalButton, styles.modalCancel]} onPress={cancelEditMeal}>
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.modalSave]} onPress={saveEditedMeal}>
+                <Text style={[styles.modalButtonText, styles.modalSaveText]}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* notifications removed */}
     </SafeAreaView>
@@ -1911,6 +2026,89 @@ const styles = StyleSheet.create({
     color: '#00ff88',
     marginRight: 10,
     marginBottom: 5,
+  },
+  mealActionsRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  mealEditButton: {
+    backgroundColor: '#4ECDC4',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  mealEditButtonText: {
+    color: '#1a1a1a',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 12,
+    width: '100%',
+    padding: 16,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  modalField: {
+    flex: 1,
+  },
+  modalLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  modalInput: {
+    backgroundColor: '#3a3a3a',
+    borderRadius: 8,
+    padding: 10,
+    color: '#fff',
+    marginBottom: 10,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  modalButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  modalCancel: {
+    backgroundColor: '#444',
+    marginRight: 8,
+  },
+  modalSave: {
+    backgroundColor: '#00ff88',
+    marginLeft: 8,
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  modalSaveText: {
+    color: '#1a1a1a',
   },
   // notifications removed
 });
