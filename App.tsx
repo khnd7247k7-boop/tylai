@@ -22,6 +22,7 @@ import SettingsScreen from './SettingsScreen';
 import SpiritualScreen from './SpiritualScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
+import { ToastProvider } from './src/components/ToastProvider';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -124,81 +125,94 @@ export default function App() {
   // Show Workout Screen
   if (isLoggedIn && currentScreen === 'workout') {
     return (
-      <SmoothTransition isVisible={true} direction="slideInRight">
-        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <WorkoutScreen onBack={handleBackToDashboard} />
-        </SwipeNavigation>
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <WorkoutScreen onBack={handleBackToDashboard} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Fitness Screen
   if (isLoggedIn && currentScreen === 'fitness') {
     return (
-      <SmoothTransition isVisible={true} direction="slideInRight">
-        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <FitnessScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-            // This will be handled by the Dashboard component
-            console.log('Task completed:', taskTitle);
-          }} />
-        </SwipeNavigation>
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <FitnessScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+              // This will be handled by the Dashboard component
+              console.log('Task completed:', taskTitle);
+            }} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Mental Screen
   if (isLoggedIn && currentScreen === 'mental') {
     return (
-      <SmoothTransition isVisible={true} direction="slideInRight">
-        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <MentalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-            // This will be handled by the Dashboard component
-            console.log('Task completed:', taskTitle);
-          }} />
-        </SwipeNavigation>
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <MentalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+              // This will be handled by the Dashboard component
+              console.log('Task completed:', taskTitle);
+            }} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Emotional Screen
   if (isLoggedIn && currentScreen === 'emotional') {
     return (
-      <SmoothTransition isVisible={true} direction="slideInRight">
-        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <EmotionalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-            // This will be handled by the Dashboard component
-            console.log('Task completed:', taskTitle);
-          }} />
-        </SwipeNavigation>
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <EmotionalScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+              // This will be handled by the Dashboard component
+              console.log('Task completed:', taskTitle);
+            }} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Spiritual Screen
   if (isLoggedIn && currentScreen === 'spiritual') {
     return (
-      <SmoothTransition isVisible={true} direction="slideInRight">
-        <SwipeNavigation onSwipeBack={handleBackToDashboard}>
-          <SpiritualScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
-            // This will be handled by the Dashboard component
-            console.log('Task completed:', taskTitle);
-          }} />
-        </SwipeNavigation>
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <SpiritualScreen onBack={handleBackToDashboard} onCompleteTask={(taskTitle: string) => {
+              // This will be handled by the Dashboard component
+              console.log('Task completed:', taskTitle);
+            }} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Dashboard if logged in
   if (isLoggedIn && currentScreen === 'dashboard') {
     return (
-      <SmoothTransition isVisible={true} direction="fadeIn">
-        <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} onNavigateToSpiritual={handleNavigateToSpiritual} />
-      </SmoothTransition>
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="fadeIn">
+          <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} onNavigateToSpiritual={handleNavigateToSpiritual} />
+        </SmoothTransition>
+      </ToastProvider>
     );
   }
 
   // Show Login Screen
   return (
+    <ToastProvider>
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
       <KeyboardAvoidingView
@@ -293,6 +307,7 @@ export default function App() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </ToastProvider>
   );
 }
 

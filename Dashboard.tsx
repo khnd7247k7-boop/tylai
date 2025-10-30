@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
 } from 'react-native';
+import { useToast } from './src/components/ToastProvider';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -30,6 +31,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings, onNavigateToSpiritual }: DashboardProps) {
+  const { showToast } = useToast();
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [manualQuoteIndex, setManualQuoteIndex] = useState<number | null>(null);
@@ -192,9 +194,9 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     if (!isCheckedIn) {
       setIsCheckedIn(true);
       await saveCheckInStatus(true);
-      Alert.alert('Success!', 'You\'ve checked in for today! Keep up the great work!');
+      showToast("Checked in for today! Keep up the great work!", 'success');
     } else {
-      Alert.alert('Already Checked In', 'You\'ve already checked in today. Come back tomorrow!');
+      showToast('Already checked in for today. Come back tomorrow!', 'info');
     }
   };
 
