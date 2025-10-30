@@ -1754,7 +1754,7 @@ const styles = StyleSheet.create({
   savedMealItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: '#2a2a2a',
     borderRadius: 8,
     padding: 12,
@@ -1762,21 +1762,25 @@ const styles = StyleSheet.create({
   },
   savedMealInfo: {
     flex: 1,
+    paddingRight: 10,
   },
   savedMealName: {
     fontSize: 16,
     color: '#fff',
     fontWeight: '600',
     marginBottom: 4,
+    flexWrap: 'wrap',
   },
   savedMealMacros: {
     fontSize: 14,
     color: '#ccc',
     marginBottom: 2,
+    flexWrap: 'wrap',
   },
   savedMealUsage: {
     fontSize: 12,
     color: '#4ECDC4',
+    marginTop: 2,
   },
   useMealButton: {
     backgroundColor: '#00ff88',
