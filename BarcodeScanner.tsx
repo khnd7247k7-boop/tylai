@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
 import { lookupFoodByBarcode, ScannedFood } from './src/utils/foodDatabase';
+import { useToast } from './src/components/ToastProvider';
 
 // ScannedFood type imported from foodDatabase
 
@@ -24,6 +25,7 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -49,14 +51,11 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
       if (foodData) {
         onFoodScanned(foodData);
       } else {
-        Alert.alert(
-          'Food Not Found',
-          'This barcode was not found. You can still add the food manually.'
-        );
+        showToast('Barcode not found. You can add the food manually.', 'info');
       }
     } catch (error) {
       console.error('Error looking up food:', error);
-      Alert.alert('Error', 'Failed to look up food information.');
+      showToast('Failed to look up food information.', 'error');
     } finally {
       setIsLoading(false);
     }

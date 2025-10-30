@@ -12,6 +12,7 @@ import {
   Keyboard,
   Alert
 } from 'react-native';
+import { ToastProvider, useToast } from './src/components/ToastProvider';
 import { auth } from './firebaseConfig';
 import { 
   createUserWithEmailAndPassword,
@@ -19,15 +20,16 @@ import {
   onAuthStateChanged
 } from 'firebase/auth';
 
-export default function App() {
+function AppInner() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignup, setIsSignup] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
 
   const handleAuth = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast('Please fill in all fields', 'error');
       return;
     }
 
@@ -35,10 +37,10 @@ export default function App() {
     try {
       if (isSignup) {
         await createUserWithEmailAndPassword(auth, email, password);
-        Alert.alert('Success', 'Account created successfully!');
+        showToast('Account created successfully!', 'success');
       } else {
         await signInWithEmailAndPassword(auth, email, password);
-        Alert.alert('Success', 'Logged in successfully!');
+        showToast('Logged in successfully!', 'success');
       }
     } catch (error) {
       let errorMessage = 'An error occurred';
@@ -59,7 +61,7 @@ export default function App() {
           errorMessage = 'Invalid password';
           break;
       }
-      Alert.alert('Error', errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setLoading(false);
     }
@@ -126,6 +128,14 @@ export default function App() {
         <StatusBar style="auto" />
       </KeyboardAvoidingView>
     </TouchableWithoutFeedback>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AppInner />
+    </ToastProvider>
   );
 }
 
