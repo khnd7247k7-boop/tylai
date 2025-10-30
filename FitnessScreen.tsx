@@ -767,22 +767,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           </View>
           
           {!isEditingGoals ? (
-            <View style={styles.goalsGrid}>
-              <View style={styles.goalItem}>
-                <Text style={styles.goalLabel}>Calories</Text>
-                <Text style={styles.goalValue}>{nutritionGoals.calories}</Text>
+            <View style={styles.compactGoalsRow}>
+              <View style={styles.compactGoalBlock}>
+                <Text style={styles.compactGoalLabel}>Cal</Text>
+                <Text style={styles.compactGoalValue}>{nutritionGoals.calories}</Text>
               </View>
-              <View style={styles.goalItem}>
-                <Text style={styles.goalLabel}>Protein (g)</Text>
-                <Text style={styles.goalValue}>{nutritionGoals.protein}</Text>
+              <View style={styles.compactGoalBlock}>
+                <Text style={styles.compactGoalLabel}>P</Text>
+                <Text style={styles.compactGoalValue}>{nutritionGoals.protein}g</Text>
               </View>
-              <View style={styles.goalItem}>
-                <Text style={styles.goalLabel}>Carbs (g)</Text>
-                <Text style={styles.goalValue}>{nutritionGoals.carbs}</Text>
+              <View style={styles.compactGoalBlock}>
+                <Text style={styles.compactGoalLabel}>C</Text>
+                <Text style={styles.compactGoalValue}>{nutritionGoals.carbs}g</Text>
               </View>
-              <View style={styles.goalItem}>
-                <Text style={styles.goalLabel}>Fat (g)</Text>
-                <Text style={styles.goalValue}>{nutritionGoals.fat}</Text>
+              <View style={styles.compactGoalBlock}>
+                <Text style={styles.compactGoalLabel}>F</Text>
+                <Text style={styles.compactGoalValue}>{nutritionGoals.fat}g</Text>
               </View>
             </View>
           ) : (
@@ -1544,15 +1544,15 @@ const styles = StyleSheet.create({
   // Nutrition styles
   goalsSection: {
     backgroundColor: '#2a2a2a',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 20,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
   },
   goalsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 8,
   },
   editButton: {
     backgroundColor: '#4ECDC4',
@@ -1618,6 +1618,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
+  },
+  compactGoalsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  compactGoalBlock: {
+    backgroundColor: '#3a3a3a',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    width: '23%'
+  },
+  compactGoalLabel: {
+    fontSize: 12,
+    color: '#888',
+    marginBottom: 2,
+  },
+  compactGoalValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
   },
   goalItem: {
     width: '48%',
