@@ -38,37 +38,25 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
 
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (scanned) return;
-    
     setScanned(true);
-    setIsLoading(true);
 
+    // Close scanner immediately to prevent multiple reads
+    onClose();
+
+    setIsLoading(true);
     try {
-      // Simulate API call to food database
-      // In a real app, you would call an API like Open Food Facts or USDA Food Database
       const foodData = await lookupFoodByBarcode(data);
-      
       if (foodData) {
         onFoodScanned(foodData);
-        onClose();
       } else {
         Alert.alert(
           'Food Not Found',
-          'This barcode was not found in our database. You can still add the food manually.',
-          [
-            { text: 'OK', onPress: () => setScanned(false) },
-            { text: 'Add Manually', onPress: () => onClose() }
-          ]
+          'This barcode was not found. You can still add the food manually.'
         );
       }
     } catch (error) {
       console.error('Error looking up food:', error);
-      Alert.alert(
-        'Error',
-        'Failed to look up food information. Please try again or add manually.',
-        [
-          { text: 'OK', onPress: () => setScanned(false) }
-        ]
-      );
+      Alert.alert('Error', 'Failed to look up food information.');
     } finally {
       setIsLoading(false);
     }
