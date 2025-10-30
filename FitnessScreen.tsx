@@ -983,12 +983,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
             {mealInput.protein && mealInput.carbs && mealInput.fat && (
               <View style={styles.calculatedCalories}>
                 <Text style={styles.calculatedCaloriesText}>
-                  Calculated Calories: {(() => {
+                  {(() => {
                     const servings = parseFloat(mealInput.servings || '1') || 1;
-                    const p = Math.round((parseFloat(mealInput.protein) || 0) * servings);
-                    const c = Math.round((parseFloat(mealInput.carbs) || 0) * servings);
-                    const f = Math.round((parseFloat(mealInput.fat) || 0) * servings);
-                    return calculateCaloriesFromMacros(p, c, f);
+                    const pTotal = Math.round((parseFloat(mealInput.protein) || 0) * servings);
+                    const cTotal = Math.round((parseFloat(mealInput.carbs) || 0) * servings);
+                    const fTotal = Math.round((parseFloat(mealInput.fat) || 0) * servings);
+                    const totalCals = calculateCaloriesFromMacros(pTotal, cTotal, fTotal);
+                    return `Calculated Calories: ${totalCals}`;
+                  })()}
+                </Text>
+                <Text style={styles.perServingText}>
+                  {(() => {
+                    const p = Math.round(parseFloat(mealInput.protein) || 0);
+                    const c = Math.round(parseFloat(mealInput.carbs) || 0);
+                    const f = Math.round(parseFloat(mealInput.fat) || 0);
+                    const perServingCals = calculateCaloriesFromMacros(p, c, f);
+                    return `Per serving: ${perServingCals} cal • ${p}g P • ${c}g C • ${f}g F`;
                   })()}
                 </Text>
               </View>
@@ -1766,6 +1776,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  perServingText: {
+    color: '#aaa',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 6,
   },
   calculatedCaloriesGoal: {
     backgroundColor: '#3a3a3a',
