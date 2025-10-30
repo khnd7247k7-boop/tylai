@@ -10,18 +10,9 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import { lookupFoodByBarcode, ScannedFood } from './src/utils/foodDatabase';
 
-interface ScannedFood {
-  name: string;
-  brand?: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  servingSize: string;
-  barcode: string;
-}
+// ScannedFood type imported from foodDatabase
 
 interface BarcodeScannerProps {
   visible: boolean;
@@ -83,68 +74,7 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
     }
   };
 
-  // Mock function to simulate food database lookup
-  // In a real app, this would call an actual API
-  const lookupFoodByBarcode = async (barcode: string): Promise<ScannedFood | null> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Mock food database - in reality, you'd use Open Food Facts API or similar
-    const mockFoodDatabase: { [key: string]: ScannedFood } = {
-      '1234567890123': {
-        name: 'Protein Bar',
-        brand: 'Quest',
-        calories: 200,
-        protein: 20,
-        carbs: 15,
-        fat: 8,
-        servingSize: '1 bar (60g)',
-        barcode: '1234567890123'
-      },
-      '2345678901234': {
-        name: 'Greek Yogurt',
-        brand: 'Chobani',
-        calories: 150,
-        protein: 15,
-        carbs: 12,
-        fat: 5,
-        servingSize: '1 container (170g)',
-        barcode: '2345678901234'
-      },
-      '3456789012345': {
-        name: 'Almonds',
-        brand: 'Blue Diamond',
-        calories: 160,
-        protein: 6,
-        carbs: 6,
-        fat: 14,
-        servingSize: '1 oz (28g)',
-        barcode: '3456789012345'
-      },
-      '4567890123456': {
-        name: 'Banana',
-        brand: 'Fresh',
-        calories: 105,
-        protein: 1,
-        carbs: 27,
-        fat: 0,
-        servingSize: '1 medium (118g)',
-        barcode: '4567890123456'
-      },
-      '5678901234567': {
-        name: 'Chicken Breast',
-        brand: 'Tyson',
-        calories: 165,
-        protein: 31,
-        carbs: 0,
-        fat: 3.6,
-        servingSize: '4 oz (113g)',
-        barcode: '5678901234567'
-      }
-    };
-
-    return mockFoodDatabase[barcode] || null;
-  };
+  // Lookup now handled by src/utils/foodDatabase
 
   const resetScanner = () => {
     setScanned(false);
