@@ -251,6 +251,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     carbs: '',
     fat: '',
     time: '',
+    servings: '1',
   });
 
   const handleMacroSubmit = () => {
@@ -285,18 +286,23 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       return;
     }
 
-    const protein = parseInt(mealInput.protein);
-    const carbs = parseInt(mealInput.carbs);
-    const fat = parseInt(mealInput.fat);
-    const calculatedCalories = calculateCaloriesFromMacros(protein, carbs, fat);
+    const servings = parseFloat(mealInput.servings) || 1;
+    const baseProtein = parseFloat(mealInput.protein) || 0;
+    const baseCarbs = parseFloat(mealInput.carbs) || 0;
+    const baseFat = parseFloat(mealInput.fat) || 0;
+
+    const totalProtein = Math.round(baseProtein * servings);
+    const totalCarbs = Math.round(baseCarbs * servings);
+    const totalFat = Math.round(baseFat * servings);
+    const calculatedCalories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
 
     const newMeal: Meal = {
       id: Date.now().toString(),
       name: mealInput.name,
       calories: calculatedCalories,
-      protein: protein,
-      carbs: carbs,
-      fat: fat,
+      protein: totalProtein,
+      carbs: totalCarbs,
+      fat: totalFat,
       time: mealInput.time || new Date().toLocaleTimeString(),
       date: new Date().toISOString(),
     };
@@ -323,9 +329,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         id: Date.now().toString(),
         name: mealInput.name,
         calories: calculatedCalories,
-        protein: protein,
-        carbs: carbs,
-        fat: fat,
+        protein: totalProtein,
+        carbs: totalCarbs,
+        fat: totalFat,
         timesUsed: 1,
         lastUsed: new Date().toISOString(),
       };
@@ -334,7 +340,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       saveSavedMeals(updatedMeals);
     }
 
-    setMealInput({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '' });
+    setMealInput({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '', servings: '1' });
     Alert.alert('Success', 'Meal logged successfully!');
   };
 
@@ -438,7 +444,8 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       protein: scannedFood.protein.toString(),
       carbs: scannedFood.carbs.toString(),
       fat: scannedFood.fat.toString(),
-      time: new Date().toLocaleTimeString()
+      time: new Date().toLocaleTimeString(),
+      servings: '1'
     });
     // No blocking alerts; user can review/edit and tap Add Meal
   };
@@ -954,6 +961,16 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 keyboardType="numeric"
               />
             </View>
+          <View style={styles.macroRow}>
+            <Text style={styles.macroLabel}>Servings</Text>
+            <TextInput
+              style={styles.macroInput}
+              placeholder="1"
+              value={mealInput.servings}
+              onChangeText={(text) => setMealInput(prev => ({ ...prev, servings: text }))}
+              keyboardType="numeric"
+            />
+          </View>
             <View style={styles.macroRow}>
               <Text style={styles.macroLabel}>Time (optional)</Text>
               <TextInput
@@ -966,11 +983,13 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
             {mealInput.protein && mealInput.carbs && mealInput.fat && (
               <View style={styles.calculatedCalories}>
                 <Text style={styles.calculatedCaloriesText}>
-                  Calculated Calories: {calculateCaloriesFromMacros(
-                    parseInt(mealInput.protein) || 0,
-                    parseInt(mealInput.carbs) || 0,
-                    parseInt(mealInput.fat) || 0
-                  )}
+                  Calculated Calories: {(() => {
+                    const servings = parseFloat(mealInput.servings || '1') || 1;
+                    const p = Math.round((parseFloat(mealInput.protein) || 0) * servings);
+                    const c = Math.round((parseFloat(mealInput.carbs) || 0) * servings);
+                    const f = Math.round((parseFloat(mealInput.fat) || 0) * servings);
+                    return calculateCaloriesFromMacros(p, c, f);
+                  })()}
                 </Text>
               </View>
             )}
