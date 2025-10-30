@@ -911,11 +911,18 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                       onPress={() => handleUseSavedMeal(meal)}
                     >
                       <View style={styles.savedMealInfo}>
-                        <Text style={styles.savedMealName}>{meal.name}</Text>
+                        <Text style={styles.savedMealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
                         <Text style={styles.savedMealMacros}>
                           {meal.calories} cal • {meal.protein}g protein • {meal.carbs}g carbs • {meal.fat}g fat
                         </Text>
-                        <Text style={styles.savedMealUsage}>Used {meal.timesUsed} times</Text>
+                        <View style={styles.savedMealMetaRow}>
+                          <Text style={styles.savedMealUsage}>Used {meal.timesUsed} times</Text>
+                          {meal.lastUsed ? (
+                            <Text style={styles.savedMealLastUsed} numberOfLines={1} ellipsizeMode="tail">
+                              Last used: {new Date(meal.lastUsed).toLocaleDateString()}
+                            </Text>
+                          ) : null}
+                        </View>
                       </View>
                       <Text style={styles.useMealButton}>Use</Text>
                     </TouchableOpacity>
@@ -1021,20 +1028,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         {todayMeals.length > 0 && (
           <View style={styles.mealsList}>
             <Text style={styles.sectionTitle}>Today's Meals</Text>
-            {todayMeals.map(meal => (
-              <View key={meal.id} style={styles.mealItem}>
-                <View style={styles.mealHeader}>
-                  <Text style={styles.mealName}>{meal.name}</Text>
-                  <Text style={styles.mealTime}>{meal.time}</Text>
+            <ScrollView style={styles.mealsScroll} contentContainerStyle={styles.mealsScrollContent}>
+              {todayMeals.map(meal => (
+                <View key={meal.id} style={styles.mealItem}>
+                  <View style={styles.mealHeader}>
+                    <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
+                    <Text style={styles.mealTime} numberOfLines={1} ellipsizeMode="tail">{meal.time}</Text>
+                  </View>
+                  <View style={styles.mealMacros}>
+                    <Text style={styles.mealMacro}>{meal.calories} cal</Text>
+                    <Text style={styles.mealMacro}>{meal.protein}g protein</Text>
+                    <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
+                    <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
+                  </View>
                 </View>
-                <View style={styles.mealMacros}>
-                  <Text style={styles.mealMacro}>{meal.calories} cal</Text>
-                  <Text style={styles.mealMacro}>{meal.protein}g protein</Text>
-                  <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
-                  <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
-                </View>
-              </View>
-            ))}
+              ))}
+            </ScrollView>
           </View>
         )}
       </View>
@@ -1788,6 +1797,18 @@ const styles = StyleSheet.create({
     color: '#4ECDC4',
     marginTop: 2,
   },
+  savedMealMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  savedMealLastUsed: {
+    fontSize: 12,
+    color: '#888',
+    textAlign: 'right',
+    flexShrink: 1,
+  },
   useMealButton: {
     backgroundColor: '#00ff88',
     color: '#1a1a1a',
@@ -1844,6 +1865,12 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 20,
   },
+  mealsScroll: {
+    maxHeight: 260,
+  },
+  mealsScrollContent: {
+    paddingBottom: 6,
+  },
   mealItem: {
     backgroundColor: '#3a3a3a',
     borderRadius: 10,
@@ -1853,17 +1880,21 @@ const styles = StyleSheet.create({
   mealHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 10,
   },
   mealName: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',
+    flex: 1,
+    paddingRight: 8,
   },
   mealTime: {
     fontSize: 12,
     color: '#888',
+    maxWidth: 100,
+    textAlign: 'right',
   },
   mealMacros: {
     flexDirection: 'row',
