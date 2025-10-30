@@ -24,6 +24,7 @@ import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 import { ToastProvider } from './src/components/ToastProvider';
 import { useToast } from './src/components/ToastProvider';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 function AppInner() {
   const { showToast } = useToast();
@@ -315,9 +316,11 @@ function AppInner() {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AppInner />
-    </ToastProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ToastProvider>
+        <AppInner />
+      </ToastProvider>
+    </GestureHandlerRootView>
   );
 }
 

@@ -13,6 +13,7 @@ import {
   Alert
 } from 'react-native';
 import { ToastProvider, useToast } from './src/components/ToastProvider';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { auth } from './firebaseConfig';
 import { 
   createUserWithEmailAndPassword,
@@ -133,9 +134,11 @@ function AppInner() {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AppInner />
-    </ToastProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ToastProvider>
+        <AppInner />
+      </ToastProvider>
+    </GestureHandlerRootView>
   );
 }
 
