@@ -440,16 +440,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       fat: scannedFood.fat.toString(),
       time: new Date().toLocaleTimeString()
     });
-
-    // Give the user a choice to add now or adjust first
-    Alert.alert(
-      'Food Scanned',
-      `${scannedFood.name} (${scannedFood.brand || 'Generic'})\nServing: ${scannedFood.servingSize}\n\nMacros have been filled in.`,
-      [
-        { text: 'Edit First' },
-        { text: 'Add to Log', onPress: () => handleMealSubmit() }
-      ]
-    );
+    // No blocking alerts; user can review/edit and tap Add Meal
   };
 
   const toggleTaskCompletion = (taskId: string) => {
