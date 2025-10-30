@@ -900,7 +900,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
-              <View style={styles.savedMealsList}>
+              <ScrollView style={styles.savedMealsList} contentContainerStyle={styles.savedMealsListContent}>
                 {savedMeals
                   .filter(meal => meal.name.toLowerCase().includes(searchQuery.toLowerCase()))
                   .sort((a, b) => b.timesUsed - a.timesUsed)
@@ -920,7 +920,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                       <Text style={styles.useMealButton}>Use</Text>
                     </TouchableOpacity>
                   ))}
-              </View>
+              </ScrollView>
             </View>
           )}
 
@@ -1749,7 +1749,10 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   savedMealsList: {
-    maxHeight: 200,
+    maxHeight: 260,
+  },
+  savedMealsListContent: {
+    paddingBottom: 6,
   },
   savedMealItem: {
     flexDirection: 'row',
@@ -1763,6 +1766,8 @@ const styles = StyleSheet.create({
   savedMealInfo: {
     flex: 1,
     paddingRight: 10,
+    flexShrink: 1,
+    minWidth: 0,
   },
   savedMealName: {
     fontSize: 16,
@@ -1776,6 +1781,7 @@ const styles = StyleSheet.create({
     color: '#ccc',
     marginBottom: 2,
     flexWrap: 'wrap',
+    lineHeight: 18,
   },
   savedMealUsage: {
     fontSize: 12,
