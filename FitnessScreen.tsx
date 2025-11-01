@@ -1078,7 +1078,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               style={styles.scanButton} 
               onPress={() => setShowBarcodeScanner(true)}
             >
-              <Text style={styles.scanButtonText}>📷 Scan</Text>
+              <Text style={styles.scanButtonText}>Scan</Text>
             </TouchableOpacity>
           </View>
         </View>
