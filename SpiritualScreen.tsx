@@ -13,6 +13,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 
 interface GratitudeEntry {
   id: string;
@@ -149,13 +150,13 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
 
   const loadSpiritualData = async () => {
     try {
-      const savedGratitude = await AsyncStorage.getItem('gratitudeEntries');
-      const savedAffirmations = await AsyncStorage.getItem('affirmationEntries');
-      const savedReflections = await AsyncStorage.getItem('reflectionEntries');
+      const savedGratitude = await loadUserData<GratitudeEntry[]>('gratitudeEntries');
+      const savedAffirmations = await loadUserData<AffirmationEntry[]>('affirmationEntries');
+      const savedReflections = await loadUserData<ReflectionEntry[]>('reflectionEntries');
       
-      if (savedGratitude) setGratitudeEntries(JSON.parse(savedGratitude));
-      if (savedAffirmations) setAffirmationEntries(JSON.parse(savedAffirmations));
-      if (savedReflections) setReflectionEntries(JSON.parse(savedReflections));
+      if (savedGratitude) setGratitudeEntries(savedGratitude);
+      if (savedAffirmations) setAffirmationEntries(savedAffirmations);
+      if (savedReflections) setReflectionEntries(savedReflections);
     } catch (error) {
       console.error('Error loading spiritual data:', error);
     }
@@ -177,17 +178,17 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
 
     const updatedEntries = [newEntry, ...gratitudeEntries];
     setGratitudeEntries(updatedEntries);
-    await AsyncStorage.setItem('gratitudeEntries', JSON.stringify(updatedEntries));
+    await saveUserData('gratitudeEntries', updatedEntries);
     
     setCurrentGratitude(['', '', '']);
     setCurrentReflection('');
-    Alert.alert('Gratitude logged successfully!');
+    // no notification
     onCompleteTask('Daily Gratitude Practice');
   };
 
   const saveAffirmationEntry = async () => {
     if (!selectedAffirmation) {
-      Alert.alert('Please select an affirmation');
+      // no notification
       return;
     }
 
@@ -202,16 +203,16 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
 
     const updatedEntries = [newEntry, ...affirmationEntries];
     setAffirmationEntries(updatedEntries);
-    await AsyncStorage.setItem('affirmationEntries', JSON.stringify(updatedEntries));
+    await saveUserData('affirmationEntries', updatedEntries);
     
     setSelectedAffirmation('');
-    Alert.alert('Affirmation completed!');
+    // no notification
     onCompleteTask('Daily Affirmation Practice');
   };
 
   const saveReflectionEntry = async () => {
     if (!selectedReflectionPrompt || !currentReflection.trim()) {
-      Alert.alert('Please select a prompt and write your reflection');
+      // no notification
       return;
     }
 
@@ -225,11 +226,11 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
 
     const updatedEntries = [newEntry, ...reflectionEntries];
     setReflectionEntries(updatedEntries);
-    await AsyncStorage.setItem('reflectionEntries', JSON.stringify(updatedEntries));
+    await saveUserData('reflectionEntries', updatedEntries);
     
     setSelectedReflectionPrompt('');
     setCurrentReflection('');
-    Alert.alert('Reflection saved successfully!');
+    // no notification
     onCompleteTask('Spiritual Reflection Practice');
   };
 

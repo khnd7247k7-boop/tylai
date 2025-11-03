@@ -12,6 +12,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 
 interface MoodEntry {
   id: string;
@@ -215,9 +216,8 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
 
   const loadMoodEntries = async () => {
     try {
-      const savedEntries = await AsyncStorage.getItem('moodEntries');
-      if (savedEntries) {
-        const parsedEntries = JSON.parse(savedEntries);
+      const parsedEntries = await loadUserData<MoodEntry[]>('moodEntries');
+      if (parsedEntries) {
         setMoodEntries(parsedEntries);
       }
     } catch (error) {
@@ -227,7 +227,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
 
   const saveMoodEntries = async (entries: MoodEntry[]) => {
     try {
-      await AsyncStorage.setItem('moodEntries', JSON.stringify(entries));
+      await saveUserData('moodEntries', entries);
     } catch (error) {
       console.error('Error saving mood entries:', error);
     }
@@ -235,10 +235,32 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
 
   const loadEmotionalExercises = async () => {
     try {
-      const savedExercises = await AsyncStorage.getItem('emotionalExercises');
-      if (savedExercises) {
-        const parsedExercises = JSON.parse(savedExercises);
-        setEmotionalExercises(parsedExercises);
+      const today = new Date().toDateString();
+      const lastResetDate = await loadUserData<string>('emotionalExercisesLastReset');
+      const parsedExercises = await loadUserData<EmotionalExercise[]>('emotionalExercises');
+      
+      console.log('Loading emotional exercises:', parsedExercises);
+      console.log('Last reset date:', lastResetDate);
+      console.log('Today:', today);
+      
+      if (parsedExercises) {
+        // If it's a new day, reset all exercise completion status
+        if (lastResetDate !== today) {
+          console.log('New day detected - resetting emotional exercise completion status');
+          const resetExercises = parsedExercises.map((exercise) => ({
+            ...exercise,
+            completed: false,
+            completedAt: undefined
+          }));
+          setEmotionalExercises(resetExercises);
+          await saveEmotionalExercises(resetExercises);
+          await saveUserData('emotionalExercisesLastReset', today);
+        } else {
+          setEmotionalExercises(parsedExercises);
+        }
+      } else {
+        // First time loading - set reset date
+        await saveUserData('emotionalExercisesLastReset', today);
       }
     } catch (error) {
       console.error('Error loading emotional exercises:', error);
@@ -247,7 +269,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
 
   const saveEmotionalExercises = async (exercises: EmotionalExercise[]) => {
     try {
-      await AsyncStorage.setItem('emotionalExercises', JSON.stringify(exercises));
+      await saveUserData('emotionalExercises', exercises);
     } catch (error) {
       console.error('Error saving emotional exercises:', error);
     }
@@ -613,7 +635,6 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
               style={[styles.checkbox, exercise.completed && styles.checkedBox]}
               onPress={() => toggleExerciseCompletion(exercise.id)}
             >
-              {exercise.completed && <Text style={styles.checkmark}>DONE</Text>}
             </TouchableOpacity>
           </View>
           
@@ -1178,6 +1199,7 @@ const styles = StyleSheet.create({
   },
   checkedBox: {
     backgroundColor: '#96CEB4',
+    borderColor: '#96CEB4',
     shadowColor: '#96CEB4',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.6,

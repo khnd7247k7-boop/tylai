@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -25,6 +25,7 @@ import SmoothTransition from './SmoothTransition';
 import { ToastProvider } from './src/components/ToastProvider';
 import { useToast } from './src/components/ToastProvider';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { updateNotificationSchedule, requestNotificationPermissions } from './src/utils/notifications';
 
 function AppInner() {
   const { showToast } = useToast();
@@ -47,6 +48,16 @@ function AppInner() {
     },
     completedTasks: []
   });
+
+  // Initialize notifications on app start
+  useEffect(() => {
+    const initializeNotifications = async () => {
+      await requestNotificationPermissions();
+      await updateNotificationSchedule();
+    };
+    
+    initializeNotifications();
+  }, []);
 
   const handleSubmit = () => {
     if (!email || !password) {
@@ -196,6 +207,19 @@ function AppInner() {
               // This will be handled by the Dashboard component
               console.log('Task completed:', taskTitle);
             }} />
+          </SwipeNavigation>
+        </SmoothTransition>
+      </ToastProvider>
+    );
+  }
+
+  // Show Settings Screen
+  if (isLoggedIn && currentScreen === 'settings') {
+    return (
+      <ToastProvider>
+        <SmoothTransition isVisible={true} direction="slideInRight">
+          <SwipeNavigation onSwipeBack={handleBackToDashboard}>
+            <SettingsScreen onBack={handleBackToDashboard} onLogout={handleLogout} />
           </SwipeNavigation>
         </SmoothTransition>
       </ToastProvider>

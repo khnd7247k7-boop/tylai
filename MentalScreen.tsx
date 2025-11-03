@@ -11,6 +11,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 
 interface MentalExercise {
   id: string;
@@ -210,16 +211,15 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
 
   const loadMentalExercises = async () => {
     try {
-      const savedExercises = await AsyncStorage.getItem('mentalExercises');
-      const lastResetDate = await AsyncStorage.getItem('mentalExercisesLastReset');
+      const parsedExercises = await loadUserData<MentalExercise[]>('mentalExercises');
+      const lastResetDate = await loadUserData<string>('mentalExercisesLastReset');
       const today = new Date().toDateString();
       
-      console.log('Loading mental exercises:', savedExercises);
+      console.log('Loading mental exercises:', parsedExercises);
       console.log('Last reset date:', lastResetDate);
       console.log('Today:', today);
       
-      if (savedExercises) {
-        const parsedExercises = JSON.parse(savedExercises);
+      if (parsedExercises) {
         console.log('Parsed mental exercises:', parsedExercises);
         
         // If it's a new day, reset all exercise completion status
@@ -232,7 +232,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
           }));
           setMentalExercises(resetExercises);
           await saveMentalExercises(resetExercises);
-          await AsyncStorage.setItem('mentalExercisesLastReset', today);
+          await saveUserData('mentalExercisesLastReset', today);
         } else {
           setMentalExercises(parsedExercises);
         }
@@ -245,7 +245,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
   const saveMentalExercises = async (exercises: MentalExercise[]) => {
     try {
       console.log('Saving mental exercises:', exercises);
-      await AsyncStorage.setItem('mentalExercises', JSON.stringify(exercises));
+      await saveUserData('mentalExercises', exercises);
       console.log('Mental exercises saved successfully');
     } catch (error) {
       console.error('Error saving mental exercises:', error);
@@ -254,10 +254,9 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
 
   const loadDailyProgress = async () => {
     try {
-      const savedProgress = await AsyncStorage.getItem('dailyMentalProgress');
-      console.log('Loading daily mental progress:', savedProgress);
-      if (savedProgress) {
-        const parsedProgress = JSON.parse(savedProgress);
+      const parsedProgress = await loadUserData<DailyMentalProgress[]>('dailyMentalProgress');
+      console.log('Loading daily mental progress:', parsedProgress);
+      if (parsedProgress) {
         console.log('Parsed daily mental progress:', parsedProgress);
         setDailyProgress(parsedProgress);
       }
@@ -269,7 +268,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
   const saveDailyProgress = async (progress: DailyMentalProgress[]) => {
     try {
       console.log('Saving daily mental progress:', progress);
-      await AsyncStorage.setItem('dailyMentalProgress', JSON.stringify(progress));
+      await saveUserData('dailyMentalProgress', progress);
       console.log('Daily mental progress saved successfully');
     } catch (error) {
       console.error('Error saving daily mental progress:', error);
@@ -401,7 +400,6 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
           style={[styles.checkbox, exercise.completed && styles.checkedBox]}
           onPress={() => toggleExerciseCompletion(exercise.id)}
         >
-          {exercise.completed && <Text style={styles.checkmark}>DONE</Text>}
         </TouchableOpacity>
       </View>
       
@@ -726,6 +724,7 @@ const styles = StyleSheet.create({
   },
   checkedBox: {
     backgroundColor: '#4ECDC4',
+    borderColor: '#4ECDC4',
     shadowColor: '#4ECDC4',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.6,

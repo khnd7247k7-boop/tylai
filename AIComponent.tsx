@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert,
   Modal,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import AIService, { AIInsight, AIRecommendation, UserWellnessData } from './AIService';
 
@@ -223,8 +224,10 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
         animationType="fade"
         onRequestClose={() => setSelectedInsight(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+        <TouchableWithoutFeedback onPress={() => setSelectedInsight(null)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={() => {}}>
+              <View style={styles.modalContainer}>
             {selectedInsight && (
               <>
                 <View style={styles.modalHeader}>
@@ -265,8 +268,10 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
                 </View>
               </>
             )}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </View>
   );

@@ -8,10 +8,12 @@ import {
   SafeAreaView,
   Alert,
   Modal,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useToast } from './src/components/ToastProvider';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 
 interface Task {
   id: string;
@@ -30,11 +32,19 @@ interface DashboardProps {
   onNavigateToSpiritual: () => void;
 }
 
+interface GratitudeEntry {
+  id: string;
+  date: string;
+  entries: string[];
+  reflection: string;
+}
+
 export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings, onNavigateToSpiritual }: DashboardProps) {
   const { showToast } = useToast();
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
   const [manualQuoteIndex, setManualQuoteIndex] = useState<number | null>(null);
+  const [gratitudeEntries, setGratitudeEntries] = useState<GratitudeEntry[]>([]);
   const [tasks, setTasks] = useState<Task[]>([
     { id: '1', title: '30-minute cardio workout', completed: false, category: 'fitness' },
     { id: '2', title: 'Strength training - upper body', completed: false, category: 'fitness' },
@@ -46,30 +56,75 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     { id: '8', title: 'Practice deep breathing exercises', completed: false, category: 'emotional' },
   ]);
 
-  // Load all data from AsyncStorage on component mount
+  // Load all data from AsyncStorage on component mount and refresh gratitude entries
   useEffect(() => {
     loadDashboardData();
   }, []);
 
+  // Refresh gratitude entries periodically to update circle progress
+  useEffect(() => {
+    const loadGratitudeEntries = async () => {
+      try {
+        const savedGratitude = await loadUserData<GratitudeEntry[]>('gratitudeEntries');
+        if (savedGratitude) {
+          setGratitudeEntries(savedGratitude);
+        }
+      } catch (error) {
+        console.error('Error loading gratitude entries:', error);
+      }
+    };
+    
+    // Load gratitude entries every 2 seconds to catch updates
+    const interval = setInterval(loadGratitudeEntries, 2000);
+    loadGratitudeEntries(); // Initial load
+    
+    return () => clearInterval(interval);
+  }, []);
+
   const loadDashboardData = async () => {
     try {
+      const today = new Date().toDateString();
+      const lastResetDate = await loadUserData<string>('dashboardTasksLastReset');
+      
       // Load tasks
-      const savedTasks = await AsyncStorage.getItem('dashboardTasks');
-      if (savedTasks) {
-        const parsedTasks = JSON.parse(savedTasks);
+      const parsedTasks = await loadUserData<Task[]>('dashboardTasks');
+      if (parsedTasks) {
         console.log('Loading dashboard tasks:', parsedTasks);
-        setTasks(parsedTasks);
+        
+        // If it's a new day, reset all task completions
+        if (lastResetDate !== today) {
+          console.log('New day detected - resetting dashboard task completions');
+          const resetTasks = parsedTasks.map(task => ({
+            ...task,
+            completed: false
+          }));
+          setTasks(resetTasks);
+          await saveTasks(resetTasks);
+          await saveUserData('dashboardTasksLastReset', today);
+        } else {
+          setTasks(parsedTasks);
+        }
+      } else {
+        // First time loading - set reset date
+        await saveUserData('dashboardTasksLastReset', today);
       }
 
       // Load check-in status
-      const savedCheckIn = await AsyncStorage.getItem('dailyCheckIn');
-      if (savedCheckIn) {
-        const checkInData = JSON.parse(savedCheckIn);
-        const today = new Date().toDateString();
+      const checkInData = await loadUserData<{ date: string; checkedIn: boolean; timestamp: string }>('dailyCheckIn');
+      if (checkInData) {
         if (checkInData.date === today) {
           console.log('Loading check-in status:', checkInData);
           setIsCheckedIn(checkInData.checkedIn);
+        } else {
+          // Reset check-in for new day
+          setIsCheckedIn(false);
         }
+      }
+
+      // Load gratitude entries
+      const savedGratitude = await loadUserData<GratitudeEntry[]>('gratitudeEntries');
+      if (savedGratitude) {
+        setGratitudeEntries(savedGratitude);
       }
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -79,7 +134,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
   const saveTasks = async (tasksToSave: Task[]) => {
     try {
       console.log('Saving dashboard tasks:', tasksToSave);
-      await AsyncStorage.setItem('dashboardTasks', JSON.stringify(tasksToSave));
+      await saveUserData('dashboardTasks', tasksToSave);
       console.log('Dashboard tasks saved successfully');
     } catch (error) {
       console.error('Error saving dashboard tasks:', error);
@@ -94,7 +149,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
         timestamp: new Date().toISOString()
       };
       console.log('Saving check-in status:', checkInData);
-      await AsyncStorage.setItem('dailyCheckIn', JSON.stringify(checkInData));
+      await saveUserData('dailyCheckIn', checkInData);
       console.log('Check-in status saved successfully');
     } catch (error) {
       console.error('Error saving check-in status:', error);
@@ -285,8 +340,10 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
         animationType="fade"
         onRequestClose={() => setSelectedCategory(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+        <TouchableWithoutFeedback onPress={() => setSelectedCategory(null)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={() => {}}>
+              <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: categoryColor }]}>
                 {categoryTitle} Tasks
@@ -308,9 +365,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                 >
                   <View style={[
                     styles.modalCheckbox,
-                    task.completed && { backgroundColor: categoryColor }
+                    task.completed && { backgroundColor: categoryColor, borderColor: categoryColor }
                   ]}>
-                    {task.completed && <Text style={styles.modalCheckmark}>DONE</Text>}
                   </View>
                   <Text style={[
                     styles.modalTaskText,
@@ -327,14 +383,18 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                 {categoryTasks.filter(t => t.completed).length} of {categoryTasks.length} tasks completed
               </Text>
             </View>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     );
   };
 
   const CircularProgressCircle = () => {
     const categories: Task['category'][] = ['fitness', 'mindset', 'spiritual', 'emotional'];
+    const circleSize = 280;
+    const radius = circleSize / 2;
     
     return (
       <View style={styles.bigCircleContainer}>
@@ -342,88 +402,171 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
           {/* Background circle */}
           <View style={styles.circleBackground} />
           
-          {/* Progress sections */}
-          {categories.map((category, index) => {
-            const progress = getCategoryProgress(category);
-            const color = getCategoryColor(category);
-            const angle = getCategoryAngle(category);
+          {/* Background progress track - shows full circular path */}
+          <View style={styles.progressTrack} />
+          
+          {/* Segment dividers */}
+          {[0, 90, 180, 270].map((angle, index) => (
+            <View
+              key={angle}
+              style={[
+                styles.segmentDivider,
+                {
+                  transform: [{ rotate: `${angle}deg` }],
+                }
+              ]}
+            />
+          ))}
+          
+          {/* Overall progress arc - fills entire circle based on total task completions and gratitude entries */}
+          {(() => {
+            const today = new Date().toISOString().split('T')[0];
+            const todayGratitudeEntries = gratitudeEntries.filter(entry => entry.date === today);
+            const gratitudeCount = todayGratitudeEntries.length;
+            
+            // Calculate spiritual section progress based on gratitude entries (3 entries = 100% of spiritual section)
+            const spiritualProgress = Math.min(gratitudeCount / 3, 1); // 0 to 1
+            
+            // Calculate task completions
+            const totalTasks = tasks.length;
+            const completedTasks = tasks.filter(t => t.completed).length;
+            
+            // Calculate progress for each quadrant
+            // Each quadrant represents one category (fitness, mindset, spiritual, emotional)
+            const fitnessTasks = tasks.filter(t => t.category === 'fitness');
+            const mindsetTasks = tasks.filter(t => t.category === 'mindset');
+            const spiritualTasks = tasks.filter(t => t.category === 'spiritual');
+            const emotionalTasks = tasks.filter(t => t.category === 'emotional');
+            
+            const fitnessProgress = fitnessTasks.length > 0 
+              ? fitnessTasks.filter(t => t.completed).length / fitnessTasks.length 
+              : 0;
+            const mindsetProgress = mindsetTasks.length > 0 
+              ? mindsetTasks.filter(t => t.completed).length / mindsetTasks.length 
+              : 0;
+            // Spiritual progress uses gratitude entries (3 entries = full spiritual section)
+            const emotionalProgress = emotionalTasks.length > 0 
+              ? emotionalTasks.filter(t => t.completed).length / emotionalTasks.length 
+              : 0;
+            
+            // Calculate overall progress around the circle
+            // Each quadrant fills independently based on its own progress
+            // Progress flows clockwise: fitness (top) -> mindset (right) -> spiritual (bottom) -> emotional (left)
+            // Each quadrant is 90 degrees
+            
+            // Calculate cumulative progress angle around the circle
+            // Each section contributes up to 90 degrees based on its completion
+            let totalProgressAngle = 0;
+            
+            // Fitness (top): 0-90 degrees
+            totalProgressAngle += fitnessProgress * 90;
+            
+            // Mindset (right): 90-180 degrees
+            totalProgressAngle += mindsetProgress * 90;
+            
+            // Spiritual (bottom): 180-270 degrees - uses gratitude entries (3 entries = 100%)
+            totalProgressAngle += spiritualProgress * 90;
+            
+            // Emotional (left): 270-360 degrees
+            totalProgressAngle += emotionalProgress * 90;
+            
+            // Clamp to 360 degrees max
+            totalProgressAngle = Math.min(totalProgressAngle, 360);
+            
+            // Determine colors for each quadrant based on which category they belong to
+            const getColorForAngle = (angle: number) => {
+              if (angle < 90) return getCategoryColor('fitness');
+              if (angle < 180) return getCategoryColor('mindset');
+              if (angle < 270) return getCategoryColor('spiritual');
+              return getCategoryColor('emotional');
+            };
+            
+            // Determine which borders to show based on total progress angle
+            const showTop = totalProgressAngle > 0;
+            const showRight = totalProgressAngle > 90;
+            const showBottom = totalProgressAngle > 180;
+            const showLeft = totalProgressAngle > 270;
+            
+            // Get colors for each segment
+            const topColor = showTop ? getColorForAngle(45) : 'transparent';
+            const rightColor = showRight ? getColorForAngle(135) : 'transparent';
+            const bottomColor = showBottom ? getColorForAngle(225) : 'transparent';
+            const leftColor = showLeft ? getColorForAngle(315) : 'transparent';
             
             return (
-              <View key={category} style={styles.progressSection}>
-                {/* Progress arc for this category */}
-                <View 
+              <View style={styles.progressSegmentContainer}>
+                {/* Overall progress ring - flows clockwise around entire circle */}
+                <View
                   style={[
-                    styles.progressArc,
+                    styles.progressRing,
                     {
-                      transform: [{ rotate: `${angle}deg` }],
-                      borderColor: color,
-                      borderTopColor: progress > 0 ? color : 'transparent',
-                      borderRightColor: progress > 0.25 ? color : 'transparent',
-                      borderBottomColor: progress > 0.5 ? color : 'transparent',
-                      borderLeftColor: progress > 0.75 ? color : 'transparent',
+                      borderTopColor: topColor,
+                      borderRightColor: rightColor,
+                      borderBottomColor: bottomColor,
+                      borderLeftColor: leftColor,
                     }
                   ]}
                 />
               </View>
             );
+          })()}
+          
+          {/* Category labels integrated into segments */}
+          {categories.map((category, index) => {
+            const color = getCategoryColor(category);
+            const progress = getCategoryProgress(category);
+            const angle = index * 90 + 45; // Center of each quadrant
+            const labelRadius = radius * 0.75; // Position labels inside the circle
+            const x = Math.cos((angle) * Math.PI / 180) * labelRadius;
+            const y = Math.sin((angle) * Math.PI / 180) * labelRadius;
+            
+            return (
+              <TouchableOpacity
+                key={category}
+                style={[
+                  styles.segmentButton,
+                  {
+                    left: radius + x - 45,
+                    top: radius + y - 20,
+                  }
+                ]}
+                onPress={() => {
+                  if (category === 'fitness') {
+                    onNavigateToFitness();
+                  } else if (category === 'mindset') {
+                    onNavigateToMental();
+                  } else if (category === 'emotional') {
+                    onNavigateToEmotional();
+                  } else if (category === 'spiritual') {
+                    onNavigateToSpiritual();
+                  } else {
+                    setSelectedCategory(category);
+                  }
+                }}
+              >
+                <Text style={[styles.segmentButtonTitle, { color }]}>
+                  {getCategoryTitle(category)}
+                </Text>
+                <View style={[styles.segmentProgressBar, { backgroundColor: color + '40' }]}>
+                  <View 
+                    style={[
+                      styles.segmentProgressFill, 
+                      { 
+                        width: `${progress * 100}%`,
+                        backgroundColor: color 
+                      }
+                    ]} 
+                  />
+                </View>
+                <Text style={styles.segmentProgressText}>
+                  {Math.round(progress * 100)}%
+                </Text>
+              </TouchableOpacity>
+            );
           })}
           
-          {/* Center content */}
-          <View style={styles.circleCenter}>
-            <Text style={styles.centerTitle}>Focus Areas</Text>
-            <Text style={styles.centerProgress}>
-              {Math.round((tasks.filter(t => t.completed).length / tasks.length) * 100)}%
-            </Text>
-            <Text style={styles.centerSubtext}>Overall Progress</Text>
-          </View>
+          {/* Center content - removed for cleaner design */}
         </View>
-        
-        {/* Category buttons positioned at corners around the circle */}
-        {categories.map((category) => {
-          const color = getCategoryColor(category);
-          const progress = getCategoryProgress(category);
-          const angle = getCategoryAngle(category);
-          
-          // Calculate position for corner buttons
-          const radius = 140; // Half of circle diameter
-          const buttonDistance = 180; // Distance from center
-          const x = Math.cos((angle + 45) * Math.PI / 180) * buttonDistance;
-          const y = Math.sin((angle + 45) * Math.PI / 180) * buttonDistance;
-          
-          return (
-            <TouchableOpacity
-              key={category}
-              style={[
-                styles.cornerButton,
-                {
-                  backgroundColor: color,
-                  left: 140 + x - 30, // Center circle + offset - half button width
-                  top: 140 + y - 30,  // Center circle + offset - half button height
-                }
-              ]}
-                   onPress={() => {
-                     if (category === 'fitness') {
-                       onNavigateToFitness();
-                     } else if (category === 'mindset') {
-                       onNavigateToMental();
-                     } else if (category === 'emotional') {
-                       onNavigateToEmotional();
-                     } else if (category === 'spiritual') {
-                       onNavigateToSpiritual();
-                     } else {
-                       setSelectedCategory(category);
-                     }
-                   }}
-            >
-              <Text style={styles.cornerButtonText}>
-                {getCategoryTitle(category)}
-              </Text>
-              <Text style={styles.cornerButtonProgress}>
-                {Math.round(progress * 100)}%
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
       </View>
     );
   };
@@ -723,16 +866,34 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 140,
-    backgroundColor: '#2a2a2a',
-    borderWidth: 8,
-    borderColor: '#3a3a3a',
+    backgroundColor: '#1a1a1a',
+    borderWidth: 2,
+    borderColor: '#2a2a2a',
   },
-  progressSection: {
+  progressTrack: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    borderRadius: 140,
+    borderWidth: 8,
+    borderColor: '#2a2a2a',
+    opacity: 0.3,
+  },
+  segmentDivider: {
+    position: 'absolute',
+    width: 4,
+    height: '100%',
+    backgroundColor: '#1a1a1a',
+    left: '50%',
+    top: 0,
+    marginLeft: -2,
+  },
+  progressSegmentContainer: {
     position: 'absolute',
     width: '100%',
     height: '100%',
   },
-  progressArc: {
+  progressRing: {
     position: 'absolute',
     width: '100%',
     height: '100%',
@@ -769,41 +930,50 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 2,
   },
-  cornerButton: {
+  segmentButton: {
     position: 'absolute',
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+    width: 90,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    borderRadius: 12,
+    padding: 8,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 6,
+      height: 4,
     },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 12,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  cornerButtonText: {
-    color: '#fff',
-    fontSize: 11,
+  segmentButtonTitle: {
+    fontSize: 12,
     fontWeight: 'bold',
     textAlign: 'center',
-    lineHeight: 13,
-    paddingHorizontal: 2,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  cornerButtonProgress: {
+  segmentProgressBar: {
+    width: '100%',
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  segmentProgressFill: {
+    height: '100%',
+    borderRadius: 2,
+    transition: 'width 0.3s ease',
+  },
+  segmentProgressText: {
     color: '#fff',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
     textAlign: 'center',
-    marginTop: 3,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   // Task Modal
   modalOverlay: {

@@ -10,9 +10,12 @@ import {
   Alert,
   Switch,
   Modal,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { saveUserData, loadUserData, clearAllUserData } from './src/utils/userStorage';
+import { updateNotificationSchedule } from './src/utils/notifications';
 
 interface UserProfile {
   name: string;
@@ -33,13 +36,21 @@ interface AppSettings {
   language: string;
 }
 
+interface InterfaceSettings {
+  theme: 'dark' | 'light' | 'auto';
+  fontSize: 'small' | 'medium' | 'large';
+  animations: boolean;
+  compactMode: boolean;
+  showProgressBars: boolean;
+}
+
 interface SettingsScreenProps {
   onBack: () => void;
   onLogout: () => void;
 }
 
 export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
-  const [activeTab, setActiveTab] = useState<'profile' | 'settings' | 'about'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings'>('profile');
   const [profile, setProfile] = useState<UserProfile>({
     name: '',
     email: '',
@@ -57,23 +68,34 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
     reminderTime: '09:00',
     language: 'English',
   });
+  const [interfaceSettings, setInterfaceSettings] = useState<InterfaceSettings>({
+    theme: 'dark',
+    fontSize: 'medium',
+    animations: true,
+    compactMode: false,
+    showProgressBars: true,
+  });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   useEffect(() => {
-    loadUserData();
+    loadSettingsData();
   }, []);
 
-  const loadUserData = async () => {
+  const loadSettingsData = async () => {
     try {
-      const savedProfile = await AsyncStorage.getItem('userProfile');
-      const savedSettings = await AsyncStorage.getItem('appSettings');
+      const savedProfile = await loadUserData<UserProfile>('userProfile');
+      const savedSettings = await loadUserData<AppSettings>('appSettings');
+      const savedInterfaceSettings = await loadUserData<InterfaceSettings>('interfaceSettings');
       
       if (savedProfile) {
-        setProfile(JSON.parse(savedProfile));
+        setProfile(savedProfile);
       }
       if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
+        setSettings(savedSettings);
+      }
+      if (savedInterfaceSettings) {
+        setInterfaceSettings(savedInterfaceSettings);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -82,21 +104,32 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   const saveProfile = async (updatedProfile: UserProfile) => {
     try {
-      await AsyncStorage.setItem('userProfile', JSON.stringify(updatedProfile));
+      await saveUserData('userProfile', updatedProfile);
       setProfile(updatedProfile);
-      Alert.alert('Success', 'Profile updated successfully!');
+      // no notification
     } catch (error) {
       console.error('Error saving profile:', error);
-      Alert.alert('Error', 'Failed to save profile');
+      // no notification
     }
   };
 
   const saveSettings = async (updatedSettings: AppSettings) => {
     try {
-      await AsyncStorage.setItem('appSettings', JSON.stringify(updatedSettings));
+      await saveUserData('appSettings', updatedSettings);
       setSettings(updatedSettings);
+      // Update notification schedule when settings change
+      await updateNotificationSchedule();
     } catch (error) {
       console.error('Error saving settings:', error);
+    }
+  };
+
+  const saveInterfaceSettings = async (updatedSettings: InterfaceSettings) => {
+    try {
+      await saveUserData('interfaceSettings', updatedSettings);
+      setInterfaceSettings(updatedSettings);
+    } catch (error) {
+      console.error('Error saving interface settings:', error);
     }
   };
 
@@ -106,32 +139,32 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   const confirmLogout = async () => {
     try {
-      // Clear all user data
-      await AsyncStorage.multiRemove([
-        'userProfile',
-        'appSettings',
-        'checkInStatus',
-        'completedTasks',
-        'workoutHistory',
-        'savedMeals',
-        'dailyMeals',
-        'nutritionGoals',
-        'mentalExercises',
-        'dailyMentalProgress',
-        'moodEntries',
-        'dailyEmotionalProgress',
-      ]);
+      // Clear all user-specific data
+      await clearAllUserData();
+      
+      // Also sign out from Firebase
+      try {
+        const { signOut } = await import('firebase/auth');
+        const { auth } = await import('./firebaseConfig');
+        await signOut(auth);
+      } catch (firebaseError) {
+        console.error('Firebase sign out error:', firebaseError);
+        // Continue with logout even if Firebase sign out fails
+      }
       
       setShowLogoutModal(false);
+      // Call onLogout to navigate to login screen
       onLogout();
     } catch (error) {
       console.error('Error during logout:', error);
-      Alert.alert('Error', 'Failed to logout properly');
+      // Still try to logout even if there's an error
+      setShowLogoutModal(false);
+      onLogout();
     }
   };
 
   const renderProfileTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+    <View style={styles.tabContent}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
         
@@ -234,8 +267,8 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.cancelButton]}
-              onPress={() => {
-                loadUserData();
+              onPress={async () => {
+                await loadSettingsData();
                 setIsEditingProfile(false);
               }}
             >
@@ -251,11 +284,21 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           </TouchableOpacity>
         )}
       </View>
-    </ScrollView>
+
+      {/* Logout Button - Only in Profile section */}
+      <View style={styles.logoutSection}>
+        <TouchableOpacity 
+          style={[styles.logoutButton]}
+          onPress={handleLogout}
+        >
+          <Text style={styles.logoutButtonText}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 
   const renderSettingsTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+    <View style={styles.tabContent}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Notifications</Text>
         
@@ -372,66 +415,165 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Text style={styles.actionButtonSubtext}>Permanently delete all data</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+    </View>
   );
 
-  const renderAboutTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+  const renderInterfaceTab = () => (
+    <View style={styles.tabContent}>
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>App Information</Text>
+        <Text style={styles.sectionTitle}>Appearance</Text>
         
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Version</Text>
-          <Text style={styles.infoValue}>1.0.0</Text>
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Theme</Text>
+          <View style={styles.optionButtons}>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.theme === 'dark' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, theme: 'dark' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.theme === 'dark' && styles.optionButtonTextActive
+              ]}>Dark</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.theme === 'light' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, theme: 'light' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.theme === 'light' && styles.optionButtonTextActive
+              ]}>Light</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.theme === 'auto' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, theme: 'auto' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.theme === 'auto' && styles.optionButtonTextActive
+              ]}>Auto</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Build</Text>
-          <Text style={styles.infoValue}>2024.01.15</Text>
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Font Size</Text>
+          <View style={styles.optionButtons}>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.fontSize === 'small' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, fontSize: 'small' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.fontSize === 'small' && styles.optionButtonTextActive
+              ]}>Small</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.fontSize === 'medium' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, fontSize: 'medium' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.fontSize === 'medium' && styles.optionButtonTextActive
+              ]}>Medium</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                interfaceSettings.fontSize === 'large' && styles.optionButtonActive
+              ]}
+              onPress={() => {
+                const newSettings = { ...interfaceSettings, fontSize: 'large' };
+                setInterfaceSettings(newSettings);
+                saveInterfaceSettings(newSettings);
+              }}
+            >
+              <Text style={[
+                styles.optionButtonText,
+                interfaceSettings.fontSize === 'large' && styles.optionButtonTextActive
+              ]}>Large</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Platform</Text>
-          <Text style={styles.infoValue}>React Native</Text>
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Animations</Text>
+          <Switch
+            value={interfaceSettings.animations}
+            onValueChange={(value) => {
+              const newSettings = { ...interfaceSettings, animations: value };
+              setInterfaceSettings(newSettings);
+              saveInterfaceSettings(newSettings);
+            }}
+            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            thumbColor={interfaceSettings.animations ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Compact Mode</Text>
+          <Switch
+            value={interfaceSettings.compactMode}
+            onValueChange={(value) => {
+              const newSettings = { ...interfaceSettings, compactMode: value };
+              setInterfaceSettings(newSettings);
+              saveInterfaceSettings(newSettings);
+            }}
+            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            thumbColor={interfaceSettings.compactMode ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Show Progress Bars</Text>
+          <Switch
+            value={interfaceSettings.showProgressBars}
+            onValueChange={(value) => {
+              const newSettings = { ...interfaceSettings, showProgressBars: value };
+              setInterfaceSettings(newSettings);
+              saveInterfaceSettings(newSettings);
+            }}
+            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            thumbColor={interfaceSettings.showProgressBars ? '#fff' : '#888'}
+          />
         </View>
       </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Support</Text>
-        
-        <TouchableOpacity style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>Help Center</Text>
-          <Text style={styles.actionButtonSubtext}>Get help and support</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>Contact Us</Text>
-          <Text style={styles.actionButtonSubtext}>Send feedback or report issues</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>Privacy Policy</Text>
-          <Text style={styles.actionButtonSubtext}>Read our privacy policy</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>Terms of Service</Text>
-          <Text style={styles.actionButtonSubtext}>Read our terms of service</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        
-        <TouchableOpacity 
-          style={[styles.actionButton, styles.dangerButton]}
-          onPress={handleLogout}
-        >
-          <Text style={styles.actionButtonText}>Logout</Text>
-          <Text style={styles.actionButtonSubtext}>Sign out of your account</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+    </View>
   );
 
   return (
@@ -456,23 +598,25 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Text style={[styles.tabButtonText, activeTab === 'profile' && styles.tabButtonTextActive]}>Profile</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'interface' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('interface')}
+        >
+          <Text style={[styles.tabButtonText, activeTab === 'interface' && styles.tabButtonTextActive]}>Interface</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.tabButton, activeTab === 'settings' && styles.tabButtonActive]}
           onPress={() => setActiveTab('settings')}
         >
           <Text style={[styles.tabButtonText, activeTab === 'settings' && styles.tabButtonTextActive]}>Settings</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'about' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('about')}
-        >
-          <Text style={[styles.tabButtonText, activeTab === 'about' && styles.tabButtonTextActive]}>About</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Content */}
-      {activeTab === 'profile' && renderProfileTab()}
-      {activeTab === 'settings' && renderSettingsTab()}
-      {activeTab === 'about' && renderAboutTab()}
+      <ScrollView style={styles.contentContainer} showsVerticalScrollIndicator={false}>
+        {activeTab === 'profile' && renderProfileTab()}
+        {activeTab === 'interface' && renderInterfaceTab()}
+        {activeTab === 'settings' && renderSettingsTab()}
+      </ScrollView>
 
       {/* Logout Confirmation Modal */}
       <Modal
@@ -481,8 +625,10 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
         animationType="fade"
         onRequestClose={() => setShowLogoutModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+        <TouchableWithoutFeedback onPress={() => setShowLogoutModal(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={() => {}}>
+              <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Confirm Logout</Text>
             <Text style={styles.modalMessage}>
               Are you sure you want to logout? All your data will be saved and you can continue where you left off when you sign back in.
@@ -501,8 +647,10 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 <Text style={styles.modalButtonText}>Logout</Text>
               </TouchableOpacity>
             </View>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );
@@ -564,8 +712,10 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
   },
   tabContent: {
-    flex: 1,
     paddingHorizontal: 20,
+  },
+  contentContainer: {
+    flex: 1,
   },
   section: {
     marginBottom: 30,
@@ -712,6 +862,47 @@ const styles = StyleSheet.create({
     backgroundColor: '#ff4444',
   },
   modalButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  optionButtons: {
+    flexDirection: 'row',
+  },
+  optionButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#3a3a3a',
+    borderWidth: 1,
+    borderColor: '#555',
+    marginRight: 10,
+  },
+  optionButtonActive: {
+    backgroundColor: '#4ECDC4',
+    borderColor: '#4ECDC4',
+  },
+  optionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#888',
+  },
+  optionButtonTextActive: {
+    color: '#1a1a1a',
+  },
+  logoutSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 30,
+    marginBottom: 20,
+  },
+  logoutButton: {
+    backgroundColor: '#ff4444',
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',

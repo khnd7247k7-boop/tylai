@@ -9,6 +9,10 @@ import {
   TextInput,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,6 +22,7 @@ import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
 import TabSwipeNavigation from './TabSwipeNavigation';
 import BarcodeScanner from './BarcodeScanner';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 
 interface MacroLog {
   id: string;
@@ -38,6 +43,10 @@ interface Meal {
   fat: number;
   time: string;
   date: string;
+  servings?: number; // Number of servings consumed
+  baseProtein?: number; // Protein per serving
+  baseCarbs?: number; // Carbs per serving
+  baseFat?: number; // Fat per serving
 }
 
 interface SavedMeal {
@@ -82,6 +91,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSavedMeals, setShowSavedMeals] = useState(false);
+  const [mealsTab, setMealsTab] = useState<'today' | 'saved'>('today');
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [nutritionGoals, setNutritionGoals] = useState<NutritionGoals>({
     calories: 2000,
@@ -123,10 +133,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const loadWorkoutHistory = async () => {
     try {
-      const savedHistory = await AsyncStorage.getItem('workoutHistory');
-      console.log('Loading workout history:', savedHistory);
-      if (savedHistory) {
-        const parsedHistory = JSON.parse(savedHistory);
+      const parsedHistory = await loadUserData<WorkoutSession[]>('workoutHistory');
+      console.log('Loading workout history:', parsedHistory);
+      if (parsedHistory) {
         console.log('Parsed workout history:', parsedHistory);
         setWorkoutHistory(parsedHistory);
       }
@@ -138,7 +147,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const saveWorkoutHistory = async (history: WorkoutSession[]) => {
     try {
       console.log('Saving workout history:', history);
-      await AsyncStorage.setItem('workoutHistory', JSON.stringify(history));
+      await saveUserData('workoutHistory', history);
       console.log('Successfully saved to AsyncStorage');
     } catch (error) {
       console.error('Error saving workout history:', error);
@@ -147,10 +156,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const loadSavedMeals = async () => {
     try {
-      const savedMealsData = await AsyncStorage.getItem('savedMeals');
-      console.log('Loading saved meals:', savedMealsData);
-      if (savedMealsData) {
-        const parsedMeals = JSON.parse(savedMealsData);
+      const parsedMeals = await loadUserData<SavedMeal[]>('savedMeals');
+      console.log('Loading saved meals:', parsedMeals);
+      if (parsedMeals) {
         console.log('Parsed saved meals:', parsedMeals);
         setSavedMeals(parsedMeals);
       }
@@ -162,7 +170,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const saveSavedMeals = async (meals: SavedMeal[]) => {
     try {
       console.log('Saving saved meals:', meals);
-      await AsyncStorage.setItem('savedMeals', JSON.stringify(meals));
+      await saveUserData('savedMeals', meals);
       console.log('Saved meals saved successfully');
     } catch (error) {
       console.error('Error saving saved meals:', error);
@@ -171,10 +179,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const loadNutritionGoals = async () => {
     try {
-      const savedGoals = await AsyncStorage.getItem('nutritionGoals');
-      console.log('Loading nutrition goals:', savedGoals);
-      if (savedGoals) {
-        const parsedGoals = JSON.parse(savedGoals);
+      const parsedGoals = await loadUserData<NutritionGoals>('nutritionGoals');
+      console.log('Loading nutrition goals:', parsedGoals);
+      if (parsedGoals) {
         console.log('Parsed nutrition goals:', parsedGoals);
         setNutritionGoals(parsedGoals);
       }
@@ -186,7 +193,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const saveNutritionGoals = async (goals: NutritionGoals) => {
     try {
       console.log('Saving nutrition goals:', goals);
-      await AsyncStorage.setItem('nutritionGoals', JSON.stringify(goals));
+      await saveUserData('nutritionGoals', goals);
       console.log('Nutrition goals saved successfully');
     } catch (error) {
       console.error('Error saving nutrition goals:', error);
@@ -195,10 +202,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const loadMeals = async () => {
     try {
-      const savedMeals = await AsyncStorage.getItem('meals');
-      console.log('Loading meals:', savedMeals);
-      if (savedMeals) {
-        const parsedMeals = JSON.parse(savedMeals);
+      const parsedMeals = await loadUserData<Meal[]>('meals');
+      console.log('Loading meals:', parsedMeals);
+      if (parsedMeals) {
         console.log('Parsed meals:', parsedMeals);
         setMeals(parsedMeals);
       }
@@ -210,7 +216,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const saveMeals = async (meals: Meal[]) => {
     try {
       console.log('Saving meals:', meals);
-      await AsyncStorage.setItem('meals', JSON.stringify(meals));
+      await saveUserData('meals', meals);
       console.log('Meals saved successfully');
     } catch (error) {
       console.error('Error saving meals:', error);
@@ -219,12 +225,34 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const loadCompletedTasks = async () => {
     try {
-      const savedTasks = await AsyncStorage.getItem('completedTasks');
-      console.log('Loading completed tasks:', savedTasks);
-      if (savedTasks) {
-        const parsedTasks = JSON.parse(savedTasks);
+      const today = new Date().toDateString();
+      const lastResetDate = await loadUserData<string>('completedTasksLastReset');
+      const parsedTasks = await loadUserData<CompletedTask[]>('completedTasks');
+      
+      console.log('Loading completed tasks:', parsedTasks);
+      console.log('Last reset date:', lastResetDate);
+      console.log('Today:', today);
+      
+      if (parsedTasks) {
         console.log('Parsed completed tasks:', parsedTasks);
-        setCompletedTasks(parsedTasks);
+        
+        // If it's a new day, reset all task completions
+        if (lastResetDate !== today) {
+          console.log('New day detected - resetting fitness task completions');
+          const resetTasks = parsedTasks.map(task => ({
+            ...task,
+            completed: false,
+            completedAt: new Date().toISOString()
+          }));
+          setCompletedTasks(resetTasks);
+          await saveCompletedTasks(resetTasks);
+          await saveUserData('completedTasksLastReset', today);
+        } else {
+          setCompletedTasks(parsedTasks);
+        }
+      } else {
+        // First time loading - set reset date
+        await saveUserData('completedTasksLastReset', today);
       }
     } catch (error) {
       console.error('Error loading completed tasks:', error);
@@ -234,7 +262,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const saveCompletedTasks = async (tasks: CompletedTask[]) => {
     try {
       console.log('Saving completed tasks:', tasks);
-      await AsyncStorage.setItem('completedTasks', JSON.stringify(tasks));
+      await saveUserData('completedTasks', tasks);
       console.log('Completed tasks saved successfully');
     } catch (error) {
       console.error('Error saving completed tasks:', error);
@@ -257,6 +285,16 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     fat: '',
     time: '',
     servings: '1',
+    servingUnit: 'piece', // 'piece', 'g', 'oz', 'cup', 'tbsp', 'tsp'
+    servingWeight: '', // Weight/amount in the selected unit
+    baseServingSize: '1', // Base serving size for calculations
+  });
+  
+  // Store original base macros before weight calculations
+  const [baseMacros, setBaseMacros] = useState({
+    protein: '',
+    carbs: '',
+    fat: '',
   });
 
   // Edit meal state
@@ -267,34 +305,76 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     carbs: '',
     fat: '',
     time: '',
+    servings: '1',
+  });
+  // Store base macros per serving when editing
+  const [editBaseMacros, setEditBaseMacros] = useState({
+    protein: 0,
+    carbs: 0,
+    fat: 0,
   });
 
   const openEditMeal = (meal: Meal) => {
     setEditingMeal(meal);
+    
+    // Use stored base macros and servings if available, otherwise calculate from stored values
+    // For backward compatibility: if no base macros stored, assume current macros are for 1 serving
+    const storedServings = meal.servings || 1;
+    const baseProtein = meal.baseProtein !== undefined ? meal.baseProtein : (meal.protein / storedServings);
+    const baseCarbs = meal.baseCarbs !== undefined ? meal.baseCarbs : (meal.carbs / storedServings);
+    const baseFat = meal.baseFat !== undefined ? meal.baseFat : (meal.fat / storedServings);
+    
+    setEditBaseMacros({
+      protein: baseProtein,
+      carbs: baseCarbs,
+      fat: baseFat,
+    });
+    
     setEditMealFields({
       name: meal.name,
       protein: String(meal.protein),
       carbs: String(meal.carbs),
       fat: String(meal.fat),
       time: meal.time,
+      servings: String(storedServings),
     });
+  };
+
+  const updateEditMacrosFromServings = (servings: string) => {
+    const servingsNum = parseFloat(servings) || 1;
+    const totalProtein = Math.round(editBaseMacros.protein * servingsNum);
+    const totalCarbs = Math.round(editBaseMacros.carbs * servingsNum);
+    const totalFat = Math.round(editBaseMacros.fat * servingsNum);
+    
+    setEditMealFields(prev => ({
+      ...prev,
+      servings,
+      protein: String(totalProtein),
+      carbs: String(totalCarbs),
+      fat: String(totalFat),
+    }));
   };
 
   const saveEditedMeal = () => {
     if (!editingMeal) return;
-    const protein = parseInt(editMealFields.protein) || 0;
-    const carbs = parseInt(editMealFields.carbs) || 0;
-    const fat = parseInt(editMealFields.fat) || 0;
-    const calories = calculateCaloriesFromMacros(protein, carbs, fat);
+    const servings = parseFloat(editMealFields.servings) || 1;
+    const totalProtein = Math.round(editBaseMacros.protein * servings);
+    const totalCarbs = Math.round(editBaseMacros.carbs * servings);
+    const totalFat = Math.round(editBaseMacros.fat * servings);
+    const calories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
 
     const updated: Meal = {
       ...editingMeal,
       name: editMealFields.name || editingMeal.name,
-      protein,
-      carbs,
-      fat,
+      protein: totalProtein,
+      carbs: totalCarbs,
+      fat: totalFat,
       calories,
       time: editMealFields.time || editingMeal.time,
+      servings: servings,
+      baseProtein: editBaseMacros.protein,
+      baseCarbs: editBaseMacros.carbs,
+      baseFat: editBaseMacros.fat,
     };
 
     const updatedMeals = meals.map(m => (m.id === editingMeal.id ? updated : m));
@@ -340,8 +420,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   };
 
   const handleMealSubmit = () => {
-    if (!mealInput.name || !mealInput.protein || !mealInput.carbs || !mealInput.fat) {
-      showToast('Please fill in meal name and all macro fields', 'error');
+    // Only require macros, name is optional
+    if (!mealInput.protein || !mealInput.carbs || !mealInput.fat) {
+      // no notification
       return;
     }
 
@@ -355,24 +436,59 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     const totalFat = Math.round(baseFat * servings);
     const calculatedCalories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
 
+    // Ensure date is set to today for proper filtering
+    const todayDate = new Date();
+    const mealName = mealInput.name.trim() || `Meal (${totalProtein}g P / ${totalCarbs}g C / ${totalFat}g F)`;
+    
     const newMeal: Meal = {
       id: Date.now().toString(),
-      name: mealInput.name,
+      name: mealName,
       calories: calculatedCalories,
       protein: totalProtein,
       carbs: totalCarbs,
       fat: totalFat,
-      time: mealInput.time || new Date().toLocaleTimeString(),
-      date: new Date().toISOString(),
+      time: mealInput.time || todayDate.toLocaleTimeString(),
+      date: todayDate.toISOString(),
+      servings: servings,
+      baseProtein: baseProtein,
+      baseCarbs: baseCarbs,
+      baseFat: baseFat,
     };
 
-    // Add to today's meals
+    // Add to today's meals - this will trigger a re-render and update totals
     const updatedMeals = [newMeal, ...meals];
     setMeals(updatedMeals);
     saveMeals(updatedMeals);
 
+    // Clear only macros, keep name if they want to save it later
+    setMealInput(prev => ({ ...prev, protein: '', carbs: '', fat: '', servings: '1' }));
+    // no notification
+  };
+
+  const handleSaveMeal = () => {
+    // Save meal requires a name and macros
+    if (!mealInput.name || !mealInput.name.trim()) {
+      // no notification
+      return;
+    }
+
+    if (!mealInput.protein || !mealInput.carbs || !mealInput.fat) {
+      // no notification
+      return;
+    }
+
+    const servings = parseFloat(mealInput.servings) || 1;
+    const baseProtein = parseFloat(mealInput.protein) || 0;
+    const baseCarbs = parseFloat(mealInput.carbs) || 0;
+    const baseFat = parseFloat(mealInput.fat) || 0;
+
+    const totalProtein = Math.round(baseProtein * servings);
+    const totalCarbs = Math.round(baseCarbs * servings);
+    const totalFat = Math.round(baseFat * servings);
+    const calculatedCalories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
+
     // Save to saved meals for future use
-    const existingSavedMeal = savedMeals.find(meal => meal.name.toLowerCase() === mealInput.name.toLowerCase());
+    const existingSavedMeal = savedMeals.find(meal => meal.name.toLowerCase() === mealInput.name.toLowerCase().trim());
     if (existingSavedMeal) {
       // Update existing saved meal
       const updatedMeals = savedMeals.map(meal => 
@@ -386,7 +502,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       // Add new saved meal
       const newSavedMeal: SavedMeal = {
         id: Date.now().toString(),
-        name: mealInput.name,
+        name: mealInput.name.trim(),
         calories: calculatedCalories,
         protein: totalProtein,
         carbs: totalCarbs,
@@ -399,11 +515,13 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       saveSavedMeals(updatedMeals);
     }
 
-    setMealInput({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '', servings: '1' });
+    // Clear meal name and macros after saving
+    setMealInput(prev => ({ ...prev, name: '', protein: '', carbs: '', fat: '', servings: '1' }));
     // no notification
   };
 
   const handleUseSavedMeal = (savedMeal: SavedMeal) => {
+    // Saved meals contain base macros (per serving), so we'll use 1 serving by default
     const newMeal: Meal = {
       id: Date.now().toString(),
       name: savedMeal.name,
@@ -413,6 +531,10 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       fat: savedMeal.fat,
       time: new Date().toLocaleTimeString(),
       date: new Date().toISOString(),
+      servings: 1,
+      baseProtein: savedMeal.protein,
+      baseCarbs: savedMeal.carbs,
+      baseFat: savedMeal.fat,
     };
 
     const updatedTodayMeals = [newMeal, ...meals];
@@ -787,8 +909,20 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const renderNutrition = () => {
     // Calculate today's totals from meals
-    const today = new Date().toDateString();
-    const todayMeals = meals.filter(meal => new Date(meal.date).toDateString() === today);
+    const today = new Date();
+    const todayDateString = today.toDateString();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const todayEnd = todayStart + (24 * 60 * 60 * 1000) - 1;
+    
+    // Filter meals for today using both date string comparison and timestamp range
+    const todayMeals = meals.filter(meal => {
+      const mealDate = new Date(meal.date);
+      const mealDateString = mealDate.toDateString();
+      const mealTimestamp = mealDate.getTime();
+      // Use both methods for reliability
+      return mealDateString === todayDateString || (mealTimestamp >= todayStart && mealTimestamp < todayEnd);
+    });
+    
     const todayTotals = todayMeals.reduce((totals, meal) => ({
       calories: totals.calories + meal.calories,
       protein: totals.protein + meal.protein,
@@ -940,70 +1074,35 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         <View style={styles.mealSection}>
           <View style={styles.mealSectionHeader}>
             <Text style={styles.sectionTitle}>Add Meal</Text>
-            <TouchableOpacity 
-              style={styles.savedMealsButton} 
-              onPress={() => setShowSavedMeals(!showSavedMeals)}
-            >
-              <Text style={styles.savedMealsButtonText}>
-                {showSavedMeals ? 'Hide' : 'Show'} Saved Meals
-              </Text>
-            </TouchableOpacity>
           </View>
 
-          {/* Saved Meals Search */}
-          {showSavedMeals && (
-            <View style={styles.savedMealsSection}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search saved meals..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-              <ScrollView style={styles.savedMealsList} contentContainerStyle={styles.savedMealsListContent}>
-                {savedMeals
-                  .filter(meal => meal.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                  .sort((a, b) => b.timesUsed - a.timesUsed)
-                  .map(meal => (
-                    <TouchableOpacity
-                      key={meal.id}
-                      style={styles.savedMealItem}
-                      onPress={() => handleUseSavedMeal(meal)}
-                    >
-                      <View style={styles.savedMealInfo}>
-                        <Text style={styles.savedMealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
-                        <Text style={styles.savedMealMacros}>
-                          {meal.calories} cal • {meal.protein}g protein • {meal.carbs}g carbs • {meal.fat}g fat
-                        </Text>
-                        <View style={styles.savedMealMetaRow}>
-                          <Text style={styles.savedMealUsage}>Used {meal.timesUsed} times</Text>
-                          {meal.lastUsed ? (
-                            <Text style={styles.savedMealLastUsed} numberOfLines={1} ellipsizeMode="tail">
-                              Last used: {new Date(meal.lastUsed).toLocaleDateString()}
-                            </Text>
-                          ) : null}
-                        </View>
-                      </View>
-                      <Text style={styles.useMealButton}>Use</Text>
-                    </TouchableOpacity>
-                  ))}
-              </ScrollView>
-            </View>
-          )}
-
           <View style={styles.mealInputs}>
-            <TextInput
-              style={styles.mealInput}
-              placeholder="Meal name (e.g., Breakfast, Lunch)"
-              value={mealInput.name}
-              onChangeText={(text) => setMealInput(prev => ({ ...prev, name: text }))}
-            />
+            <View style={styles.mealNameInputContainer}>
+              <TextInput
+                style={styles.mealInput}
+                placeholder="Meal name (optional)"
+                value={mealInput.name}
+                onChangeText={(text) => setMealInput(prev => ({ ...prev, name: text }))}
+              />
+              {mealInput.name && mealInput.name.trim() && (
+                <TouchableOpacity
+                  style={styles.clearButton}
+                  onPress={() => setMealInput(prev => ({ ...prev, name: '' }))}
+                >
+                  <Text style={styles.clearButtonText}>×</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={styles.macroRow}>
               <Text style={styles.macroLabel}>Protein (g)</Text>
               <TextInput
                 style={styles.macroInput}
                 placeholder="0"
                 value={mealInput.protein}
-                onChangeText={(text) => setMealInput(prev => ({ ...prev, protein: text }))}
+                onChangeText={(text) => {
+                  setMealInput(prev => ({ ...prev, protein: text }));
+                  setBaseMacros(prev => ({ ...prev, protein: text }));
+                }}
                 keyboardType="numeric"
               />
             </View>
@@ -1013,7 +1112,10 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 style={styles.macroInput}
                 placeholder="0"
                 value={mealInput.carbs}
-                onChangeText={(text) => setMealInput(prev => ({ ...prev, carbs: text }))}
+                onChangeText={(text) => {
+                  setMealInput(prev => ({ ...prev, carbs: text }));
+                  setBaseMacros(prev => ({ ...prev, carbs: text }));
+                }}
                 keyboardType="numeric"
               />
             </View>
@@ -1023,12 +1125,60 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 style={styles.macroInput}
                 placeholder="0"
                 value={mealInput.fat}
-                onChangeText={(text) => setMealInput(prev => ({ ...prev, fat: text }))}
+                onChangeText={(text) => {
+                  setMealInput(prev => ({ ...prev, fat: text }));
+                  setBaseMacros(prev => ({ ...prev, fat: text }));
+                }}
                 keyboardType="numeric"
               />
             </View>
+          {/* Serving Unit and Weight Selection */}
           <View style={styles.macroRow}>
-            <Text style={styles.macroLabel}>Servings</Text>
+            <Text style={styles.macroLabel}>Serving Unit</Text>
+            <View style={styles.unitSelector}>
+              {['piece', 'g', 'oz', 'cup', 'tbsp', 'tsp'].map((unit) => (
+                <TouchableOpacity
+                  key={unit}
+                  style={[
+                    styles.unitButton,
+                    mealInput.servingUnit === unit && styles.unitButtonActive
+                  ]}
+                  onPress={() => {
+                    setMealInput(prev => ({ 
+                      ...prev, 
+                      servingUnit: unit as any, 
+                      baseServingSize: '1',
+                    }));
+                  }}
+                >
+                  <Text style={[
+                    styles.unitButtonText,
+                    mealInput.servingUnit === unit && styles.unitButtonTextActive
+                  ]}>
+                    {unit === 'g' ? 'grams' : unit === 'oz' ? 'oz' : unit === 'tbsp' ? 'tbsp' : unit === 'tsp' ? 'tsp' : unit === 'cup' ? 'cup' : 'piece'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          
+          <View style={styles.macroRow}>
+            <Text style={styles.macroLabel}>Serving Size</Text>
+            <TextInput
+              style={styles.macroInput}
+              placeholder="1"
+              value={mealInput.baseServingSize}
+              onChangeText={(text) => {
+                setMealInput(prev => ({ ...prev, baseServingSize: text }));
+              }}
+              keyboardType="numeric"
+            />
+            <Text style={styles.unitLabel}>{mealInput.servingUnit === 'g' ? 'grams' : mealInput.servingUnit === 'oz' ? 'oz' : mealInput.servingUnit === 'tbsp' ? 'tbsp' : mealInput.servingUnit === 'tsp' ? 'tsp' : mealInput.servingUnit === 'cup' ? 'cup' : 'piece'}</Text>
+          </View>
+
+          {/* Keep original servings for backward compatibility */}
+          <View style={styles.macroRow}>
+            <Text style={styles.macroLabel}>Servings (multiplier)</Text>
             <TextInput
               style={styles.macroInput}
               placeholder="1"
@@ -1037,15 +1187,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               keyboardType="numeric"
             />
           </View>
-            <View style={styles.macroRow}>
-              <Text style={styles.macroLabel}>Time (optional)</Text>
-              <TextInput
-                style={styles.macroInput}
-                placeholder="12:00 PM"
-                value={mealInput.time}
-                onChangeText={(text) => setMealInput(prev => ({ ...prev, time: text }))}
-              />
-            </View>
+
             {mealInput.protein && mealInput.carbs && mealInput.fat && (
               <View style={styles.calculatedCalories}>
                 <Text style={styles.calculatedCaloriesText}>
@@ -1064,7 +1206,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                     const c = Math.round(parseFloat(mealInput.carbs) || 0);
                     const f = Math.round(parseFloat(mealInput.fat) || 0);
                     const perServingCals = calculateCaloriesFromMacros(p, c, f);
-                    return `Per serving: ${perServingCals} cal • ${p}g P • ${c}g C • ${f}g F`;
+                    const servingSizeDisplay = mealInput.baseServingSize || '1';
+                    const unitDisplay = mealInput.servingUnit === 'g' ? 'grams' : mealInput.servingUnit === 'oz' ? 'oz' : mealInput.servingUnit === 'tbsp' ? 'tbsp' : mealInput.servingUnit === 'tsp' ? 'tsp' : mealInput.servingUnit === 'cup' ? 'cup' : 'piece';
+                    return `Per ${servingSizeDisplay} ${unitDisplay}: ${perServingCals} cal • ${p}g P • ${c}g C • ${f}g F`;
                   })()}
                 </Text>
               </View>
@@ -1075,6 +1219,13 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               <Text style={styles.logButtonText}>Add Meal</Text>
             </TouchableOpacity>
             <TouchableOpacity 
+              style={[styles.logButton, styles.saveMealButton]} 
+              onPress={handleSaveMeal}
+              disabled={!mealInput.name || !mealInput.name.trim()}
+            >
+              <Text style={[styles.logButtonText, (!mealInput.name || !mealInput.name.trim()) && styles.disabledButtonText]}>Save Meal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
               style={styles.scanButton} 
               onPress={() => setShowBarcodeScanner(true)}
             >
@@ -1083,12 +1234,34 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           </View>
         </View>
 
-        {/* Today's Meals */}
-        {todayMeals.length > 0 && (
-          <View style={styles.mealsList}>
-            <Text style={styles.sectionTitle}>Today's Meals</Text>
-            <ScrollView style={styles.mealsScroll} contentContainerStyle={styles.mealsScrollContent}>
-              {todayMeals.map(meal => (
+        {/* Meals List - Combined Today's Meals and Saved Meals with Tabs */}
+        <View style={styles.mealsList}>
+          {/* Tab Selector */}
+          <View style={styles.mealsTabContainer}>
+            <TouchableOpacity
+              style={[styles.mealsTabButton, mealsTab === 'today' && styles.mealsTabButtonActive]}
+              onPress={() => setMealsTab('today')}
+            >
+              <Text style={[styles.mealsTabText, mealsTab === 'today' && styles.mealsTabTextActive]}>
+                Today's Meals {todayMeals.length > 0 && `(${todayMeals.length})`}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.mealsTabButton, mealsTab === 'saved' && styles.mealsTabButtonActive]}
+              onPress={() => setMealsTab('saved')}
+            >
+              <Text style={[styles.mealsTabText, mealsTab === 'saved' && styles.mealsTabTextActive]}>
+                Saved Meals {savedMeals.length > 0 && `(${savedMeals.length})`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Today's Meals Tab */}
+          {mealsTab === 'today' && (
+            <>
+              {todayMeals.length > 0 ? (
+                <ScrollView style={styles.mealsScroll} contentContainerStyle={styles.mealsScrollContent}>
+                  {todayMeals.map(meal => (
                 <Swipeable
                   key={meal.id}
                   renderRightActions={() => (
@@ -1104,7 +1277,12 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 >
                   <View style={styles.mealItem}>
                     <View style={styles.mealHeader}>
-                      <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
+                      <View style={styles.mealNameContainer}>
+                        <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
+                        {meal.servings && meal.servings !== 1 && (
+                          <Text style={styles.mealServings}>{meal.servings}x</Text>
+                        )}
+                      </View>
                       <Text style={styles.mealTime} numberOfLines={1} ellipsizeMode="tail">{meal.time}</Text>
                     </View>
                     <View style={styles.mealMacros}>
@@ -1115,10 +1293,77 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                     </View>
                   </View>
                 </Swipeable>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.emptyMealsContainer}>
+                  <Text style={styles.emptyMealsText}>No meals logged today</Text>
+                  <Text style={styles.emptyMealsSubtext}>Add a meal using the macro calculator above</Text>
+                </View>
+              )}
+            </>
+          )}
+
+          {/* Saved Meals Tab */}
+          {mealsTab === 'saved' && (
+            <>
+              {/* Saved Meals Search */}
+              <View style={styles.searchInputContainer}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search saved meals..."
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholderTextColor="#888"
+                />
+                {searchQuery && searchQuery.trim() && (
+                  <TouchableOpacity
+                    style={styles.clearButton}
+                    onPress={() => setSearchQuery('')}
+                  >
+                    <Text style={styles.clearButtonText}>×</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              {savedMeals.length > 0 ? (
+                <ScrollView style={styles.savedMealsList} contentContainerStyle={styles.savedMealsListContent}>
+                  {savedMeals
+                    .filter(meal => meal.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .sort((a, b) => b.timesUsed - a.timesUsed)
+                    .map(meal => (
+                      <TouchableOpacity
+                        key={meal.id}
+                        style={styles.savedMealItem}
+                        onPress={() => handleUseSavedMeal(meal)}
+                      >
+                        <View style={styles.savedMealInfo}>
+                          <Text style={styles.savedMealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
+                          <Text style={styles.savedMealMacros}>
+                            {meal.calories} cal • {meal.protein}g protein • {meal.carbs}g carbs • {meal.fat}g fat
+                          </Text>
+                          <View style={styles.savedMealMetaRow}>
+                            <Text style={styles.savedMealUsage}>Used {meal.timesUsed} times</Text>
+                            {meal.lastUsed ? (
+                              <Text style={styles.savedMealLastUsed} numberOfLines={1} ellipsizeMode="tail">
+                                Last used: {new Date(meal.lastUsed).toLocaleDateString()}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                        <Text style={styles.useMealButton}>Use</Text>
+                      </TouchableOpacity>
+                    ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.emptyMealsContainer}>
+                  <Text style={styles.emptyMealsText}>No saved meals yet</Text>
+                  <Text style={styles.emptyMealsSubtext}>Save meals from the macro calculator to use them later</Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
       </View>
     );
   };
@@ -1152,9 +1397,8 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
             >
               <View style={[
                 styles.taskCheckbox,
-                task.completed && { backgroundColor: categoryColor }
+                task.completed && { backgroundColor: categoryColor, borderColor: categoryColor }
               ]}>
-                {task.completed && <Text style={styles.taskCheckmark}>DONE</Text>}
               </View>
               <Text style={[
                 styles.taskText,
@@ -1238,63 +1482,136 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
       {/* Edit Meal Modal */}
       <Modal visible={!!editingMeal} transparent animationType="fade" onRequestClose={cancelEditMeal}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit Meal</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Meal name"
-              value={editMealFields.name}
-              onChangeText={(t) => setEditMealFields(prev => ({ ...prev, name: t }))}
-            />
-            <View style={styles.modalRow}>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Protein (g)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="0"
-                  keyboardType="numeric"
-                  value={editMealFields.protein}
-                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, protein: t }))}
-                />
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Carbs (g)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="0"
-                  keyboardType="numeric"
-                  value={editMealFields.carbs}
-                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, carbs: t }))}
-                />
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Fat (g)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="0"
-                  keyboardType="numeric"
-                  value={editMealFields.fat}
-                  onChangeText={(t) => setEditMealFields(prev => ({ ...prev, fat: t }))}
-                />
-              </View>
-            </View>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Time (e.g., 12:15 PM)"
-              value={editMealFields.time}
-              onChangeText={(t) => setEditMealFields(prev => ({ ...prev, time: t }))}
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalButton, styles.modalCancel]} onPress={cancelEditMeal}>
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.modalSave]} onPress={saveEditedMeal}>
-                <Text style={[styles.modalButtonText, styles.modalSaveText]}>Save</Text>
-              </TouchableOpacity>
-            </View>
+        <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); cancelEditMeal(); }}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+            >
+              <TouchableWithoutFeedback onPress={() => {}}>
+                <View style={styles.modalCard}>
+                <ScrollView 
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.modalScrollContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={styles.modalTitle}>Edit Meal</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Meal name"
+                    value={editMealFields.name}
+                    onChangeText={(t) => setEditMealFields(prev => ({ ...prev, name: t }))}
+                  />
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Protein (g)</Text>
+                      <TextInput
+                        style={[styles.modalInput, parseFloat(editMealFields.servings) !== 1 && styles.modalInputDisabled]}
+                        placeholder="0"
+                        keyboardType="numeric"
+                        value={editMealFields.protein}
+                        onChangeText={(t) => {
+                          // If servings is not 1, recalculate base macros instead
+                          if (parseFloat(editMealFields.servings) !== 1) {
+                            const servingsNum = parseFloat(editMealFields.servings) || 1;
+                            const newBaseProtein = parseFloat(t) / servingsNum;
+                            setEditBaseMacros(prev => ({ ...prev, protein: newBaseProtein }));
+                            updateEditMacrosFromServings(editMealFields.servings);
+                          } else {
+                            setEditMealFields(prev => ({ ...prev, protein: t }));
+                            setEditBaseMacros(prev => ({ ...prev, protein: parseFloat(t) || 0 }));
+                          }
+                        }}
+                        editable={parseFloat(editMealFields.servings) === 1}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Carbs (g)</Text>
+                      <TextInput
+                        style={[styles.modalInput, parseFloat(editMealFields.servings) !== 1 && styles.modalInputDisabled]}
+                        placeholder="0"
+                        keyboardType="numeric"
+                        value={editMealFields.carbs}
+                        onChangeText={(t) => {
+                          if (parseFloat(editMealFields.servings) !== 1) {
+                            const servingsNum = parseFloat(editMealFields.servings) || 1;
+                            const newBaseCarbs = parseFloat(t) / servingsNum;
+                            setEditBaseMacros(prev => ({ ...prev, carbs: newBaseCarbs }));
+                            updateEditMacrosFromServings(editMealFields.servings);
+                          } else {
+                            setEditMealFields(prev => ({ ...prev, carbs: t }));
+                            setEditBaseMacros(prev => ({ ...prev, carbs: parseFloat(t) || 0 }));
+                          }
+                        }}
+                        editable={parseFloat(editMealFields.servings) === 1}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Fat (g)</Text>
+                      <TextInput
+                        style={[styles.modalInput, parseFloat(editMealFields.servings) !== 1 && styles.modalInputDisabled]}
+                        placeholder="0"
+                        keyboardType="numeric"
+                        value={editMealFields.fat}
+                        onChangeText={(t) => {
+                          if (parseFloat(editMealFields.servings) !== 1) {
+                            const servingsNum = parseFloat(editMealFields.servings) || 1;
+                            const newBaseFat = parseFloat(t) / servingsNum;
+                            setEditBaseMacros(prev => ({ ...prev, fat: newBaseFat }));
+                            updateEditMacrosFromServings(editMealFields.servings);
+                          } else {
+                            setEditMealFields(prev => ({ ...prev, fat: t }));
+                            setEditBaseMacros(prev => ({ ...prev, fat: parseFloat(t) || 0 }));
+                          }
+                        }}
+                        editable={parseFloat(editMealFields.servings) === 1}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Servings</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="1"
+                        keyboardType="numeric"
+                        value={editMealFields.servings}
+                        onChangeText={(t) => updateEditMacrosFromServings(t)}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Time (e.g., 12:15 PM)</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="Time"
+                        value={editMealFields.time}
+                        onChangeText={(t) => setEditMealFields(prev => ({ ...prev, time: t }))}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.editMealInfo}>
+                    <Text style={styles.editMealInfoText}>
+                      Base per serving: {editBaseMacros.protein}g P • {editBaseMacros.carbs}g C • {editBaseMacros.fat}g F
+                    </Text>
+                    <Text style={styles.editMealInfoText}>
+                      Total ({editMealFields.servings || '1'} servings): {editMealFields.protein}g P • {editMealFields.carbs}g C • {editMealFields.fat}g F
+                    </Text>
+                  </View>
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity style={[styles.modalButton, styles.modalCancel]} onPress={cancelEditMeal}>
+                      <Text style={styles.modalButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.modalButton, styles.modalSave]} onPress={saveEditedMeal}>
+                      <Text style={[styles.modalButtonText, styles.modalSaveText]}>Save</Text>
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
 
       {/* notifications removed */}
@@ -1473,19 +1790,61 @@ const styles = StyleSheet.create({
     width: 120,
     textAlign: 'center',
   },
+  unitSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  unitButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#3a3a3a',
+    borderWidth: 1,
+    borderColor: '#555',
+    minWidth: 60,
+    alignItems: 'center',
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  unitButtonActive: {
+    backgroundColor: '#4ECDC4',
+    borderColor: '#4ECDC4',
+  },
+  unitButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#888',
+  },
+  unitButtonTextActive: {
+    color: '#1a1a1a',
+  },
+  unitLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginLeft: 8,
+    alignSelf: 'center',
+  },
   logButton: {
     backgroundColor: '#4ECDC4',
-    borderRadius: 10,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     flex: 1,
-    marginRight: 10,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    shadowColor: '#4ECDC4',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
   },
   logButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 13,
+    fontWeight: '600',
     color: '#1a1a1a',
+    letterSpacing: 0.3,
   },
   macroHistory: {
     marginTop: 20,
@@ -1854,19 +2213,39 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 15,
   },
+  saveMealButton: {
+    backgroundColor: '#6C63FF',
+    marginLeft: 8,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  disabledButtonText: {
+    opacity: 0.5,
+  },
   scanButton: {
     backgroundColor: '#00ff88',
-    borderRadius: 10,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    shadowColor: '#00ff88',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
   },
   scanButtonText: {
     color: '#1a1a1a',
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   savedMealsButton: {
     backgroundColor: '#4ECDC4',
@@ -1885,13 +2264,18 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
   },
+  searchInputContainer: {
+    position: 'relative',
+    width: '100%',
+    marginBottom: 15,
+  },
   searchInput: {
     backgroundColor: '#2a2a2a',
     borderRadius: 8,
     padding: 12,
+    paddingRight: 40,
     fontSize: 16,
     color: '#fff',
-    marginBottom: 15,
   },
   savedMealsList: {
     maxHeight: 260,
@@ -1987,19 +2371,84 @@ const styles = StyleSheet.create({
   mealInputs: {
     marginBottom: 20,
   },
+  mealNameInputContainer: {
+    position: 'relative',
+    width: '100%',
+  },
   mealInput: {
     backgroundColor: '#3a3a3a',
     borderRadius: 8,
     padding: 12,
+    paddingRight: 40,
     fontSize: 16,
     color: '#fff',
     marginBottom: 15,
+  },
+  clearButton: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#555',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  clearButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+    lineHeight: 20,
   },
   mealsList: {
     backgroundColor: '#2a2a2a',
     borderRadius: 15,
     padding: 20,
     marginBottom: 20,
+  },
+  mealsTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#3a3a3a',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 15,
+  },
+  mealsTabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealsTabButtonActive: {
+    backgroundColor: '#4ECDC4',
+  },
+  mealsTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#888',
+  },
+  mealsTabTextActive: {
+    color: '#1a1a1a',
+  },
+  emptyMealsContainer: {
+    padding: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyMealsText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#888',
+    marginBottom: 8,
+  },
+  emptyMealsSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
   },
   mealsScroll: {
     maxHeight: 260,
@@ -2019,12 +2468,27 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 10,
   },
+  mealNameContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 8,
+  },
   mealName: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',
     flex: 1,
-    paddingRight: 8,
+  },
+  mealServings: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4ECDC4',
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 8,
   },
   mealTime: {
     fontSize: 12,
@@ -2071,7 +2535,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
     width: '100%',
+    maxHeight: '90%',
+    maxWidth: '90%',
+  },
+  modalScrollContent: {
     padding: 16,
+    paddingBottom: 20,
   },
   modalTitle: {
     color: '#fff',
@@ -2099,6 +2568,21 @@ const styles = StyleSheet.create({
     padding: 10,
     color: '#fff',
     marginBottom: 10,
+  },
+  modalInputDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#2a2a2a',
+  },
+  editMealInfo: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+  },
+  editMealInfoText: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
   },
   modalActions: {
     flexDirection: 'row',
