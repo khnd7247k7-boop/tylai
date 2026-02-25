@@ -514,6 +514,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
           onChangeText={(text) => setCurrentMoodEntry(prev => ({ ...prev, thoughts: text }))}
           multiline
           numberOfLines={4}
+          autoCapitalize="words"
         />
       </View>
 
@@ -555,6 +556,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
           placeholder="Share something positive from your day..."
           value={currentMoodEntry.gratitude}
           onChangeText={(text) => setCurrentMoodEntry(prev => ({ ...prev, gratitude: text }))}
+          autoCapitalize="words"
         />
       </View>
 

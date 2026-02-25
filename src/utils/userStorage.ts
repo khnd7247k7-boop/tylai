@@ -83,3 +83,65 @@ export const clearAllUserData = async (): Promise<void> => {
   }
 };
 
+/**
+ * Get all stored keys for debugging
+ * This helps check what data exists
+ */
+export const getAllStoredKeys = async (): Promise<string[]> => {
+  try {
+    return await AsyncStorage.getAllKeys();
+  } catch (error) {
+    console.error('Error getting all keys:', error);
+    return [];
+  }
+};
+
+/**
+ * Check if user profile exists and get email (if stored)
+ * Note: Passwords are NEVER stored for security reasons
+ */
+export const getStoredUserEmail = async (): Promise<string | null> => {
+  try {
+    // Try to get email from userProfile (if user was logged in before)
+    // This only works if user saved their profile in Settings
+    const profile = await loadUserData<any>('userProfile');
+    return profile?.email || null;
+  } catch (error) {
+    console.error('Error getting stored email:', error);
+    return null;
+  }
+};
+
+/**
+ * Get all stored credentials and user data summary
+ * Returns what data is stored (passwords are NEVER stored)
+ */
+export const getStoredCredentialsSummary = async (): Promise<{
+  email: string | null;
+  name: string | null;
+  hasProfile: boolean;
+  profileData: any;
+  allStoredKeys: string[];
+}> => {
+  try {
+    const profile = await loadUserData<any>('userProfile');
+    const allKeys = await getAllStoredKeys();
+    
+    return {
+      email: profile?.email || null,
+      name: profile?.name || null,
+      hasProfile: !!profile,
+      profileData: profile || null,
+      allStoredKeys: allKeys,
+    };
+  } catch (error) {
+    console.error('Error getting stored credentials summary:', error);
+    return {
+      email: null,
+      name: null,
+      hasProfile: false,
+      profileData: null,
+      allStoredKeys: [],
+    };
+  }
+};

@@ -19,7 +19,7 @@ interface Task {
   id: string;
   title: string;
   completed: boolean;
-  category: 'fitness' | 'mindset' | 'spiritual' | 'emotional';
+  category: 'fitness' | 'mindset' | 'spiritual' | 'emotional' | 'health';
 }
 
 interface DashboardProps {
@@ -30,6 +30,7 @@ interface DashboardProps {
   onNavigateToAI: () => void;
   onNavigateToSettings: () => void;
   onNavigateToSpiritual: () => void;
+  onNavigateToHealth: () => void;
 }
 
 interface GratitudeEntry {
@@ -39,7 +40,7 @@ interface GratitudeEntry {
   reflection: string;
 }
 
-export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings, onNavigateToSpiritual }: DashboardProps) {
+export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToMental, onNavigateToEmotional, onNavigateToAI, onNavigateToSettings, onNavigateToSpiritual, onNavigateToHealth }: DashboardProps) {
   const { showToast } = useToast();
   const [isCheckedIn, setIsCheckedIn] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Task['category'] | null>(null);
@@ -54,6 +55,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     { id: '6', title: 'Connect with nature walk', completed: false, category: 'spiritual' },
     { id: '7', title: 'Express feelings to a friend', completed: false, category: 'emotional' },
     { id: '8', title: 'Practice deep breathing exercises', completed: false, category: 'emotional' },
+    { id: '9', title: 'Sync health data from watch', completed: false, category: 'health' },
+    { id: '10', title: 'Review weekly health trends', completed: false, category: 'health' },
   ]);
 
   // Load all data from AsyncStorage on component mount and refresh gratitude entries
@@ -205,6 +208,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
     "What lies behind us and what lies before us are tiny matters compared to what lies within us.",
     "Life is 10% what happens to you and 90% how you react to it.",
     "The way to get started is to quit talking and begin doing.",
+    "All we have to decide is what to do with the time that is given us.",
     
     // Mindfulness & Spirituality Quotes
     "Be present in all things and thankful for all things.",
@@ -296,7 +300,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
       fitness: '#FF6B6B',
       mindset: '#4ECDC4', 
       spiritual: '#45B7D1',
-      emotional: '#96CEB4'
+      emotional: '#96CEB4',
+      health: '#FFA500'
     };
     return colors[category];
   };
@@ -306,7 +311,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
       fitness: 'Physical',
       mindset: 'Mental',
       spiritual: 'Spiritual',
-      emotional: 'Emotional'
+      emotional: 'Emotional',
+      health: 'Health'
     };
     return titles[category];
   };
@@ -314,16 +320,17 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
   const getCategoryAngle = (category: Task['category']) => {
     const angles = {
       fitness: 0,
-      mindset: 90,
-      spiritual: 180,
-      emotional: 270
+      mindset: 72,
+      spiritual: 144,
+      emotional: 216,
+      health: 288
     };
     return angles[category];
   };
 
   const getCategoryProgressAngle = (category: Task['category']) => {
     const progress = getCategoryProgress(category);
-    return progress * 90; // Each section is 90 degrees
+    return progress * 72; // Each section is 72 degrees (360/5)
   };
 
   const TaskModal = () => {
@@ -392,9 +399,10 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
   };
 
   const CircularProgressCircle = () => {
-    const categories: Task['category'][] = ['fitness', 'mindset', 'spiritual', 'emotional'];
+    const categories: Task['category'][] = ['fitness', 'mindset', 'spiritual', 'emotional', 'health'];
     const circleSize = 280;
     const radius = circleSize / 2;
+    const segmentAngle = 72; // 360 / 5 = 72 degrees per segment
     
     return (
       <View style={styles.bigCircleContainer}>
@@ -405,8 +413,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
           {/* Background progress track - shows full circular path */}
           <View style={styles.progressTrack} />
           
-          {/* Segment dividers */}
-          {[0, 90, 180, 270].map((angle, index) => (
+          {/* Segment dividers - 5 segments at 72 degree intervals */}
+          {[0, 72, 144, 216, 288].map((angle, index) => (
             <View
               key={angle}
               style={[
@@ -431,12 +439,13 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
             const totalTasks = tasks.length;
             const completedTasks = tasks.filter(t => t.completed).length;
             
-            // Calculate progress for each quadrant
-            // Each quadrant represents one category (fitness, mindset, spiritual, emotional)
+            // Calculate progress for each segment
+            // Each segment represents one category (fitness, mindset, spiritual, emotional, health)
             const fitnessTasks = tasks.filter(t => t.category === 'fitness');
             const mindsetTasks = tasks.filter(t => t.category === 'mindset');
             const spiritualTasks = tasks.filter(t => t.category === 'spiritual');
             const emotionalTasks = tasks.filter(t => t.category === 'emotional');
+            const healthTasks = tasks.filter(t => t.category === 'health');
             
             const fitnessProgress = fitnessTasks.length > 0 
               ? fitnessTasks.filter(t => t.completed).length / fitnessTasks.length 
@@ -448,65 +457,91 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
             const emotionalProgress = emotionalTasks.length > 0 
               ? emotionalTasks.filter(t => t.completed).length / emotionalTasks.length 
               : 0;
+            const healthProgress = healthTasks.length > 0
+              ? healthTasks.filter(t => t.completed).length / healthTasks.length
+              : 0;
             
             // Calculate overall progress around the circle
-            // Each quadrant fills independently based on its own progress
-            // Progress flows clockwise: fitness (top) -> mindset (right) -> spiritual (bottom) -> emotional (left)
-            // Each quadrant is 90 degrees
+            // Each segment fills independently based on its own progress
+            // Progress flows clockwise: fitness (0°) -> mindset (72°) -> spiritual (144°) -> emotional (216°) -> health (288°)
+            // Each segment is 72 degrees (360/5)
             
             // Calculate cumulative progress angle around the circle
-            // Each section contributes up to 90 degrees based on its completion
+            // Each section contributes up to 72 degrees based on its completion
             let totalProgressAngle = 0;
             
-            // Fitness (top): 0-90 degrees
-            totalProgressAngle += fitnessProgress * 90;
+            // Fitness: 0-72 degrees
+            totalProgressAngle += fitnessProgress * 72;
             
-            // Mindset (right): 90-180 degrees
-            totalProgressAngle += mindsetProgress * 90;
+            // Mindset: 72-144 degrees
+            totalProgressAngle += mindsetProgress * 72;
             
-            // Spiritual (bottom): 180-270 degrees - uses gratitude entries (3 entries = 100%)
-            totalProgressAngle += spiritualProgress * 90;
+            // Spiritual: 144-216 degrees - uses gratitude entries (3 entries = 100%)
+            totalProgressAngle += spiritualProgress * 72;
             
-            // Emotional (left): 270-360 degrees
-            totalProgressAngle += emotionalProgress * 90;
+            // Emotional: 216-288 degrees
+            totalProgressAngle += emotionalProgress * 72;
+            
+            // Health: 288-360 degrees
+            totalProgressAngle += healthProgress * 72;
             
             // Clamp to 360 degrees max
             totalProgressAngle = Math.min(totalProgressAngle, 360);
             
-            // Determine colors for each quadrant based on which category they belong to
+            // Determine colors for each segment based on which category they belong to
             const getColorForAngle = (angle: number) => {
-              if (angle < 90) return getCategoryColor('fitness');
-              if (angle < 180) return getCategoryColor('mindset');
-              if (angle < 270) return getCategoryColor('spiritual');
-              return getCategoryColor('emotional');
+              if (angle < 72) return getCategoryColor('fitness');
+              if (angle < 144) return getCategoryColor('mindset');
+              if (angle < 216) return getCategoryColor('spiritual');
+              if (angle < 288) return getCategoryColor('emotional');
+              return getCategoryColor('health');
             };
             
             // Determine which borders to show based on total progress angle
             const showTop = totalProgressAngle > 0;
-            const showRight = totalProgressAngle > 90;
-            const showBottom = totalProgressAngle > 180;
-            const showLeft = totalProgressAngle > 270;
+            const showRight = totalProgressAngle > 72;
+            const showBottomRight = totalProgressAngle > 144;
+            const showBottom = totalProgressAngle > 216;
+            const showLeft = totalProgressAngle > 288;
             
-            // Get colors for each segment
-            const topColor = showTop ? getColorForAngle(45) : 'transparent';
-            const rightColor = showRight ? getColorForAngle(135) : 'transparent';
-            const bottomColor = showBottom ? getColorForAngle(225) : 'transparent';
-            const leftColor = showLeft ? getColorForAngle(315) : 'transparent';
+            // Get colors for each segment (using approximate angles for 5 segments)
+            const topColor = showTop ? getColorForAngle(36) : 'transparent';
+            const rightColor = showRight ? getColorForAngle(108) : 'transparent';
+            const bottomRightColor = showBottomRight ? getColorForAngle(180) : 'transparent';
+            const bottomColor = showBottom ? getColorForAngle(252) : 'transparent';
+            const leftColor = showLeft ? getColorForAngle(324) : 'transparent';
             
+            // For 5 segments, we need to use a different approach
+            // We'll create 5 separate border segments
             return (
               <View style={styles.progressSegmentContainer}>
-                {/* Overall progress ring - flows clockwise around entire circle */}
+                {/* Overall progress ring - flows clockwise around entire circle with 5 segments */}
                 <View
                   style={[
                     styles.progressRing,
                     {
                       borderTopColor: topColor,
                       borderRightColor: rightColor,
-                      borderBottomColor: bottomColor,
+                      borderBottomColor: bottomRightColor,
                       borderLeftColor: leftColor,
+                      // For the 5th segment, we'll need to use a custom approach
+                      // Since React Native doesn't support 5 border colors directly,
+                      // we'll use the existing 4 and add a rotation-based approach
                     }
                   ]}
                 />
+                {/* Additional segment for health (288-360 degrees) */}
+                {totalProgressAngle > 288 && (
+                  <View
+                    style={[
+                      styles.progressRingSegment,
+                      {
+                        borderTopColor: leftColor,
+                        transform: [{ rotate: '288deg' }],
+                      }
+                    ]}
+                  />
+                )}
               </View>
             );
           })()}
@@ -515,7 +550,7 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
           {categories.map((category, index) => {
             const color = getCategoryColor(category);
             const progress = getCategoryProgress(category);
-            const angle = index * 90 + 45; // Center of each quadrant
+            const angle = index * 72 + 36; // Center of each segment (72 degrees per segment, center at 36)
             const labelRadius = radius * 0.75; // Position labels inside the circle
             const x = Math.cos((angle) * Math.PI / 180) * labelRadius;
             const y = Math.sin((angle) * Math.PI / 180) * labelRadius;
@@ -539,6 +574,8 @@ export default function Dashboard({ onLogout, onNavigateToFitness, onNavigateToM
                     onNavigateToEmotional();
                   } else if (category === 'spiritual') {
                     onNavigateToSpiritual();
+                  } else if (category === 'health') {
+                    onNavigateToHealth();
                   } else {
                     setSelectedCategory(category);
                   }
@@ -900,6 +937,15 @@ const styles = StyleSheet.create({
     borderRadius: 140,
     borderWidth: 8,
     borderColor: 'transparent',
+  },
+  progressRingSegment: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    borderRadius: 140,
+    borderWidth: 8,
+    borderColor: 'transparent',
+    borderTopColor: 'transparent',
   },
   circleCenter: {
     position: 'absolute',

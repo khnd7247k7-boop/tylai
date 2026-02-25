@@ -1,0 +1,194 @@
+TYL AI App - Third-Party Notices and Licenses
+==============================================
+
+This application includes software developed by various open-source projects
+and uses proprietary services. This file contains the required attributions
+and license information.
+
+Copyright Notice
+----------------
+Copyright (c) 2024 TYL AI App
+Licensed under the Apache License, Version 2.0 (see LICENSE.txt)
+
+Apache License 2.0
+------------------
+This product includes software licensed under the Apache License, Version 2.0.
+A copy of the Apache License 2.0 is included in LICENSE.txt.
+
+Third-Party Open Source Software
+---------------------------------
+
+The following third-party software components are used in this application:
+
+1. React (MIT License)
+   Copyright (c) Facebook, Inc. and its affiliates
+   https://github.com/facebook/react
+
+2. React Native (MIT License)
+   Copyright (c) Meta Platforms, Inc. and affiliates
+   https://github.com/facebook/react-native
+
+3. Expo (MIT License)
+   Copyright (c) 2021-present 650 Industries, Inc. (aka Expo)
+   https://github.com/expo/expo
+
+4. TypeScript (Apache License 2.0)
+   Copyright (c) Microsoft Corporation
+   https://github.com/microsoft/TypeScript
+   See ThirdPartyNoticeText.txt for additional third-party notices included with TypeScript
+
+5. Firebase (Apache License 2.0)
+   Copyright (c) Google LLC
+   https://github.com/firebase/firebase-js-sdk
+
+6. React Navigation (MIT License)
+   Copyright (c) React Navigation Contributors
+   https://github.com/react-navigation/react-navigation
+
+7. React Native Gesture Handler (MIT License)
+   Copyright (c) Software Mansion
+   https://github.com/software-mansion/react-native-gesture-handler
+
+8. React Native Reanimated (MIT License)
+   Copyright (c) Software Mansion
+   https://github.com/software-mansion/react-native-reanimated
+
+9. React Native Safe Area Context (MIT License)
+   Copyright (c) Expo
+   https://github.com/th3rdwave/react-native-safe-area-context
+
+10. React Native Screens (MIT License)
+    Copyright (c) Software Mansion
+    https://github.com/software-mansion/react-native-screens
+
+11. @react-native-async-storage/async-storage (MIT License)
+    Copyright (c) React Native Community
+    https://github.com/react-native-async-storage/async-storage
+
+12. @react-native-community/netinfo (MIT License)
+    Copyright (c) React Native Community
+    https://github.com/react-native-community/react-native-netinfo
+
+13. Expo Barcode Scanner (MIT License)
+    Copyright (c) Expo
+    https://github.com/expo/expo/tree/main/packages/expo-barcode-scanner
+
+14. Expo Camera (MIT License)
+    Copyright (c) Expo
+    https://github.com/expo/expo/tree/main/packages/expo-camera
+
+15. Expo Haptics (MIT License)
+    Copyright (c) Expo
+    https://github.com/expo/expo/tree/main/packages/expo-haptics
+
+16. Expo Notifications (MIT License)
+    Copyright (c) Expo
+    https://github.com/expo/expo/tree/main/packages/expo-notifications
+
+17. Expo Status Bar (MIT License)
+    Copyright (c) Expo
+    https://github.com/expo/expo/tree/main/packages/expo-status-bar
+
+18. React Native Web (MIT License)
+    Copyright (c) Nicolas Gallagher
+    https://github.com/necolas/react-native-web
+
+19. Babel (MIT License)
+    Copyright (c) Sebastian McKenzie and other contributors
+    https://github.com/babel/babel
+
+MIT License Text
+---------------
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Proprietary Services and APIs
+------------------------------
+
+This application uses the following proprietary services and APIs:
+
+1. Firebase (Google LLC)
+   - Authentication, database, and cloud services
+   - Subject to Google Firebase Terms of Service
+   - https://firebase.google.com/terms
+
+2. Expo Services
+   - Build services and development tools
+   - Subject to Expo Terms of Service
+   - https://expo.dev/terms
+
+3. Apple HealthKit (Apple Inc.)
+   - Health data access on iOS devices
+   - Requires Apple Developer Program membership
+   - Subject to Apple Developer Program License Agreement
+   - Used via expo-health package
+   - https://developer.apple.com/healthkit/
+
+4. Google Fit / Health Connect (Google LLC)
+   - Health data access on Android devices
+   - Subject to Google Fit API Terms of Service
+   - Used via expo-health package
+   - https://developers.google.com/fit
+
+5. Apple App Store (Apple Inc.)
+   - Distribution platform for iOS
+   - Subject to App Store Review Guidelines
+   - https://developer.apple.com/app-store/review/guidelines/
+
+6. Google Play Store (Google LLC)
+   - Distribution platform for Android
+   - Subject to Google Play Developer Policy
+   - https://play.google.com/about/developer-content-policy/
+
+TypeScript Third-Party Notices
+-------------------------------
+This application includes TypeScript, which incorporates third-party material.
+See ThirdPartyNoticeText.txt for complete third-party notices included with
+TypeScript, including:
+- DefinitelyTyped (MIT License)
+- Unicode Data Files (Unicode License)
+- DOM Specifications (W3C/CC Licenses)
+- WebGL (Khronos Group License)
+
+Health Data Privacy
+-------------------
+This application accesses health data through:
+- Apple HealthKit (iOS)
+- Google Fit / Health Connect (Android)
+
+Health data is sensitive personal information. This application:
+- Requests explicit user permission before accessing health data
+- Stores health data locally on the user's device
+- Does not share health data with third parties without explicit consent
+- Complies with applicable privacy regulations (HIPAA, GDPR, etc.)
+
+Users can control health data access through:
+- Device-level permissions (iOS Settings, Android Settings)
+- In-app settings (Settings → Settings → Permissions)
+
+Additional Information
+----------------------
+For questions about licensing or third-party software, please contact:
+[Your Contact Information]
+
+For the complete Apache License 2.0 text, see LICENSE.txt
+For TypeScript third-party notices, see ThirdPartyNoticeText.txt
+
+Last Updated: 2024
+
+

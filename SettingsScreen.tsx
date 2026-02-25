@@ -11,20 +11,30 @@ import {
   Switch,
   Modal,
   TouchableWithoutFeedback,
+  Platform,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { saveUserData, loadUserData, clearAllUserData } from './src/utils/userStorage';
+import { saveUserData, loadUserData } from './src/utils/userStorage';
 import { updateNotificationSchedule } from './src/utils/notifications';
+import { NOTICE_CONTENT, LICENSE_CONTENT, LICENSING_SUMMARY_CONTENT, THIRD_PARTY_CONTENT } from './src/constants/legalDocuments';
 
 interface UserProfile {
   name: string;
   email: string;
   age: string;
+  sex: 'male' | 'female' | 'other' | '';
   height: string;
   weight: string;
   fitnessGoal: string;
+  secondaryGoals?: string[];
   experienceLevel: string;
+  injuries?: string;
+  limitations?: string;
+  daysPerWeek?: number;
+  equipmentAvailability?: string;
+  preferredWorkoutLength?: number; // in minutes
 }
 
 interface AppSettings {
@@ -34,6 +44,7 @@ interface AppSettings {
   autoBackup: boolean;
   reminderTime: string;
   language: string;
+  healthDataSyncEnabled: boolean;
 }
 
 interface InterfaceSettings {
@@ -50,7 +61,9 @@ interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
-  const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings' | 'legal'>('profile');
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  const [documentContent, setDocumentContent] = useState<string>('');
   const [profile, setProfile] = useState<UserProfile>({
     name: '',
     email: '',
@@ -67,6 +80,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
     autoBackup: true,
     reminderTime: '09:00',
     language: 'English',
+    healthDataSyncEnabled: true,
   });
   const [interfaceSettings, setInterfaceSettings] = useState<InterfaceSettings>({
     theme: 'dark',
@@ -77,6 +91,37 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
   });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showDocumentModal, setShowDocumentModal] = useState(false);
+
+  const loadDocument = (documentName: string) => {
+    let title = '';
+    let content = '';
+    
+    switch (documentName) {
+      case 'NOTICE':
+        title = 'NOTICE - Third-Party Notices and Licenses';
+        content = NOTICE_CONTENT;
+        break;
+      case 'LICENSE':
+        title = 'LICENSE - Apache License 2.0';
+        content = LICENSE_CONTENT;
+        break;
+      case 'LICENSING_SUMMARY':
+        title = 'Licensing Summary';
+        content = LICENSING_SUMMARY_CONTENT;
+        break;
+      case 'THIRD_PARTY':
+        title = 'Third Party Notices - TypeScript';
+        content = THIRD_PARTY_CONTENT;
+        break;
+      default:
+        return;
+    }
+    
+    setDocumentContent(content);
+    setSelectedDocument(title);
+    setShowDocumentModal(true);
+  };
 
   useEffect(() => {
     loadSettingsData();
@@ -139,17 +184,15 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   const confirmLogout = async () => {
     try {
-      // Clear all user-specific data
-      await clearAllUserData();
-      
-      // Also sign out from Firebase
+      // Sign out from Firebase (data persists for next login)
       try {
         const { signOut } = await import('firebase/auth');
         const { auth } = await import('./firebaseConfig');
         await signOut(auth);
+        // Auth state listener in App.tsx will handle the rest
       } catch (firebaseError) {
         console.error('Firebase sign out error:', firebaseError);
-        // Continue with logout even if Firebase sign out fails
+        // Still proceed with logout
       }
       
       setShowLogoutModal(false);
@@ -176,6 +219,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             onChangeText={(text) => setProfile({ ...profile, name: text })}
             placeholder="Enter your full name"
             editable={isEditingProfile}
+            autoCapitalize="words"
           />
         </View>
 
@@ -238,6 +282,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             onChangeText={(text) => setProfile({ ...profile, fitnessGoal: text })}
             placeholder="e.g., Weight Loss, Muscle Gain, General Fitness"
             editable={isEditingProfile}
+            autoCapitalize="words"
           />
         </View>
 
@@ -249,6 +294,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             onChangeText={(text) => setProfile({ ...profile, experienceLevel: text })}
             placeholder="e.g., Beginner, Intermediate, Advanced"
             editable={isEditingProfile}
+            autoCapitalize="words"
           />
         </View>
       </View>
@@ -376,6 +422,53 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             }}
             trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
             thumbColor={settings.autoBackup ? '#fff' : '#888'}
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Permissions</Text>
+        
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Watch & Health Data Sync</Text>
+            <Text style={styles.settingDescription}>
+              Allow the app to pull data from your smartwatch, Health app, and fitness apps
+            </Text>
+          </View>
+          <Switch
+            value={settings.healthDataSyncEnabled}
+            onValueChange={async (value) => {
+              const newSettings = { ...settings, healthDataSyncEnabled: value };
+              setSettings(newSettings);
+              await saveSettings(newSettings);
+              
+              // If enabling, request permissions if not already granted
+              if (value) {
+                try {
+                  const HealthService = await import('./src/services/HealthService');
+                  const hasPermissions = await HealthService.default.requestPermissions();
+                  
+                  if (hasPermissions) {
+                    Alert.alert(
+                      'Health Data Sync Enabled',
+                      'Health data sync is now enabled. Go to the Fitness tab → Health section and tap Refresh to load your data.',
+                      [{ text: 'OK' }]
+                    );
+                  }
+                } catch (error) {
+                  console.error('Error requesting health permissions:', error);
+                }
+              } else {
+                Alert.alert(
+                  'Health Data Sync Disabled',
+                  'Health data sync has been disabled. The app will no longer pull data from your watch or health apps.',
+                  [{ text: 'OK' }]
+                );
+              }
+            }}
+            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            thumbColor={settings.healthDataSyncEnabled ? '#fff' : '#888'}
           />
         </View>
       </View>
@@ -576,6 +669,59 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
     </View>
   );
 
+  const renderLegalTab = () => (
+    <View style={styles.tabContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Legal Documents</Text>
+        <Text style={styles.sectionDescription}>
+          View licenses, notices, and legal information for this application.
+        </Text>
+      </View>
+
+      <View style={styles.section}>
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('NOTICE')}
+        >
+          <Text style={styles.documentButtonTitle}>NOTICE</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Third-party notices and licenses
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('LICENSE')}
+        >
+          <Text style={styles.documentButtonTitle}>LICENSE</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Apache License 2.0
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('LICENSING_SUMMARY')}
+        >
+          <Text style={styles.documentButtonTitle}>Licensing Summary</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Overview of licenses and compliance
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('THIRD_PARTY')}
+        >
+          <Text style={styles.documentButtonTitle}>Third Party Notices</Text>
+          <Text style={styles.documentButtonSubtext}>
+            TypeScript third-party notices
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
@@ -609,6 +755,12 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
         >
           <Text style={[styles.tabButtonText, activeTab === 'settings' && styles.tabButtonTextActive]}>Settings</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'legal' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('legal')}
+        >
+          <Text style={[styles.tabButtonText, activeTab === 'legal' && styles.tabButtonTextActive]}>Legal</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Content */}
@@ -616,6 +768,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
         {activeTab === 'profile' && renderProfileTab()}
         {activeTab === 'interface' && renderInterfaceTab()}
         {activeTab === 'settings' && renderSettingsTab()}
+        {activeTab === 'legal' && renderLegalTab()}
       </ScrollView>
 
       {/* Logout Confirmation Modal */}
@@ -651,6 +804,28 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Document Viewer Modal */}
+      <Modal
+        visible={showDocumentModal}
+        animationType="slide"
+        onRequestClose={() => setShowDocumentModal(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.documentHeader}>
+            <Text style={styles.documentTitle}>{selectedDocument || 'Document'}</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowDocumentModal(false)}
+            >
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.documentContent} showsVerticalScrollIndicator={true}>
+            <Text style={styles.documentText}>{documentContent || 'Loading...'}</Text>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -757,6 +932,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#fff',
     flex: 1,
+  },
+  settingLabelContainer: {
+    flex: 1,
+    marginRight: 15,
+  },
+  settingDescription: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
+    lineHeight: 16,
   },
   buttonContainer: {
     marginTop: 20,
@@ -889,6 +1074,71 @@ const styles = StyleSheet.create({
   },
   optionButtonTextActive: {
     color: '#1a1a1a',
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  documentButton: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  documentButtonTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  documentButtonSubtext: {
+    fontSize: 14,
+    color: '#888',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+  },
+  documentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+    backgroundColor: '#2a2a2a',
+  },
+  documentTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    flex: 1,
+  },
+  closeButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    backgroundColor: '#4ECDC4',
+    borderRadius: 8,
+  },
+  closeButtonText: {
+    color: '#1a1a1a',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  documentContent: {
+    flex: 1,
+    padding: 20,
+  },
+  documentText: {
+    fontSize: 13,
+    color: '#ccc',
+    lineHeight: 20,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   logoutSection: {
     paddingHorizontal: 20,

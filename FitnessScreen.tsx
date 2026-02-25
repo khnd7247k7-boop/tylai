@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,16 +13,24 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
+  AppState,
+  Dimensions,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import WorkoutScreen from './WorkoutScreen';
 import ProgramExecutionScreen from './ProgramExecutionScreen';
+import BuildYourOwnWorkoutScreen from './BuildYourOwnWorkoutScreen';
+import SavedPlanViewScreen from './SavedPlanViewScreen';
+import WorkoutHistoryDetailScreen from './WorkoutHistoryDetailScreen';
+import LogPastWorkoutScreen from './LogPastWorkoutScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
 import TabSwipeNavigation from './TabSwipeNavigation';
 import BarcodeScanner from './BarcodeScanner';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import AIService, { ProgramAdaptation } from './AIService';
+import HealthService from './src/services/HealthService';
 
 interface MacroLog {
   id: string;
@@ -32,6 +40,38 @@ interface MacroLog {
   carbs: number;
   fat: number;
   water: number;
+}
+
+interface Micronutrients {
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
+  calcium?: number;
+  iron?: number;
+  potassium?: number;
+  vitaminA?: number;
+  vitaminC?: number;
+  vitaminD?: number;
+  vitaminE?: number;
+  vitaminK?: number;
+  thiamin?: number;
+  riboflavin?: number;
+  niacin?: number;
+  vitaminB6?: number;
+  folate?: number;
+  vitaminB12?: number;
+  biotin?: number;
+  pantothenicAcid?: number;
+  phosphorus?: number;
+  iodine?: number;
+  magnesium?: number;
+  zinc?: number;
+  selenium?: number;
+  copper?: number;
+  manganese?: number;
+  chromium?: number;
+  molybdenum?: number;
+  chloride?: number;
 }
 
 interface Meal {
@@ -47,6 +87,7 @@ interface Meal {
   baseProtein?: number; // Protein per serving
   baseCarbs?: number; // Carbs per serving
   baseFat?: number; // Fat per serving
+  micronutrients?: Micronutrients;
 }
 
 interface SavedMeal {
@@ -84,8 +125,175 @@ interface CompletedTask {
   completed: boolean;
 }
 
+interface WeightEntry {
+  id: string;
+  date: string;
+  weight: number; // in pounds
+}
+
+// Unit Picker Wheel Component
+const UnitPickerWheel = ({ 
+  units, 
+  selectedUnit, 
+  onUnitChange 
+}: { 
+  units: string[]; 
+  selectedUnit: string; 
+  onUnitChange: (unit: string) => void;
+}) => {
+  const scrollViewRef = useRef<ScrollView>(null);
+  const ITEM_HEIGHT = 50;
+  const VISIBLE_ITEMS = 3;
+  const CONTAINER_HEIGHT = ITEM_HEIGHT * VISIBLE_ITEMS;
+
+  const getUnitLabel = (unit: string) => {
+    switch (unit) {
+      case 'g': return 'grams';
+      case 'oz': return 'oz';
+      case 'tbsp': return 'tbsp';
+      case 'tsp': return 'tsp';
+      case 'cup': return 'cup';
+      case 'piece': return 'piece';
+      default: return unit;
+    }
+  };
+
+  useEffect(() => {
+    const selectedIndex = units.indexOf(selectedUnit);
+    if (selectedIndex !== -1 && scrollViewRef.current) {
+      const offsetY = selectedIndex * ITEM_HEIGHT;
+      // Use requestAnimationFrame for better timing
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({ y: offsetY, animated: false });
+      });
+    }
+  }, []);
+
+  const handleScroll = (event: any) => {
+    const y = event.nativeEvent.contentOffset.y;
+    const index = Math.round(y / ITEM_HEIGHT);
+    const clampedIndex = Math.max(0, Math.min(index, units.length - 1));
+    const selectedUnitFromScroll = units[clampedIndex];
+    
+    if (selectedUnitFromScroll !== selectedUnit) {
+      onUnitChange(selectedUnitFromScroll);
+    }
+  };
+
+  const handleMomentumScrollEnd = (event: any) => {
+    const y = event.nativeEvent.contentOffset.y;
+    const index = Math.round(y / ITEM_HEIGHT);
+    const clampedIndex = Math.max(0, Math.min(index, units.length - 1));
+    const offsetY = clampedIndex * ITEM_HEIGHT;
+    
+    scrollViewRef.current?.scrollTo({ y: offsetY, animated: true });
+  };
+
+  const handleItemPress = (unit: string, index: number) => {
+    const offsetY = index * ITEM_HEIGHT;
+    scrollViewRef.current?.scrollTo({ y: offsetY, animated: true });
+    onUnitChange(unit);
+  };
+
+  return (
+    <View style={styles.unitPickerContainer}>
+      <View style={styles.unitPickerWrapper}>
+        {/* Top scroll indicator */}
+        <View style={styles.unitPickerScrollIndicator} pointerEvents="none">
+          <Text style={styles.unitPickerScrollIndicatorText}>⌃</Text>
+        </View>
+        
+        {/* Top gradient overlay */}
+        <View style={styles.unitPickerOverlay} pointerEvents="none" />
+        
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.unitPickerScrollView}
+          contentContainerStyle={styles.unitPickerContentContainer}
+          showsVerticalScrollIndicator={false}
+          snapToInterval={ITEM_HEIGHT}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          onScroll={handleScroll}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
+          scrollEventThrottle={16}
+          nestedScrollEnabled={true}
+          scrollEnabled={true}
+          bounces={true}
+        >
+          {units.map((unit, index) => {
+            const isSelected = unit === selectedUnit;
+            return (
+              <TouchableOpacity
+                key={unit}
+                activeOpacity={0.7}
+                style={[
+                  styles.unitPickerItem,
+                  { height: ITEM_HEIGHT },
+                  isSelected && styles.unitPickerItemSelected
+                ]}
+                onPress={() => handleItemPress(unit, index)}
+              >
+                <Text style={[
+                  styles.unitPickerItemText,
+                  isSelected && styles.unitPickerItemTextSelected
+                ]}>
+                  {getUnitLabel(unit)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        
+        {/* Bottom gradient overlay */}
+        <View style={[styles.unitPickerOverlay, styles.unitPickerOverlayBottom]} pointerEvents="none" />
+        
+        {/* Bottom scroll indicator */}
+        <View style={[styles.unitPickerScrollIndicator, styles.unitPickerScrollIndicatorBottom]} pointerEvents="none">
+          <Text style={styles.unitPickerScrollIndicatorText}>⌄</Text>
+        </View>
+        
+        {/* Selection indicator */}
+        <View style={styles.unitPickerSelectionIndicator} pointerEvents="none" />
+      </View>
+    </View>
+  );
+};
+
 export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () => void; onCompleteTask: (taskTitle: string) => void }) {
-  const [activeTab, setActiveTab] = useState<'workouts' | 'nutrition' | 'history' | 'tasks'>('workouts');
+  // Expose internal back handler for swipe navigation
+  const handleInternalBack = () => {
+    if (selectedProgram) {
+      setSelectedProgram(null);
+    } else if (selectedHistorySession) {
+      setSelectedHistorySession(null);
+    } else if (selectedSavedPlan) {
+      setSelectedSavedPlan(null);
+      loadSavedWorkoutPlans();
+      loadWorkoutHistory();
+    } else if (showBuildYourOwnScreen) {
+      setShowBuildYourOwnScreen(false);
+      loadSavedWorkoutPlans();
+      loadActivePlans();
+    } else if (showWorkoutScreen) {
+      setShowWorkoutScreen(false);
+      loadSavedWorkoutPlans();
+      loadActivePlans();
+    } else if (showLogPastWorkout) {
+      setShowLogPastWorkout(false);
+    } else {
+      onBack();
+    }
+  };
+
+  // Store the handler for App.tsx to access
+  React.useEffect(() => {
+    (FitnessScreen as any).internalBackHandler = handleInternalBack;
+    return () => {
+      delete (FitnessScreen as any).internalBackHandler;
+    };
+  }, [selectedProgram, selectedHistorySession, selectedSavedPlan, showBuildYourOwnScreen, showWorkoutScreen, showLogPastWorkout]);
+  const [activeTab, setActiveTab] = useState<'workouts' | 'nutrition' | 'history'>('workouts');
   const [macroLogs, setMacroLogs] = useState<MacroLog[]>([]);
   const [meals, setMeals] = useState<Meal[]>([]);
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
@@ -109,7 +317,27 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   });
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([]);
   const [showWorkoutScreen, setShowWorkoutScreen] = useState(false);
+  const [showBuildYourOwnScreen, setShowBuildYourOwnScreen] = useState(false);
   const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
+  const [selectedSavedPlan, setSelectedSavedPlan] = useState<any | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<'strength' | 'muscle_building' | 'cardio' | 'bodyweight' | null>(null);
+  const [workoutPlanTab, setWorkoutPlanTab] = useState<'programs' | 'myPlans'>('programs');
+  const [selectedHistorySession, setSelectedHistorySession] = useState<WorkoutSession | null>(null);
+  const [historyCalendarMonth, setHistoryCalendarMonth] = useState(new Date());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [expandedDayItems, setExpandedDayItems] = useState<Set<string>>(new Set());
+  const [showLogPastWorkout, setShowLogPastWorkout] = useState(false);
+  const [savedWorkoutPlans, setSavedWorkoutPlans] = useState<any[]>([]);
+  const [activePlans, setActivePlans] = useState<string[]>([]);
+  const [planAdaptations, setPlanAdaptations] = useState<Map<string, ProgramAdaptation[]>>(new Map());
+  const [healthTrends, setHealthTrends] = useState<{
+    averageWorkoutHeartRate: number | null;
+    weeklyCalories: number;
+    weeklySteps: number;
+    weeklyDistance: number;
+    last7DaysHeartRate: Array<{ date: string; avg: number }>;
+  } | null>(null);
+  const [loadingHealthData, setLoadingHealthData] = useState(false);
   const [completedTasks, setCompletedTasks] = useState<CompletedTask[]>([
     { id: '1', title: '30-minute cardio workout', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
     { id: '2', title: 'Strength training - upper body', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
@@ -118,6 +346,10 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     { id: '5', title: 'Stretching and flexibility', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
     { id: '6', title: 'HIIT workout (20 minutes)', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
   ]);
+  const [weightEntries, setWeightEntries] = useState<WeightEntry[]>([]);
+  const [showWeightModal, setShowWeightModal] = useState(false);
+  const [weightInput, setWeightInput] = useState('');
+  const [weightDateInput, setWeightDateInput] = useState(new Date().toISOString().split('T')[0]);
 
   // Notifications removed per request
   const showToast = (_message: string, _type: 'success' | 'error' = 'success') => {};
@@ -129,7 +361,113 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     loadNutritionGoals();
     loadMeals();
     loadCompletedTasks();
+    loadSavedWorkoutPlans();
+    loadActivePlans();
+    loadWeightEntries();
   }, []);
+
+  // Reload workout history when switching to history tab
+  useEffect(() => {
+    if (activeTab === 'history') {
+      loadWorkoutHistory();
+      // Reset calendar to current month when opening history tab
+      setHistoryCalendarMonth(new Date());
+    }
+  }, [activeTab]);
+
+
+  // Analyze performance for active plans
+  useEffect(() => {
+    if (workoutHistory.length > 0 && savedWorkoutPlans.length > 0) {
+      const adaptationsMap = new Map<string, ProgramAdaptation[]>();
+      activePlans.forEach(planId => {
+        const plan = savedWorkoutPlans.find(p => p.id === planId);
+        if (plan) {
+          const adaptations = AIService.analyzeWorkoutPerformance(workoutHistory, plan);
+          if (adaptations.length > 0) {
+            adaptationsMap.set(planId, adaptations);
+          }
+        }
+      });
+      setPlanAdaptations(adaptationsMap);
+    }
+  }, [workoutHistory, savedWorkoutPlans, activePlans]);
+
+  const loadSavedWorkoutPlans = async () => {
+    try {
+      const saved = await loadUserData<any[]>('savedWorkoutPlans');
+      if (saved) {
+        setSavedWorkoutPlans(saved);
+      }
+    } catch (error) {
+      console.error('Error loading saved workout plans:', error);
+    }
+  };
+
+  const loadActivePlans = async () => {
+    try {
+      const active = await loadUserData<string[]>('activeWorkoutPlans');
+      if (active) {
+        setActivePlans(active);
+      }
+    } catch (error) {
+      console.error('Error loading active plans:', error);
+    }
+  };
+
+  const togglePlanActive = async (planId: string) => {
+    try {
+      let updatedActive = [...activePlans];
+      if (updatedActive.includes(planId)) {
+        updatedActive = updatedActive.filter(id => id !== planId);
+      } else {
+        updatedActive.push(planId);
+      }
+      setActivePlans(updatedActive);
+      await saveUserData('activeWorkoutPlans', updatedActive);
+    } catch (error) {
+      console.error('Error toggling active plan:', error);
+    }
+  };
+
+  const deletePlan = async (planId: string) => {
+    Alert.alert(
+      'Delete Plan',
+      'Are you sure you want to delete this workout plan? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Remove from saved plans
+              const updatedPlans = savedWorkoutPlans.filter(p => p.id !== planId);
+              await saveUserData('savedWorkoutPlans', updatedPlans);
+              setSavedWorkoutPlans(updatedPlans);
+              
+              // Remove from active plans if it was active
+              const updatedActive = activePlans.filter(id => id !== planId);
+              if (updatedActive.length !== activePlans.length) {
+                setActivePlans(updatedActive);
+                await saveUserData('activeWorkoutPlans', updatedActive);
+              }
+              
+              // Close the saved plan view if it's open
+              if (selectedSavedPlan && selectedSavedPlan.id === planId) {
+                setSelectedSavedPlan(null);
+              }
+              
+              Alert.alert('Success', 'Workout plan deleted successfully');
+            } catch (error) {
+              console.error('Error deleting plan:', error);
+              Alert.alert('Error', 'Failed to delete workout plan');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const loadWorkoutHistory = async () => {
     try {
@@ -269,6 +607,62 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     }
   };
 
+  const loadWeightEntries = async () => {
+    try {
+      const parsedEntries = await loadUserData<WeightEntry[]>('weightEntries');
+      if (parsedEntries) {
+        // Sort by date (newest first)
+        const sorted = parsedEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setWeightEntries(sorted);
+      }
+    } catch (error) {
+      console.error('Error loading weight entries:', error);
+    }
+  };
+
+  const saveWeightEntries = async (entries: WeightEntry[]) => {
+    try {
+      await saveUserData('weightEntries', entries);
+    } catch (error) {
+      console.error('Error saving weight entries:', error);
+    }
+  };
+
+  const handleAddWeight = async () => {
+    const weight = parseFloat(weightInput);
+    if (!weight || weight <= 0) {
+      return;
+    }
+
+    const newEntry: WeightEntry = {
+      id: Date.now().toString(),
+      date: new Date(weightDateInput).toISOString(),
+      weight: weight,
+    };
+
+    // Check if entry for this date already exists, update it if so
+    const existingIndex = weightEntries.findIndex(
+      e => new Date(e.date).toDateString() === new Date(weightDateInput).toDateString()
+    );
+
+    let updatedEntries: WeightEntry[];
+    if (existingIndex >= 0) {
+      updatedEntries = [...weightEntries];
+      updatedEntries[existingIndex] = newEntry;
+    } else {
+      updatedEntries = [newEntry, ...weightEntries];
+    }
+
+    // Sort by date (newest first)
+    updatedEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
+    setWeightEntries(updatedEntries);
+    await saveWeightEntries(updatedEntries);
+    setWeightInput('');
+    setWeightDateInput(new Date().toISOString().split('T')[0]);
+    setShowWeightModal(false);
+  };
+
   const [todayMacros, setTodayMacros] = useState({
     calories: '',
     protein: '',
@@ -288,7 +682,9 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     servingUnit: 'piece', // 'piece', 'g', 'oz', 'cup', 'tbsp', 'tsp'
     servingWeight: '', // Weight/amount in the selected unit
     baseServingSize: '1', // Base serving size for calculations
+    micronutrients: undefined as Micronutrients | undefined,
   });
+  const [showMicronutrients, setShowMicronutrients] = useState(false);
   
   // Store original base macros before weight calculations
   const [baseMacros, setBaseMacros] = useState({
@@ -355,7 +751,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     }));
   };
 
-  const saveEditedMeal = () => {
+  const saveEditedMeal = async () => {
     if (!editingMeal) return;
     const servings = parseFloat(editMealFields.servings) || 1;
     const totalProtein = Math.round(editBaseMacros.protein * servings);
@@ -379,7 +775,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
     const updatedMeals = meals.map(m => (m.id === editingMeal.id ? updated : m));
     setMeals(updatedMeals);
-    saveMeals(updatedMeals);
+    await saveMeals(updatedMeals);
     setEditingMeal(null);
   };
 
@@ -387,10 +783,10 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     setEditingMeal(null);
   };
 
-  const deleteMeal = (mealId: string) => {
+  const deleteMeal = async (mealId: string) => {
     const updatedMeals = meals.filter(m => m.id !== mealId);
     setMeals(updatedMeals);
-    saveMeals(updatedMeals);
+    await saveMeals(updatedMeals);
   };
 
   const handleMacroSubmit = () => {
@@ -419,7 +815,26 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     return (protein * 4) + (carbs * 4) + (fat * 9);
   };
 
-  const handleMealSubmit = () => {
+  // Get unit for micronutrient display
+  const getMicronutrientUnit = (key: string): string => {
+    if (key === 'sodium' || key === 'potassium' || key === 'calcium' || key === 'iron' || 
+        key === 'phosphorus' || key === 'iodine' || key === 'magnesium' || key === 'zinc' || 
+        key === 'selenium' || key === 'copper' || key === 'manganese' || key === 'chromium' || 
+        key === 'molybdenum' || key === 'chloride') {
+      return 'mg';
+    }
+    if (key.includes('vitamin') || key === 'thiamin' || key === 'riboflavin' || key === 'niacin' || 
+        key === 'vitaminB6' || key === 'folate' || key === 'vitaminB12' || key === 'biotin' || 
+        key === 'pantothenicAcid') {
+      return 'mg';
+    }
+    if (key === 'fiber' || key === 'sugar') {
+      return 'g';
+    }
+    return 'mg';
+  };
+
+  const handleMealSubmit = async () => {
     // Only require macros, name is optional
     if (!mealInput.protein || !mealInput.carbs || !mealInput.fat) {
       // no notification
@@ -440,6 +855,19 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     const todayDate = new Date();
     const mealName = mealInput.name.trim() || `Meal (${totalProtein}g P / ${totalCarbs}g C / ${totalFat}g F)`;
     
+    // Calculate micronutrients based on servings
+    const calculateMicronutrients = (micros: Micronutrients | undefined, servings: number): Micronutrients | undefined => {
+      if (!micros) return undefined;
+      const result: Micronutrients = {};
+      Object.keys(micros).forEach(key => {
+        const value = micros[key as keyof Micronutrients];
+        if (value !== undefined) {
+          result[key as keyof Micronutrients] = Math.round(value * servings * 10) / 10;
+        }
+      });
+      return Object.keys(result).length > 0 ? result : undefined;
+    };
+
     const newMeal: Meal = {
       id: Date.now().toString(),
       name: mealName,
@@ -453,19 +881,23 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       baseProtein: baseProtein,
       baseCarbs: baseCarbs,
       baseFat: baseFat,
+      micronutrients: calculateMicronutrients(mealInput.micronutrients, servings),
     };
 
     // Add to today's meals - this will trigger a re-render and update totals
     const updatedMeals = [newMeal, ...meals];
     setMeals(updatedMeals);
-    saveMeals(updatedMeals);
+    
+    // Save meals immediately to ensure persistence
+    await saveMeals(updatedMeals);
 
     // Clear only macros, keep name if they want to save it later
-    setMealInput(prev => ({ ...prev, protein: '', carbs: '', fat: '', servings: '1' }));
+    setMealInput(prev => ({ ...prev, protein: '', carbs: '', fat: '', servings: '1', micronutrients: undefined }));
+    setShowMicronutrients(false);
     // no notification
   };
 
-  const handleSaveMeal = () => {
+  const handleSaveMeal = async () => {
     // Save meal requires a name and macros
     if (!mealInput.name || !mealInput.name.trim()) {
       // no notification
@@ -497,7 +929,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           : meal
       );
       setSavedMeals(updatedMeals);
-      saveSavedMeals(updatedMeals);
+      await saveSavedMeals(updatedMeals);
     } else {
       // Add new saved meal
       const newSavedMeal: SavedMeal = {
@@ -512,7 +944,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       };
       const updatedMeals = [newSavedMeal, ...savedMeals];
       setSavedMeals(updatedMeals);
-      saveSavedMeals(updatedMeals);
+      await saveSavedMeals(updatedMeals);
     }
 
     // Clear meal name and macros after saving
@@ -520,7 +952,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     // no notification
   };
 
-  const handleUseSavedMeal = (savedMeal: SavedMeal) => {
+  const handleUseSavedMeal = async (savedMeal: SavedMeal) => {
     // Saved meals contain base macros (per serving), so we'll use 1 serving by default
     const newMeal: Meal = {
       id: Date.now().toString(),
@@ -539,16 +971,20 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
     const updatedTodayMeals = [newMeal, ...meals];
     setMeals(updatedTodayMeals);
-    saveMeals(updatedTodayMeals);
     
     // Update saved meal usage
     const updatedSavedMeals = savedMeals.map(meal => 
-      meal.id === savedMeal.id 
+      meal.id === savedMeal.id
         ? { ...meal, timesUsed: meal.timesUsed + 1, lastUsed: new Date().toISOString() }
         : meal
     );
     setSavedMeals(updatedSavedMeals);
-    saveSavedMeals(updatedSavedMeals);
+    
+    // Save both meals list and saved meals list
+    await Promise.all([
+      saveMeals(updatedTodayMeals),
+      saveSavedMeals(updatedSavedMeals)
+    ]);
 
     // no notification
   };
@@ -563,7 +999,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     });
   };
 
-  const handleSaveGoals = () => {
+  const handleSaveGoals = async () => {
     if (!editGoals.protein || !editGoals.carbs || !editGoals.fat || !editGoals.water) {
       // no notification
       return;
@@ -582,7 +1018,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
       water: parseInt(editGoals.water)
     };
     setNutritionGoals(newGoals);
-    saveNutritionGoals(newGoals);
+    await saveNutritionGoals(newGoals);
     setIsEditingGoals(false);
     // no notification
   };
@@ -604,11 +1040,22 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
   const handleWorkoutComplete = async (session: WorkoutSession) => {
     console.log('Workout completed, session:', session);
-    const newHistory = [session, ...workoutHistory];
-    console.log('New history:', newHistory);
-    setWorkoutHistory(newHistory);
-    await saveWorkoutHistory(newHistory);
-    console.log('Workout history saved to AsyncStorage');
+    console.log('Session exercises:', session.exercises);
+    console.log('Exercise data:', session.exercises.map(ex => ({
+      name: ex.name,
+      sets: ex.sets.map(s => ({ setNumber: s.setNumber, weight: s.weight, reps: s.reps, completed: s.completed }))
+    })));
+    
+    // Note: The workout is already saved in ProgramExecutionScreen or SavedPlanViewScreen
+    // We just need to reload the history to reflect the new workout
+    try {
+      // Reload history to ensure it's up to date (workout was already saved by the execution screen)
+      await loadWorkoutHistory();
+      console.log('Workout history reloaded');
+    } catch (error) {
+      console.error('Error reloading workout history:', error);
+    }
+    
     setSelectedProgram(null);
     
     // Automatically complete fitness tasks when workout is finished
@@ -620,13 +1067,16 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   const handleFoodScanned = (scannedFood: any) => {
     // Populate the meal form with scanned food data
     setMealInput({
-      name: scannedFood.name,
-      calories: scannedFood.calories.toString(),
-      protein: scannedFood.protein.toString(),
-      carbs: scannedFood.carbs.toString(),
-      fat: scannedFood.fat.toString(),
+      name: scannedFood.name || '',
+      calories: scannedFood.calories?.toString() || '0',
+      protein: scannedFood.protein?.toString() || '0',
+      carbs: scannedFood.carbs?.toString() || '0',
+      fat: scannedFood.fat?.toString() || '0',
       time: new Date().toLocaleTimeString(),
-      servings: '1'
+      servings: '1',
+      servingUnit: scannedFood.servingUnit || 'serving',
+      servingWeight: scannedFood.servingWeight?.toString() || '0',
+      baseServingSize: scannedFood.baseServingSize?.toString() || '1',
     });
     // No blocking alerts; user can review/edit and tap Add Meal
   };
@@ -672,59 +1122,287 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     </TouchableOpacity>
   );
 
-  const renderWorkouts = () => (
-    <View style={styles.tabContent}>
-      <TouchableOpacity
-        style={styles.startWorkoutButton}
-        onPress={() => setShowWorkoutScreen(true)}
-      >
-        <Text style={styles.startWorkoutButtonText}>Start Custom Workout</Text>
-      </TouchableOpacity>
-      
-      <View style={styles.workoutPrograms}>
-        <Text style={styles.sectionTitle}>Workout Programs</Text>
+  const renderWorkouts = () => {
+    // Category tabs configuration
+    const categories = [
+      { id: 'strength', name: 'Strength', key: 'strength' as const },
+      { id: 'muscle_building', name: 'Muscle Building', key: 'muscle_building' as const },
+      { id: 'cardio', name: 'Cardio', key: 'cardio' as const },
+      { id: 'bodyweight', name: 'Bodyweight', key: 'bodyweight' as const },
+    ];
+
+    // Get unique categories from available programs
+    const availableCategories = [...new Set(workoutPrograms.map(p => p.category))];
+    
+    // Filter programs by selected category
+    const filteredPrograms = selectedCategory
+      ? workoutPrograms.filter(p => p.category === selectedCategory)
+      : workoutPrograms;
+
+    // Get active plans
+    const currentPlans = savedWorkoutPlans.filter(plan => activePlans.includes(plan.id));
+
+    return (
+      <View style={styles.tabContent}>
+        <View style={styles.workoutButtonsContainer}>
+          <TouchableOpacity
+            style={styles.startWorkoutButton}
+            onPress={() => setShowWorkoutScreen(true)}
+          >
+            <Text style={styles.startWorkoutButtonText}>Custom AI Workout</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.startWorkoutButton, styles.buildYourOwnButton]}
+            onPress={() => setShowBuildYourOwnScreen(true)}
+          >
+            <Text style={[styles.startWorkoutButtonText, styles.buildYourOwnButtonText]}>Build Your Own</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.startWorkoutButton, styles.logPastWorkoutButton]}
+            onPress={() => setShowLogPastWorkout(true)}
+          >
+            <Text style={[styles.startWorkoutButtonText, styles.logPastWorkoutButtonText]}>Log Past Workout</Text>
+          </TouchableOpacity>
+        </View>
         
-        {workoutPrograms && workoutPrograms.length > 0 ? workoutPrograms.map((program, index) => {
-          const isFirstInCategory = index === 0 || 
-            workoutPrograms[index - 1].category !== program.category;
-          
-          return (
-            <View key={program.id}>
-              {isFirstInCategory && (
-                <Text style={styles.programCategory}>
-                  {program.category === 'strength' && 'Strength Building'}
-                  {program.category === 'muscle_building' && 'Muscle Building'}
-                  {program.category === 'cardio' && 'Cardio & Conditioning'}
-                  {program.category === 'bodyweight' && 'Bodyweight Training'}
-                </Text>
-              )}
-              
-              <TouchableOpacity
-                style={styles.programCard}
-                onPress={() => handleProgramSelect(program)}
+        {/* Tab Selector */}
+        <View style={styles.workoutPlanTabsContainer}>
+          <TouchableOpacity
+            style={[
+              styles.workoutPlanTab,
+              workoutPlanTab === 'programs' && styles.workoutPlanTabActive
+            ]}
+            onPress={() => setWorkoutPlanTab('programs')}
+          >
+            <Text style={[
+              styles.workoutPlanTabText,
+              workoutPlanTab === 'programs' && styles.workoutPlanTabTextActive
+            ]}>
+              Programs
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.workoutPlanTab,
+              workoutPlanTab === 'myPlans' && styles.workoutPlanTabActive
+            ]}
+            onPress={() => setWorkoutPlanTab('myPlans')}
+          >
+            <Text style={[
+              styles.workoutPlanTabText,
+              workoutPlanTab === 'myPlans' && styles.workoutPlanTabTextActive
+            ]}>
+              My Plans
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {workoutPlanTab === 'programs' ? (
+          <View style={styles.workoutPrograms}>
+            <Text style={styles.sectionTitle}>Workout Programs</Text>
+            
+            {/* Category Tabs */}
+            <View style={styles.categoryTabsContainer}>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false} 
+                style={styles.categoryTabsScroll}
+                contentContainerStyle={{ paddingHorizontal: 20 }}
               >
-                <Text style={styles.programTitle}>{program.name}</Text>
-                <Text style={styles.programDescription}>{program.description}</Text>
-                <Text style={styles.programDuration}>
-                  {program.duration} min • {program.frequency}x/week • {program.focus}
-                </Text>
-                <Text style={styles.programLevel}>
-                  {program.level.charAt(0).toUpperCase() + program.level.slice(1)}
-                </Text>
-                <Text style={styles.programEquipment}>
-                  Equipment: {program.equipment.join(', ')}
-                </Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.categoryTab,
+                    selectedCategory === null && styles.categoryTabActive
+                  ]}
+                  onPress={() => setSelectedCategory(null)}
+                >
+                  <Text style={[
+                    styles.categoryTabText,
+                    selectedCategory === null && styles.categoryTabTextActive
+                  ]}>
+                    All
+                  </Text>
+                </TouchableOpacity>
+                
+                {categories
+                  .filter(cat => availableCategories.includes(cat.key))
+                  .map(category => (
+                    <TouchableOpacity
+                      key={category.id}
+                      style={[
+                        styles.categoryTab,
+                        selectedCategory === category.key && styles.categoryTabActive
+                      ]}
+                      onPress={() => setSelectedCategory(category.key)}
+                    >
+                      <Text style={[
+                        styles.categoryTabText,
+                        selectedCategory === category.key && styles.categoryTabTextActive
+                      ]}>
+                        {category.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+              </ScrollView>
             </View>
-          );
-        }) : (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No workout programs available</Text>
+
+            {/* Programs List */}
+            {filteredPrograms.length > 0 ? (
+              filteredPrograms.map((program) => (
+                <TouchableOpacity
+                  key={program.id}
+                  style={styles.programCard}
+                  onPress={() => handleProgramSelect(program)}
+                >
+                  <Text style={styles.programTitle}>{program.name}</Text>
+                  <Text style={styles.programDescription}>{program.description}</Text>
+                  <Text style={styles.programDuration}>
+                    {program.duration} min • {program.frequency}x/week • {program.focus}
+                  </Text>
+                  <Text style={styles.programLevel}>
+                    {program.level.charAt(0).toUpperCase() + program.level.slice(1)}
+                  </Text>
+                  <Text style={styles.programEquipment}>
+                    Equipment: {program.equipment.join(', ')}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>
+                  {selectedCategory 
+                    ? `No ${categories.find(c => c.key === selectedCategory)?.name.toLowerCase()} programs available`
+                    : 'No workout programs available'}
+                </Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={styles.workoutPrograms}>
+            <Text style={styles.sectionTitle}>My Workout Plans</Text>
+            
+            {currentPlans.length > 0 ? (
+              <>
+                <Text style={styles.sectionSubtitle}>
+                  Active Plans ({currentPlans.length})
+                </Text>
+                {currentPlans.map((plan) => (
+                    <TouchableOpacity
+                      key={plan.id}
+                      style={styles.programCard}
+                      onPress={() => {
+                        // Show saved plan view for all plans
+                        setSelectedSavedPlan(plan);
+                      }}
+                    >
+                    <View style={styles.planHeader}>
+                      <View style={styles.planHeaderLeft}>
+                        <Text style={styles.programTitle}>{plan.name}</Text>
+                        <View style={styles.badgeRow}>
+                          <Text style={styles.activePlanBadge}>Active</Text>
+                          {planAdaptations.get(plan.id) && planAdaptations.get(plan.id)!.length > 0 && (
+                            <View style={styles.adaptationIndicator}>
+                              <Text style={styles.adaptationIndicatorText}>
+                                {planAdaptations.get(plan.id)!.length} AI Suggestions
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                      <View style={styles.planHeaderRight}>
+                        <TouchableOpacity
+                          style={styles.activeToggle}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            togglePlanActive(plan.id);
+                          }}
+                        >
+                          <Text style={styles.activeToggleText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <Text style={styles.programDescription}>
+                      {plan.level || 'Custom'} • {(plan.goal || 'strength').replace('_', ' ')} • {plan.daysPerWeek || (plan.trainingDays && plan.trainingDays.length) || 'N/A'} days/week
+                      {plan.isCustom && plan.trainingDays && plan.trainingDays.length > 0 && (
+                        <Text style={styles.programDescription}> • {plan.trainingDays.join(', ')}</Text>
+                      )}
+                    </Text>
+                    {plan.weeklyPlan && plan.weeklyPlan.weekDays.length > 0 ? (
+                      <Text style={styles.programDuration}>
+                        {plan.weeklyPlan.weekDays.length} workout days • ~{plan.duration} min per session
+                      </Text>
+                    ) : plan.isCustom && plan.exercises ? (
+                      <Text style={styles.programDuration}>
+                        {plan.exercises.length} exercises • ~{plan.duration || (plan.exercises.length * 5)} min per session
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </>
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No active workout plans</Text>
+                <Text style={styles.emptyStateSubtext}>
+                  Save a custom workout plan and mark it as active to see it here
+                </Text>
+              </View>
+            )}
+
+            {savedWorkoutPlans.filter(p => !activePlans.includes(p.id)).length > 0 && (
+              <>
+                <Text style={[styles.sectionSubtitle, { marginTop: 20 }]}>
+                  Saved Plans ({savedWorkoutPlans.filter(p => !activePlans.includes(p.id)).length})
+                </Text>
+                {savedWorkoutPlans
+                  .filter(plan => !activePlans.includes(plan.id))
+                  .map((plan) => (
+                    <TouchableOpacity
+                      key={plan.id}
+                      style={styles.programCard}
+                      onPress={() => {
+                        // Show saved plan view for all plans
+                        setSelectedSavedPlan(plan);
+                      }}
+                    >
+                      <View style={styles.planHeader}>
+                        <View style={styles.planHeaderLeft}>
+                          <Text style={styles.programTitle}>{plan.name}</Text>
+                          {planAdaptations.get(plan.id) && planAdaptations.get(plan.id)!.length > 0 && (
+                            <View style={styles.adaptationIndicator}>
+                              <Text style={styles.adaptationIndicatorText}>
+                                {planAdaptations.get(plan.id)!.length} AI Suggestions
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.activeToggle, styles.activeToggleInactive]}
+                          onPress={() => togglePlanActive(plan.id)}
+                        >
+                          <Text style={[styles.activeToggleText, { color: '#00ff88' }]}>Set Active</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.programDescription}>
+                        {plan.level || 'Custom'} • {(plan.goal || 'strength').replace('_', ' ')} • {plan.daysPerWeek || (plan.trainingDays && plan.trainingDays.length) || 'N/A'} days/week
+                        {plan.isCustom && plan.trainingDays && plan.trainingDays.length > 0 && (
+                          <Text style={styles.programDescription}> • {plan.trainingDays.join(', ')}</Text>
+                        )}
+                      </Text>
+                      <Text style={styles.programLevel}>
+                        {plan.lastSaved ? `Last saved: ${new Date(plan.lastSaved).toLocaleDateString()}` : plan.savedAt ? `Saved ${new Date(plan.savedAt).toLocaleDateString()}` : plan.createdAt ? `Created ${new Date(plan.createdAt).toLocaleDateString()}` : 'Recently saved'}
+                        {plan.exerciseLogs && plan.exerciseLogs.length > 0 && (
+                          <Text style={styles.progressIndicator}> • In Progress</Text>
+                        )}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+              </>
+            )}
           </View>
         )}
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderMacros = () => (
     <View style={styles.tabContent}>
@@ -809,103 +1487,376 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
     </View>
   );
 
-  const renderHistory = () => (
-    <View style={styles.tabContent}>
-      <Text style={styles.sectionTitle}>Workout History</Text>
-      
-      {/* Debug info */}
-      <Text style={styles.debugText}>History count: {workoutHistory.length}</Text>
-      
-      {/* Test button for debugging */}
-      <TouchableOpacity 
-        style={styles.testButton} 
-        onPress={async () => {
-          const testSession: WorkoutSession = {
-            id: Date.now().toString(),
-            programId: 'test',
-            programName: 'Test Workout',
-            date: new Date().toISOString(),
-            duration: 30,
-            exercises: [{
-              exerciseId: 'test-exercise',
-              name: 'Test Exercise',
-              sets: [{
-                setNumber: 1,
-                reps: 10,
-                weight: 100,
-                restTime: 60,
-                completed: true
-              }]
-            }],
-            notes: 'Test workout for debugging',
-            completed: true
-          };
-          await handleWorkoutComplete(testSession);
-        }}
-      >
-        <Text style={styles.testButtonText}>Add Test Workout</Text>
-      </TouchableOpacity>
-      
-      {workoutHistory.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>No workouts completed yet</Text>
-          <Text style={styles.emptyStateSubtext}>Start your first workout to see your history here</Text>
-        </View>
-      ) : (
-        workoutHistory.map(session => (
-          <View key={session.id} style={styles.historyItem}>
-            <View style={styles.historyHeader}>
-              <Text style={styles.historyDate}>
-                {new Date(session.date).toLocaleDateString()}
-              </Text>
-              <Text style={styles.historyName}>{session.programName}</Text>
-              <Text style={styles.historyStats}>
-                {session.duration} min • {session.exercises.length} exercises
-              </Text>
-            </View>
-            
-            {/* Exercise Details */}
-            <View style={styles.exerciseDetails}>
-              <Text style={styles.exerciseDetailsTitle}>Exercise Details:</Text>
-              {session.exercises.map((exercise, index) => {
-                // Group sets by weight and reps
-                const groupedSets = exercise.sets.reduce((groups, set) => {
-                  const key = `${set.weight}lbs × ${set.reps} reps`;
-                  if (!groups[key]) {
-                    groups[key] = [];
-                  }
-                  groups[key].push(set);
-                  return groups;
-                }, {} as Record<string, typeof exercise.sets>);
+  const renderHistory = () => {
+    try {
+      const currentMonth = historyCalendarMonth || new Date();
 
-                return (
-                  <View key={exercise.exerciseId} style={styles.exerciseDetail}>
-                    <Text style={styles.exerciseName}>{exercise.name}</Text>
-                    <View style={styles.setsContainer}>
-                      {Object.entries(groupedSets).map(([setData, sets]) => (
-                        <View key={setData} style={styles.setDetail}>
-                          <Text style={styles.setData}>
-                            {setData}
-                            {sets.length > 1 && (
-                              <Text style={styles.setCount}> (×{sets.length})</Text>
-                            )}
+      // Helper function to get local date key (avoids timezone issues)
+      const getLocalDateKey = (dateString: string) => {
+        try {
+          const date = new Date(dateString);
+          // Use local date components to avoid timezone shifts
+          const year = date.getFullYear();
+          const month = date.getMonth() + 1;
+          const day = date.getDate();
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        } catch (error) {
+          console.error('Error parsing date:', dateString, error);
+          return '';
+        }
+      };
+
+      // Group workouts by date (YYYY-MM-DD format for easy matching)
+      const workoutsByDate = (workoutHistory || []).reduce((groups, session) => {
+        if (!session || !session.date) return groups;
+        const dateKey = getLocalDateKey(session.date);
+        if (dateKey) {
+          if (!groups[dateKey]) {
+            groups[dateKey] = [];
+          }
+          groups[dateKey].push(session);
+        }
+        return groups;
+      }, {} as Record<string, WorkoutSession[]>);
+
+      // Group meals by date (YYYY-MM-DD format for easy matching)
+      const mealsByDate = (meals || []).reduce((groups, meal) => {
+        if (!meal || !meal.date) return groups;
+        const dateKey = getLocalDateKey(meal.date);
+        if (dateKey) {
+          if (!groups[dateKey]) {
+            groups[dateKey] = [];
+          }
+          groups[dateKey].push(meal);
+        }
+        return groups;
+      }, {} as Record<string, Meal[]>);
+
+    const navigateMonth = (direction: 'prev' | 'next') => {
+      const newDate = new Date(currentMonth);
+      if (direction === 'prev') {
+        newDate.setMonth(currentMonth.getMonth() - 1);
+      } else {
+        newDate.setMonth(currentMonth.getMonth() + 1);
+      }
+      setHistoryCalendarMonth(newDate);
+    };
+
+    const getDaysInMonth = (date: Date) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const daysInMonth = lastDay.getDate();
+      const startingDayOfWeek = firstDay.getDay();
+
+      const days = [];
+      
+      // Add empty cells for days before the first day of the month
+      for (let i = 0; i < startingDayOfWeek; i++) {
+        days.push(null);
+      }
+
+      // Add all days of the month
+      for (let day = 1; day <= daysInMonth; day++) {
+        days.push(day);
+      }
+
+      return days;
+    };
+
+    const getDateKey = (day: number | null) => {
+      if (day === null) return null;
+      const year = currentMonth.getFullYear();
+      const month = currentMonth.getMonth() + 1;
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    };
+
+    const monthName = currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const days = getDaysInMonth(currentMonth);
+    const today = new Date();
+    const isCurrentMonth = today.getMonth() === currentMonth.getMonth() && today.getFullYear() === currentMonth.getFullYear();
+
+    return (
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+        <Text style={styles.sectionTitle}>Workout History</Text>
+        
+        {/* Calendar Header */}
+        <View style={styles.calendarHeader}>
+          <TouchableOpacity 
+            style={styles.monthNavButton}
+            onPress={() => navigateMonth('prev')}
+          >
+            <Text style={styles.monthNavButtonText}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.monthTitle}>{monthName}</Text>
+          <TouchableOpacity 
+            style={styles.monthNavButton}
+            onPress={() => navigateMonth('next')}
+          >
+            <Text style={styles.monthNavButtonText}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Day Labels */}
+        <View style={styles.calendarWeekDays}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+            <View key={day} style={styles.weekDayLabel}>
+              <Text style={styles.weekDayText}>{day}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Calendar Grid */}
+        <View style={styles.calendarGrid}>
+          {days.map((day, index) => {
+            const dateKey = getDateKey(day);
+            const hasWorkout = dateKey && workoutsByDate[dateKey];
+            const hasMeals = dateKey && mealsByDate[dateKey];
+            const isToday = isCurrentMonth && day === today.getDate();
+            const workouts = dateKey ? workoutsByDate[dateKey] || [] : [];
+            const dayMeals = dateKey ? mealsByDate[dateKey] || [] : [];
+            const hasData = hasWorkout || hasMeals;
+            const isSelected = selectedCalendarDate === dateKey;
+
+            if (day === null) {
+              return <View key={`empty-${index}`} style={styles.calendarDay} />;
+            }
+
+            return (
+              <TouchableOpacity
+                key={`day-${dateKey || `empty-${index}`}-${day}`}
+                style={[
+                  styles.calendarDay,
+                  isToday && styles.calendarDayToday,
+                  hasWorkout && styles.calendarDayWithWorkout
+                ]}
+                onPress={() => {
+                  if (hasData) {
+                    if (isSelected) {
+                      setSelectedCalendarDate(null);
+                      setExpandedDayItems(new Set());
+                    } else {
+                      setSelectedCalendarDate(dateKey);
+                      // Auto-expand both bubbles when day is first selected
+                      const newExpanded = new Set<string>();
+                      if (hasWorkout) {
+                        newExpanded.add(`workout-${dateKey}`);
+                      }
+                      if (hasMeals) {
+                        newExpanded.add(`nutrition-${dateKey}`);
+                      }
+                      setExpandedDayItems(newExpanded);
+                    }
+                  }
+                }}
+              >
+                <Text style={[
+                  styles.calendarDayNumber,
+                  isToday && styles.calendarDayNumberToday,
+                  hasWorkout && styles.calendarDayNumberWithWorkout
+                ]}>
+                  {day}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Day Details - Expandable bubbles */}
+        {selectedCalendarDate && (
+          <View style={styles.dayDetailsContainer}>
+            <View style={styles.dayDetailsHeader}>
+              <Text style={styles.dayDetailsTitle}>
+                {(() => {
+                  // Parse YYYY-MM-DD as local date to avoid timezone issues
+                  const [year, month, day] = selectedCalendarDate.split('-').map(Number);
+                  const localDate = new Date(year, month - 1, day);
+                  return localDate.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  });
+                })()}
+              </Text>
+              <TouchableOpacity 
+                style={styles.closeDayDetailsButton}
+                onPress={() => {
+                  setSelectedCalendarDate(null);
+                  setExpandedDayItems(new Set());
+                }}
+              >
+                <Text style={styles.closeDayDetailsText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Workouts */}
+            {workoutsByDate[selectedCalendarDate] && workoutsByDate[selectedCalendarDate].length > 0 && (
+              <View style={styles.dayDetailBubble}>
+                <TouchableOpacity
+                  style={styles.dayDetailBubbleHeader}
+                  onPress={() => {
+                    const key = `workout-${selectedCalendarDate}`;
+                    setExpandedDayItems(prev => {
+                      const newSet = new Set(prev);
+                      if (newSet.has(key)) {
+                        newSet.delete(key);
+                      } else {
+                        newSet.add(key);
+                      }
+                      return newSet;
+                    });
+                  }}
+                >
+                  <Text style={styles.dayDetailBubbleTitle}>
+                    Workouts ({workoutsByDate[selectedCalendarDate].length})
+                  </Text>
+                  <Text style={styles.dayDetailBubbleArrow}>
+                    {expandedDayItems.has(`workout-${selectedCalendarDate}`) ? '▼' : '▶'}
+                  </Text>
+                </TouchableOpacity>
+                {expandedDayItems.has(`workout-${selectedCalendarDate}`) && (
+                  <View style={styles.dayDetailBubbleContent}>
+                    {workoutsByDate[selectedCalendarDate].map((workout, idx) => {
+                      const completedSets = workout.exercises.reduce((total, ex) => 
+                        total + ex.sets.filter(s => s.completed).length, 0
+                      );
+                      return (
+                        <TouchableOpacity
+                          key={`workout-${selectedCalendarDate}-${workout.id || idx}-${workout.date}`}
+                          style={styles.dayDetailItem}
+                          onPress={() => {
+                            setSelectedHistorySession(workout);
+                            setSelectedCalendarDate(null);
+                          }}
+                        >
+                          <Text style={styles.dayDetailItemName}>{workout.programName}</Text>
+                          <Text style={styles.dayDetailItemInfo}>
+                            {new Date(workout.date).toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })} • {workout.duration} min • {workout.exercises.length} exercises • {completedSets} sets
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Nutrition */}
+            {mealsByDate[selectedCalendarDate] && mealsByDate[selectedCalendarDate].length > 0 && (
+              <View style={styles.dayDetailBubble}>
+                <TouchableOpacity
+                  style={styles.dayDetailBubbleHeader}
+                  onPress={() => {
+                    const key = `nutrition-${selectedCalendarDate}`;
+                    setExpandedDayItems(prev => {
+                      const newSet = new Set(prev);
+                      if (newSet.has(key)) {
+                        newSet.delete(key);
+                      } else {
+                        newSet.add(key);
+                      }
+                      return newSet;
+                    });
+                  }}
+                >
+                  <Text style={styles.dayDetailBubbleTitle}>
+                    Nutrition ({mealsByDate[selectedCalendarDate].length} meals)
+                  </Text>
+                  <Text style={styles.dayDetailBubbleArrow}>
+                    {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) ? '▼' : '▶'}
+                  </Text>
+                </TouchableOpacity>
+                {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) && (
+                  <View style={styles.dayDetailBubbleContent}>
+                    {mealsByDate[selectedCalendarDate].map((meal, idx) => {
+                      const mealTime = meal.time || new Date(meal.date).toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      });
+                      return (
+                        <View key={`meal-${selectedCalendarDate}-${meal.id || idx}-${meal.date}-${meal.time || ''}`} style={styles.dayDetailItem}>
+                          <Text style={styles.dayDetailItemName}>{meal.name}</Text>
+                          <Text style={styles.dayDetailItemInfo}>
+                            {mealTime} • {meal.calories} cal
+                          </Text>
+                          <Text style={styles.dayDetailItemMacros}>
+                            P: {meal.protein}g • C: {meal.carbs}g • F: {meal.fat}g
                           </Text>
                         </View>
-                      ))}
-                    </View>
+                      );
+                    })}
+                    {/* Daily Totals */}
+                    {mealsByDate[selectedCalendarDate].length > 0 && (
+                      <View style={styles.dayDetailTotals}>
+                        <Text style={styles.dayDetailTotalsLabel}>Daily Totals:</Text>
+                        <Text style={styles.dayDetailTotalsText}>
+                          {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.calories, 0)} cal • 
+                          P: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.protein, 0)}g • 
+                          C: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.carbs, 0)}g • 
+                          F: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.fat, 0)}g
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                );
-              })}
-            </View>
-            
-            {session.notes && (
-              <Text style={styles.historyNotes}>Notes: {session.notes}</Text>
+                )}
+              </View>
+            )}
+
+            {!workoutsByDate[selectedCalendarDate] && !mealsByDate[selectedCalendarDate] && (
+              <Text style={styles.dayDetailEmpty}>No data for this day</Text>
             )}
           </View>
-        ))
-      )}
-    </View>
-  );
+        )}
+
+        {/* Legend */}
+        <View style={styles.calendarLegend}>
+          <Text style={styles.legendText}>Today</Text>
+          <Text style={styles.legendText}>•</Text>
+          <Text style={styles.legendText}>Green highlight = Workout completed</Text>
+        </View>
+
+        {/* Weight Tracking Graph */}
+        <View style={styles.weightGraphContainer}>
+          <View style={styles.weightGraphHeader}>
+            <Text style={styles.weightGraphTitle}>Weight Progress</Text>
+            <TouchableOpacity 
+              style={styles.addWeightButton}
+              onPress={() => setShowWeightModal(true)}
+            >
+              <Text style={styles.addWeightButtonText}>+ Add Weight</Text>
+            </TouchableOpacity>
+          </View>
+          {renderWeightGraph()}
+        </View>
+
+        {(!workoutHistory || workoutHistory.length === 0) && (!meals || meals.length === 0) && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No workouts or meals recorded yet</Text>
+            <Text style={styles.emptyStateSubtext}>Start tracking to see your history here</Text>
+          </View>
+        )}
+      </ScrollView>
+    );
+    } catch (error) {
+      console.error('Error rendering history:', error);
+      return (
+        <View style={styles.tabContent}>
+          <Text style={styles.sectionTitle}>Workout History</Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>Error loading history</Text>
+            <Text style={styles.emptyStateSubtext}>
+              {error instanceof Error ? error.message : 'Unknown error occurred'}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+  };
 
   const renderNutrition = () => {
     // Calculate today's totals from meals
@@ -939,10 +1890,10 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
 
     return (
       <View style={styles.tabContent}>
-        {/* Nutrition Goals */}
-        <View style={styles.goalsSection}>
+        {/* Today's Progress & Goals - Combined Section */}
+        <View style={styles.progressSection}>
           <View style={styles.goalsHeader}>
-            <Text style={styles.sectionTitle}>Daily Goals</Text>
+            <Text style={styles.sectionTitle}>Today's Progress</Text>
             {!isEditingGoals ? (
               <TouchableOpacity style={styles.editButton} onPress={handleEditGoals}>
                 <Text style={styles.editButtonText}>Edit</Text>
@@ -952,7 +1903,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 <TouchableOpacity style={styles.cancelButton} onPress={handleCancelEdit}>
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveButton} onPress={handleSaveGoals}>
+                <TouchableOpacity style={styles.saveButton} onPress={() => handleSaveGoals().catch(console.error)}>
                   <Text style={styles.saveButtonText}>Save</Text>
                 </TouchableOpacity>
               </View>
@@ -960,22 +1911,34 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           </View>
           
           {!isEditingGoals ? (
-            <View style={styles.compactGoalsRow}>
-              <View style={styles.compactGoalBlock}>
-                <Text style={styles.compactGoalLabel}>Cal</Text>
-                <Text style={styles.compactGoalValue}>{nutritionGoals.calories}</Text>
+            <View style={styles.progressGrid}>
+              <View style={styles.progressItem}>
+                <Text style={styles.progressLabel}>Calories</Text>
+                <Text style={styles.progressValue}>{todayTotals.calories} / {nutritionGoals.calories}</Text>
+                <Text style={[styles.remainingText, { color: remaining.calories > 0 ? '#ff6b6b' : '#00ff88' }]}>
+                  {remaining.calories > 0 ? `${remaining.calories} remaining` : 'Goal reached!'}
+                </Text>
               </View>
-              <View style={styles.compactGoalBlock}>
-                <Text style={styles.compactGoalLabel}>P</Text>
-                <Text style={styles.compactGoalValue}>{nutritionGoals.protein}g</Text>
+              <View style={styles.progressItem}>
+                <Text style={styles.progressLabel}>Protein</Text>
+                <Text style={styles.progressValue}>{todayTotals.protein}g / {nutritionGoals.protein}g</Text>
+                <Text style={[styles.remainingText, { color: remaining.protein > 0 ? '#ff6b6b' : '#00ff88' }]}>
+                  {remaining.protein > 0 ? `${remaining.protein}g remaining` : 'Goal reached!'}
+                </Text>
               </View>
-              <View style={styles.compactGoalBlock}>
-                <Text style={styles.compactGoalLabel}>C</Text>
-                <Text style={styles.compactGoalValue}>{nutritionGoals.carbs}g</Text>
+              <View style={styles.progressItem}>
+                <Text style={styles.progressLabel}>Carbs</Text>
+                <Text style={styles.progressValue}>{todayTotals.carbs}g / {nutritionGoals.carbs}g</Text>
+                <Text style={[styles.remainingText, { color: remaining.carbs > 0 ? '#ff6b6b' : '#00ff88' }]}>
+                  {remaining.carbs > 0 ? `${remaining.carbs}g remaining` : 'Goal reached!'}
+                </Text>
               </View>
-              <View style={styles.compactGoalBlock}>
-                <Text style={styles.compactGoalLabel}>F</Text>
-                <Text style={styles.compactGoalValue}>{nutritionGoals.fat}g</Text>
+              <View style={styles.progressItem}>
+                <Text style={styles.progressLabel}>Fat</Text>
+                <Text style={styles.progressValue}>{todayTotals.fat}g / {nutritionGoals.fat}g</Text>
+                <Text style={[styles.remainingText, { color: remaining.fat > 0 ? '#ff6b6b' : '#00ff88' }]}>
+                  {remaining.fat > 0 ? `${remaining.fat}g remaining` : 'Goal reached!'}
+                </Text>
               </View>
             </View>
           ) : (
@@ -1035,41 +1998,6 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           )}
         </View>
 
-        {/* Today's Progress */}
-        <View style={styles.progressSection}>
-          <Text style={styles.sectionTitle}>Today's Progress</Text>
-          <View style={styles.progressGrid}>
-            <View style={styles.progressItem}>
-              <Text style={styles.progressLabel}>Calories</Text>
-              <Text style={styles.progressValue}>{todayTotals.calories} / {nutritionGoals.calories}</Text>
-              <Text style={[styles.remainingText, { color: remaining.calories > 0 ? '#ff6b6b' : '#00ff88' }]}>
-                {remaining.calories > 0 ? `${remaining.calories} remaining` : 'Goal reached!'}
-              </Text>
-            </View>
-            <View style={styles.progressItem}>
-              <Text style={styles.progressLabel}>Protein</Text>
-              <Text style={styles.progressValue}>{todayTotals.protein}g / {nutritionGoals.protein}g</Text>
-              <Text style={[styles.remainingText, { color: remaining.protein > 0 ? '#ff6b6b' : '#00ff88' }]}>
-                {remaining.protein > 0 ? `${remaining.protein}g remaining` : 'Goal reached!'}
-              </Text>
-            </View>
-            <View style={styles.progressItem}>
-              <Text style={styles.progressLabel}>Carbs</Text>
-              <Text style={styles.progressValue}>{todayTotals.carbs}g / {nutritionGoals.carbs}g</Text>
-              <Text style={[styles.remainingText, { color: remaining.carbs > 0 ? '#ff6b6b' : '#00ff88' }]}>
-                {remaining.carbs > 0 ? `${remaining.carbs}g remaining` : 'Goal reached!'}
-              </Text>
-            </View>
-            <View style={styles.progressItem}>
-              <Text style={styles.progressLabel}>Fat</Text>
-              <Text style={styles.progressValue}>{todayTotals.fat}g / {nutritionGoals.fat}g</Text>
-              <Text style={[styles.remainingText, { color: remaining.fat > 0 ? '#ff6b6b' : '#00ff88' }]}>
-                {remaining.fat > 0 ? `${remaining.fat}g remaining` : 'Goal reached!'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
         {/* Add Meal */}
         <View style={styles.mealSection}>
           <View style={styles.mealSectionHeader}>
@@ -1083,6 +2011,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 placeholder="Meal name (optional)"
                 value={mealInput.name}
                 onChangeText={(text) => setMealInput(prev => ({ ...prev, name: text }))}
+                autoCapitalize="words"
               />
               {mealInput.name && mealInput.name.trim() && (
                 <TouchableOpacity
@@ -1132,34 +2061,75 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                 keyboardType="numeric"
               />
             </View>
+
+          {/* Micronutrients Tab */}
+          <View style={styles.micronutrientsTabContainer}>
+            <TouchableOpacity
+              style={[styles.micronutrientsTabButton, showMicronutrients && styles.micronutrientsTabButtonActive]}
+              onPress={() => setShowMicronutrients(!showMicronutrients)}
+            >
+              <Text style={[styles.micronutrientsTabText, showMicronutrients && styles.micronutrientsTabTextActive]}>
+                {showMicronutrients ? '▼' : '▶'} Micronutrients
+                {mealInput.micronutrients && Object.keys(mealInput.micronutrients).length > 0 && (
+                  <Text style={styles.micronutrientsBadge}> ({Object.keys(mealInput.micronutrients).length})</Text>
+                )}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Micronutrients List */}
+          {showMicronutrients && (
+            <View style={styles.micronutrientsContainer}>
+              {mealInput.micronutrients && Object.keys(mealInput.micronutrients).length > 0 ? (
+                <View style={styles.micronutrientsList}>
+                  {Object.entries(mealInput.micronutrients).map(([key, value]) => {
+                    if (value === undefined) return null;
+                    const servings = parseFloat(mealInput.servings || '1') || 1;
+                    const totalValue = Math.round(value * servings * 10) / 10;
+                    const displayName = key
+                      .replace(/([A-Z])/g, ' $1')
+                      .replace(/^./, str => str.toUpperCase())
+                      .trim();
+                    const unit = getMicronutrientUnit(key);
+                    return (
+                      <View key={key} style={styles.micronutrientItem}>
+                        <Text style={styles.micronutrientLabel}>{displayName}</Text>
+                        <Text style={styles.micronutrientValue}>
+                          {totalValue} {unit}
+                          {servings !== 1 && (
+                            <Text style={styles.micronutrientPerServing}>
+                              {' '}({Math.round(value * 10) / 10} {unit}/serving)
+                            </Text>
+                          )}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={styles.micronutrientsEmpty}>
+                  <Text style={styles.micronutrientsEmptyText}>
+                    No micronutrient data available. Scan a barcode to auto-populate micronutrients.
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Serving Unit and Weight Selection */}
           <View style={styles.macroRow}>
             <Text style={styles.macroLabel}>Serving Unit</Text>
-            <View style={styles.unitSelector}>
-              {['piece', 'g', 'oz', 'cup', 'tbsp', 'tsp'].map((unit) => (
-                <TouchableOpacity
-                  key={unit}
-                  style={[
-                    styles.unitButton,
-                    mealInput.servingUnit === unit && styles.unitButtonActive
-                  ]}
-                  onPress={() => {
-                    setMealInput(prev => ({ 
-                      ...prev, 
-                      servingUnit: unit as any, 
-                      baseServingSize: '1',
-                    }));
-                  }}
-                >
-                  <Text style={[
-                    styles.unitButtonText,
-                    mealInput.servingUnit === unit && styles.unitButtonTextActive
-                  ]}>
-                    {unit === 'g' ? 'grams' : unit === 'oz' ? 'oz' : unit === 'tbsp' ? 'tbsp' : unit === 'tsp' ? 'tsp' : unit === 'cup' ? 'cup' : 'piece'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <UnitPickerWheel
+              units={['piece', 'g', 'oz', 'cup', 'tbsp', 'tsp']}
+              selectedUnit={mealInput.servingUnit}
+              onUnitChange={(unit) => {
+                setMealInput(prev => ({ 
+                  ...prev, 
+                  servingUnit: unit as any, 
+                  baseServingSize: '1',
+                }));
+              }}
+            />
           </View>
           
           <View style={styles.macroRow}>
@@ -1214,13 +2184,14 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               </View>
             )}
           </View>
+
           <View style={styles.mealButtons}>
-            <TouchableOpacity style={styles.logButton} onPress={handleMealSubmit}>
+            <TouchableOpacity style={styles.logButton} onPress={() => handleMealSubmit().catch(console.error)}>
               <Text style={styles.logButtonText}>Add Meal</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.logButton, styles.saveMealButton]} 
-              onPress={handleSaveMeal}
+              onPress={() => handleSaveMeal().catch(console.error)}
               disabled={!mealInput.name || !mealInput.name.trim()}
             >
               <Text style={[styles.logButtonText, (!mealInput.name || !mealInput.name.trim()) && styles.disabledButtonText]}>Save Meal</Text>
@@ -1269,7 +2240,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                       <TouchableOpacity style={[styles.swipeButton, styles.swipeEdit]} onPress={() => openEditMeal(meal)}>
                         <Text style={styles.swipeButtonText}>Edit</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.swipeButton, styles.swipeDelete]} onPress={() => deleteMeal(meal.id)}>
+                      <TouchableOpacity style={[styles.swipeButton, styles.swipeDelete]} onPress={() => deleteMeal(meal.id).catch(console.error)}>
                         <Text style={styles.swipeButtonText}>Delete</Text>
                       </TouchableOpacity>
                     </View>
@@ -1327,31 +2298,37 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
               </View>
               
               {savedMeals.length > 0 ? (
-                <ScrollView style={styles.savedMealsList} contentContainerStyle={styles.savedMealsListContent}>
+                <ScrollView style={styles.mealsScroll} contentContainerStyle={styles.mealsScrollContent}>
                   {savedMeals
                     .filter(meal => meal.name.toLowerCase().includes(searchQuery.toLowerCase()))
                     .sort((a, b) => b.timesUsed - a.timesUsed)
                     .map(meal => (
                       <TouchableOpacity
                         key={meal.id}
-                        style={styles.savedMealItem}
-                        onPress={() => handleUseSavedMeal(meal)}
+                        style={styles.mealItem}
+                        onPress={() => handleUseSavedMeal(meal).catch(console.error)}
                       >
-                        <View style={styles.savedMealInfo}>
-                          <Text style={styles.savedMealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
-                          <Text style={styles.savedMealMacros}>
-                            {meal.calories} cal • {meal.protein}g protein • {meal.carbs}g carbs • {meal.fat}g fat
-                          </Text>
-                          <View style={styles.savedMealMetaRow}>
-                            <Text style={styles.savedMealUsage}>Used {meal.timesUsed} times</Text>
-                            {meal.lastUsed ? (
-                              <Text style={styles.savedMealLastUsed} numberOfLines={1} ellipsizeMode="tail">
-                                Last used: {new Date(meal.lastUsed).toLocaleDateString()}
-                              </Text>
-                            ) : null}
+                        <View style={styles.mealHeader}>
+                          <View style={styles.mealNameContainer}>
+                            <Text style={styles.mealName} numberOfLines={2} ellipsizeMode="tail">{meal.name}</Text>
                           </View>
+                          <Text style={styles.mealTime}>
+                            Used {meal.timesUsed}x
+                          </Text>
                         </View>
-                        <Text style={styles.useMealButton}>Use</Text>
+                        <View style={styles.mealMacros}>
+                          <Text style={styles.mealMacro}>{meal.calories} cal</Text>
+                          <Text style={styles.mealMacro}>{meal.protein}g protein</Text>
+                          <Text style={styles.mealMacro}>{meal.carbs}g carbs</Text>
+                          <Text style={styles.mealMacro}>{meal.fat}g fat</Text>
+                        </View>
+                        {meal.lastUsed && (
+                          <View style={styles.mealActionsRow}>
+                            <Text style={styles.mealTime}>
+                              Last used: {new Date(meal.lastUsed).toLocaleDateString()}
+                            </Text>
+                          </View>
+                        )}
                       </TouchableOpacity>
                     ))}
                 </ScrollView>
@@ -1361,6 +2338,437 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                   <Text style={styles.emptyMealsSubtext}>Save meals from the macro calculator to use them later</Text>
                 </View>
               )}
+            </>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  const loadHealthTrends = async () => {
+    setLoadingHealthData(true);
+    try {
+      // Check if health data sync is enabled in settings
+      const { loadUserData } = await import('./src/utils/userStorage');
+      const appSettings = await loadUserData<any>('appSettings');
+      const healthDataSyncEnabled = appSettings?.healthDataSyncEnabled !== false; // Default to true for backward compatibility
+      
+      if (!healthDataSyncEnabled) {
+        setHealthTrends({
+          averageWorkoutHeartRate: null,
+          weeklyCalories: 0,
+          weeklySteps: 0,
+          weeklyDistance: 0,
+          last7DaysHeartRate: [],
+        });
+        setLoadingHealthData(false);
+        return;
+      }
+
+      // Request permissions first
+      const hasPermissions = await HealthService.requestPermissions();
+      if (!hasPermissions) {
+        setHealthTrends({
+          averageWorkoutHeartRate: null,
+          weeklyCalories: 0,
+          weeklySteps: 0,
+          weeklyDistance: 0,
+          last7DaysHeartRate: [],
+        });
+        setLoadingHealthData(false);
+        return;
+      }
+
+      // Get last 7 days of data
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 7);
+
+      // Get historical health data
+      const historicalData = await HealthService.getHistoricalHealthData(startDate, endDate);
+
+      // Calculate weekly totals
+      const weeklyCalories = historicalData.calories.reduce((sum, item) => sum + item.value, 0);
+      const weeklySteps = historicalData.steps.reduce((sum, item) => sum + item.value, 0);
+      const weeklyDistance = historicalData.distance.reduce((sum, item) => sum + item.value, 0);
+
+      // Get average heart rate during workouts
+      const workoutSessions = workoutHistory
+        .filter(session => {
+          const sessionDate = new Date(session.date);
+          return sessionDate >= startDate && sessionDate <= endDate;
+        })
+        .map(session => ({
+          date: session.date,
+          duration: session.duration || 0,
+        }));
+
+      const averageWorkoutHeartRate = workoutSessions.length > 0
+        ? await HealthService.getAverageHeartRateDuringWorkouts(workoutSessions)
+        : null;
+
+      // Group heart rate data by day for the last 7 days
+      const dailyHeartRateMap = new Map<string, number[]>();
+      historicalData.heartRate.forEach(point => {
+        const dateKey = point.timestamp.toISOString().split('T')[0];
+        if (!dailyHeartRateMap.has(dateKey)) {
+          dailyHeartRateMap.set(dateKey, []);
+        }
+        dailyHeartRateMap.get(dateKey)!.push(point.value);
+      });
+
+      // Calculate average heart rate per day
+      const last7DaysHeartRate: Array<{ date: string; avg: number }> = [];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dateKey = date.toISOString().split('T')[0];
+        const heartRates = dailyHeartRateMap.get(dateKey) || [];
+        const avg = heartRates.length > 0
+          ? Math.round(heartRates.reduce((sum, hr) => sum + hr, 0) / heartRates.length)
+          : 0;
+        last7DaysHeartRate.push({
+          date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          avg,
+        });
+      }
+
+      setHealthTrends({
+        averageWorkoutHeartRate,
+        weeklyCalories: Math.round(weeklyCalories),
+        weeklySteps: Math.round(weeklySteps),
+        weeklyDistance: Math.round(weeklyDistance * 10) / 10, // Round to 1 decimal
+        last7DaysHeartRate,
+      });
+    } catch (error) {
+      console.error('Error loading health trends:', error);
+      setHealthTrends({
+        averageWorkoutHeartRate: null,
+        weeklyCalories: 0,
+        weeklySteps: 0,
+        weeklyDistance: 0,
+        last7DaysHeartRate: [],
+      });
+    } finally {
+      setLoadingHealthData(false);
+    }
+  };
+
+  const renderHealthTrends = () => {
+    return (
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.healthHeader}>
+          <Text style={styles.sectionTitle}>Health Trends</Text>
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={loadHealthTrends}
+            disabled={loadingHealthData}
+          >
+            <Text style={styles.refreshButtonText}>
+              {loadingHealthData ? 'Loading...' : '↻ Refresh'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {loadingHealthData ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>Loading health data...</Text>
+          </View>
+        ) : !healthTrends || (healthTrends.weeklyCalories === 0 && healthTrends.weeklySteps === 0 && healthTrends.averageWorkoutHeartRate === null) ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No health data available</Text>
+            <Text style={styles.emptyStateSubtext}>
+              Enable "Watch & Health Data Sync" in Settings → Settings → Permissions, then tap Refresh to sync data from your smartwatch and health apps
+            </Text>
+          </View>
+        ) : (
+          <>
+            {/* Average Workout Heart Rate */}
+            {healthTrends.averageWorkoutHeartRate !== null && (
+              <View style={styles.healthCard}>
+                <Text style={styles.healthCardTitle}>Average Workout Heart Rate</Text>
+                <Text style={styles.healthCardValue}>
+                  {healthTrends.averageWorkoutHeartRate} bpm
+                </Text>
+                <Text style={styles.healthCardSubtext}>
+                  Based on your recent workouts
+                </Text>
+              </View>
+            )}
+
+            {/* Weekly Summary */}
+            <View style={styles.healthCard}>
+              <Text style={styles.healthCardTitle}>This Week</Text>
+              <View style={styles.healthSummaryRow}>
+                <View style={styles.healthSummaryItem}>
+                  <Text style={styles.healthSummaryValue}>
+                    {healthTrends.weeklyCalories.toLocaleString()}
+                  </Text>
+                  <Text style={styles.healthSummaryLabel}>Calories</Text>
+                </View>
+                <View style={styles.healthSummaryItem}>
+                  <Text style={styles.healthSummaryValue}>
+                    {healthTrends.weeklySteps.toLocaleString()}
+                  </Text>
+                  <Text style={styles.healthSummaryLabel}>Steps</Text>
+                </View>
+                <View style={styles.healthSummaryItem}>
+                  <Text style={styles.healthSummaryValue}>
+                    {healthTrends.weeklyDistance.toFixed(1)}
+                  </Text>
+                  <Text style={styles.healthSummaryLabel}>Miles</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Daily Heart Rate Trend */}
+            {healthTrends.last7DaysHeartRate.length > 0 && (
+              <View style={styles.healthCard}>
+                <Text style={styles.healthCardTitle}>Daily Heart Rate Trend</Text>
+                <Text style={styles.healthCardSubtext}>Last 7 Days</Text>
+                <View style={styles.heartRateTrendContainer}>
+                  {healthTrends.last7DaysHeartRate.map((day, index) => {
+                    const maxHeartRate = Math.max(
+                      ...healthTrends.last7DaysHeartRate.map(d => d.avg).filter(avg => avg > 0),
+                      100
+                    );
+                    const barHeight = day.avg > 0 ? (day.avg / maxHeartRate) * 100 : 0;
+                    return (
+                      <View key={index} style={styles.heartRateDay}>
+                        <View style={styles.heartRateBarContainer}>
+                          {day.avg > 0 && (
+                            <View
+                              style={[
+                                styles.heartRateBar,
+                                { height: `${barHeight}%` },
+                              ]}
+                            />
+                          )}
+                        </View>
+                        <Text style={styles.heartRateDayLabel}>{day.date}</Text>
+                        <Text style={styles.heartRateDayValue}>
+                          {day.avg > 0 ? `${day.avg}` : '-'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {healthTrends.averageWorkoutHeartRate === null &&
+              healthTrends.weeklyCalories === 0 &&
+              healthTrends.weeklySteps === 0 && (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No health data available</Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Connect your smartwatch and grant permissions to see health trends
+                  </Text>
+                </View>
+              )}
+          </>
+        )}
+      </ScrollView>
+    );
+  };
+
+  const renderWeightGraph = () => {
+    if (weightEntries.length === 0) {
+      return (
+        <View style={styles.weightGraphEmpty}>
+          <Text style={styles.weightGraphEmptyText}>No weight data yet</Text>
+          <Text style={styles.weightGraphEmptySubtext}>Add your weight to track progress</Text>
+        </View>
+      );
+    }
+
+    // Get last 30 days of data or all data if less than 30 entries
+    const sortedEntries = [...weightEntries]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(-30);
+
+    if (sortedEntries.length === 0) {
+      return (
+        <View style={styles.weightGraphEmpty}>
+          <Text style={styles.weightGraphEmptyText}>No weight data yet</Text>
+        </View>
+      );
+    }
+
+    const weights = sortedEntries.map(e => e.weight);
+    const minWeight = Math.min(...weights);
+    const maxWeight = Math.max(...weights);
+    const weightRange = maxWeight - minWeight || 10; // Default to 10 if all weights are the same
+    const padding = weightRange * 0.1; // 10% padding
+    const graphMin = minWeight - padding;
+    const graphMax = maxWeight + padding;
+    const graphRange = graphMax - graphMin;
+
+    const screenWidth = Dimensions.get('window').width;
+    const graphHeight = 200;
+    const graphWidth = screenWidth - 100; // Account for padding and Y-axis
+    const pointRadius = 4;
+    const lineWidth = 2;
+
+    // Calculate points for the graph
+    const points = sortedEntries.map((entry, index) => {
+      const x = (index / (sortedEntries.length - 1 || 1)) * graphWidth;
+      const y = graphHeight - ((entry.weight - graphMin) / graphRange) * graphHeight;
+      return { x, y, weight: entry.weight, date: entry.date };
+    });
+
+    // Calculate line segments
+    const lineSegments = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      lineSegments.push({
+        x1: points[i].x,
+        y1: points[i].y,
+        x2: points[i + 1].x,
+        y2: points[i + 1].y,
+      });
+    }
+
+    // Calculate Y-axis labels
+    const yAxisLabels = [];
+    const numLabels = 5;
+    for (let i = 0; i < numLabels; i++) {
+      const value = graphMax - (graphRange / (numLabels - 1)) * i;
+      yAxisLabels.push(value.toFixed(1));
+    }
+
+    // Calculate X-axis labels (show first, middle, last dates)
+    const xAxisLabels = [];
+    if (sortedEntries.length > 0) {
+      xAxisLabels.push({
+        date: sortedEntries[0].date,
+        position: 0,
+      });
+      if (sortedEntries.length > 1) {
+        const midIndex = Math.floor(sortedEntries.length / 2);
+        xAxisLabels.push({
+          date: sortedEntries[midIndex].date,
+          position: midIndex / (sortedEntries.length - 1),
+        });
+      }
+      if (sortedEntries.length > 2) {
+        xAxisLabels.push({
+          date: sortedEntries[sortedEntries.length - 1].date,
+          position: 1,
+        });
+      }
+    }
+
+    return (
+      <View style={styles.weightGraphContent}>
+        <View style={styles.weightGraphYAxis}>
+          {yAxisLabels.map((label, index) => (
+            <Text key={index} style={styles.weightGraphYLabel}>
+              {label}
+            </Text>
+          ))}
+        </View>
+        <View style={styles.weightGraphMain}>
+          <View style={[styles.weightGraphSvg, { width: graphWidth, height: graphHeight }]}>
+            {/* Grid lines */}
+            {yAxisLabels.map((_, index) => {
+              const y = (index / (numLabels - 1)) * graphHeight;
+              return (
+                <View
+                  key={`grid-${index}`}
+                  style={[
+                    styles.weightGraphGridLine,
+                    {
+                      top: y,
+                      width: graphWidth,
+                    },
+                  ]}
+                />
+              );
+            })}
+            {/* Line segments */}
+            {lineSegments.map((segment, index) => {
+              const length = Math.sqrt(
+                Math.pow(segment.x2 - segment.x1, 2) + Math.pow(segment.y2 - segment.y1, 2)
+              );
+              const angle = Math.atan2(segment.y2 - segment.y1, segment.x2 - segment.x1) * (180 / Math.PI);
+              return (
+                <View
+                  key={`line-${index}`}
+                  style={[
+                    styles.weightGraphLine,
+                    {
+                      left: segment.x1,
+                      top: segment.y1,
+                      width: length,
+                      transform: [{ rotate: `${angle}deg` }],
+                    },
+                  ]}
+                />
+              );
+            })}
+            {/* Data points */}
+            {points.map((point, index) => (
+              <View
+                key={`point-${index}`}
+                style={[
+                  styles.weightGraphPoint,
+                  {
+                    left: point.x - pointRadius,
+                    top: point.y - pointRadius,
+                    width: pointRadius * 2,
+                    height: pointRadius * 2,
+                  },
+                ]}
+              />
+            ))}
+          </View>
+          <View style={styles.weightGraphXAxis}>
+            {xAxisLabels.map((label, index) => (
+              <Text
+                key={index}
+                style={[
+                  styles.weightGraphXLabel,
+                  { left: `${label.position * 100}%` },
+                ]}
+              >
+                {new Date(label.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </Text>
+            ))}
+          </View>
+        </View>
+        {/* Stats */}
+        <View style={styles.weightGraphStats}>
+          <View style={styles.weightGraphStat}>
+            <Text style={styles.weightGraphStatLabel}>Current</Text>
+            <Text style={styles.weightGraphStatValue}>
+              {sortedEntries[sortedEntries.length - 1].weight.toFixed(1)} lbs
+            </Text>
+          </View>
+          {sortedEntries.length > 1 && (
+            <>
+              <View style={styles.weightGraphStat}>
+                <Text style={styles.weightGraphStatLabel}>Change</Text>
+                <Text
+                  style={[
+                    styles.weightGraphStatValue,
+                    {
+                      color:
+                        sortedEntries[sortedEntries.length - 1].weight - sortedEntries[0].weight >= 0
+                          ? '#00ff88'
+                          : '#ff6b6b',
+                    },
+                  ]}
+                >
+                  {sortedEntries[sortedEntries.length - 1].weight - sortedEntries[0].weight >= 0 ? '+' : ''}
+                  {(sortedEntries[sortedEntries.length - 1].weight - sortedEntries[0].weight).toFixed(1)} lbs
+                </Text>
+              </View>
+              <View style={styles.weightGraphStat}>
+                <Text style={styles.weightGraphStatLabel}>Average</Text>
+                <Text style={styles.weightGraphStatValue}>
+                  {(weights.reduce((a, b) => a + b, 0) / weights.length).toFixed(1)} lbs
+                </Text>
+              </View>
             </>
           )}
         </View>
@@ -1423,7 +2831,65 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
   if (showWorkoutScreen) {
     return (
       <WorkoutScreen 
-        onBack={() => setShowWorkoutScreen(false)} 
+        onBack={() => {
+          setShowWorkoutScreen(false);
+          loadSavedWorkoutPlans();
+          loadActivePlans();
+        }} 
+      />
+    );
+  }
+
+  if (showLogPastWorkout) {
+    return (
+      <LogPastWorkoutScreen
+        onBack={() => {
+          setShowLogPastWorkout(false);
+          loadWorkoutHistory();
+        }}
+        onComplete={handleWorkoutComplete}
+      />
+    );
+  }
+
+  if (showBuildYourOwnScreen) {
+    return (
+      <BuildYourOwnWorkoutScreen 
+        onBack={() => {
+          setShowBuildYourOwnScreen(false);
+          loadSavedWorkoutPlans();
+          loadActivePlans();
+        }}
+        onWorkoutComplete={() => {
+          loadWorkoutHistory();
+          loadSavedWorkoutPlans();
+        }}
+      />
+    );
+  }
+
+  if (selectedSavedPlan) {
+    return (
+      <SavedPlanViewScreen
+        plan={selectedSavedPlan}
+        onBack={() => {
+          setSelectedSavedPlan(null);
+          loadSavedWorkoutPlans();
+          loadWorkoutHistory();
+        }}
+        onWorkoutComplete={() => {
+          loadWorkoutHistory();
+          loadSavedWorkoutPlans();
+        }}
+      />
+    );
+  }
+
+  if (selectedHistorySession) {
+    return (
+      <WorkoutHistoryDetailScreen
+        session={selectedHistorySession}
+        onBack={() => setSelectedHistorySession(null)}
       />
     );
   }
@@ -1456,12 +2922,11 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
         <TabButton tab="workouts" title="Workouts" />
         <TabButton tab="nutrition" title="Nutrition" />
         <TabButton tab="history" title="History" />
-        <TabButton tab="tasks" title="Tasks" />
       </View>
 
       {/* Content */}
       <TabSwipeNavigation
-        tabs={['workouts', 'nutrition', 'history', 'tasks']}
+        tabs={['workouts', 'nutrition', 'history']}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab as any)}
       >
@@ -1469,7 +2934,6 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
           {activeTab === 'workouts' && renderWorkouts()}
           {activeTab === 'nutrition' && renderNutrition()}
           {activeTab === 'history' && renderHistory()}
-          {activeTab === 'tasks' && renderTasks()}
         </ScrollView>
       </TabSwipeNavigation>
 
@@ -1502,6 +2966,7 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                     placeholder="Meal name"
                     value={editMealFields.name}
                     onChangeText={(t) => setEditMealFields(prev => ({ ...prev, name: t }))}
+                    autoCapitalize="words"
                   />
                   <View style={styles.modalRow}>
                     <View style={styles.modalField}>
@@ -1602,11 +3067,67 @@ export default function FitnessScreen({ onBack, onCompleteTask }: { onBack: () =
                     <TouchableOpacity style={[styles.modalButton, styles.modalCancel]} onPress={cancelEditMeal}>
                       <Text style={styles.modalButtonText}>Cancel</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.modalButton, styles.modalSave]} onPress={saveEditedMeal}>
+                    <TouchableOpacity style={[styles.modalButton, styles.modalSave]} onPress={() => saveEditedMeal().catch(console.error)}>
                       <Text style={[styles.modalButtonText, styles.modalSaveText]}>Save</Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Add Weight Modal */}
+      <Modal visible={showWeightModal} transparent animationType="fade" onRequestClose={() => setShowWeightModal(false)}>
+        <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setShowWeightModal(false); }}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+            >
+              <TouchableWithoutFeedback onPress={() => {}}>
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>Add Weight</Text>
+                  <View style={styles.modalField}>
+                    <Text style={styles.modalLabel}>Weight (lbs)</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="Enter weight"
+                      keyboardType="decimal-pad"
+                      value={weightInput}
+                      onChangeText={setWeightInput}
+                    />
+                  </View>
+                  <View style={styles.modalField}>
+                    <Text style={styles.modalLabel}>Date</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="YYYY-MM-DD"
+                      value={weightDateInput}
+                      onChangeText={setWeightDateInput}
+                    />
+                  </View>
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity 
+                      style={[styles.modalButton, styles.modalCancel]} 
+                      onPress={() => {
+                        setShowWeightModal(false);
+                        setWeightInput('');
+                        setWeightDateInput(new Date().toISOString().split('T')[0]);
+                      }}
+                    >
+                      <Text style={styles.modalButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.modalButton, styles.modalSave]} 
+                      onPress={() => handleAddWeight().catch(console.error)}
+                    >
+                      <Text style={[styles.modalButtonText, styles.modalSaveText]}>Save</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </TouchableWithoutFeedback>
             </KeyboardAvoidingView>
@@ -1648,6 +3169,153 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 40,
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#888',
+    fontSize: 16,
+  },
+  emptyStateContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  emptyStateSubtext: {
+    color: '#888',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  refreshButton: {
+    backgroundColor: '#00ff88',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  refreshButtonText: {
+    color: '#1a1a1a',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  healthMetricCard: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  healthMetricLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 8,
+  },
+  healthMetricValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#00ff88',
+    marginBottom: 4,
+  },
+  healthMetricSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  healthSummaryCard: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  healthSummaryTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 15,
+  },
+  healthSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  healthSummaryItem: {
+    alignItems: 'center',
+  },
+  healthSummaryValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#00ff88',
+    marginBottom: 5,
+  },
+  healthSummaryLabel: {
+    fontSize: 12,
+    color: '#888',
+  },
+  healthCard: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  healthCardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 10,
+  },
+  healthCardValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#00ff88',
+    marginBottom: 5,
+  },
+  healthCardSubtext: {
+    fontSize: 14,
+    color: '#888',
+  },
+  heartRateTrendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'flex-end',
+    marginTop: 20,
+    height: 150,
+  },
+  heartRateDay: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  heartRateBarContainer: {
+    width: '80%',
+    height: 100,
+    justifyContent: 'flex-end',
+    marginBottom: 8,
+  },
+  heartRateBar: {
+    width: '100%',
+    backgroundColor: '#00ff88',
+    borderRadius: 4,
+    minHeight: 4,
+  },
+  heartRateDayLabel: {
+    fontSize: 10,
+    color: '#888',
+    marginBottom: 4,
+  },
+  heartRateDayValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
   },
   tabContainer: {
     flexDirection: 'row',
@@ -1703,20 +3371,76 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 20,
   },
+  healthHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  workoutButtonsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 30,
+  },
   startWorkoutButton: {
+    flex: 1,
     backgroundColor: '#00ff88',
     borderRadius: 15,
     padding: 18,
     alignItems: 'center',
-    marginBottom: 30,
+  },
+  buildYourOwnButton: {
+    backgroundColor: '#333',
+    borderWidth: 2,
+    borderColor: '#00ff88',
   },
   startWorkoutButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#1a1a1a',
   },
+  buildYourOwnButtonText: {
+    color: '#00ff88',
+  },
+  logPastWorkoutButton: {
+    backgroundColor: '#2a2a2a',
+    borderWidth: 2,
+    borderColor: '#00ff88',
+    marginTop: 10,
+  },
+  logPastWorkoutButtonText: {
+    color: '#00ff88',
+  },
   workoutPrograms: {
     marginBottom: 30,
+  },
+  categoryTabsContainer: {
+    marginBottom: 20,
+  },
+  categoryTabsScroll: {
+    marginHorizontal: -20,
+  },
+  categoryTab: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    marginRight: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  categoryTabActive: {
+    backgroundColor: '#00ff88',
+    borderColor: '#00ff88',
+  },
+  categoryTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#888',
+  },
+  categoryTabTextActive: {
+    color: '#1a1a1a',
+    fontWeight: 'bold',
   },
   programCard: {
     backgroundColor: '#2a2a2a',
@@ -1729,6 +3453,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 5,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  adaptationIndicator: {
+    backgroundColor: '#00ff88',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  adaptationIndicatorText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '600',
   },
   programDescription: {
     fontSize: 14,
@@ -1754,6 +3495,12 @@ const styles = StyleSheet.create({
     color: '#888',
     fontStyle: 'italic',
     marginBottom: 4,
+  },
+  progressIndicator: {
+    fontSize: 11,
+    color: '#00ff88',
+    fontWeight: '600',
+    fontStyle: 'normal',
   },
   programEquipment: {
     fontSize: 10,
@@ -1819,6 +3566,91 @@ const styles = StyleSheet.create({
   unitButtonTextActive: {
     color: '#1a1a1a',
   },
+  unitPickerContainer: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  unitPickerWrapper: {
+    height: 150,
+    width: 120,
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 12,
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: '#3a3a3a',
+  },
+  unitPickerScrollView: {
+    height: 150,
+  },
+  unitPickerContentContainer: {
+    paddingVertical: 50,
+    paddingHorizontal: 10,
+  },
+  unitPickerItem: {
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  unitPickerItemSelected: {
+    backgroundColor: 'transparent',
+  },
+  unitPickerItemText: {
+    fontSize: 16,
+    color: 'rgba(0, 255, 136, 0.4)',
+    fontWeight: '500',
+  },
+  unitPickerItemTextSelected: {
+    color: '#00ff88',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  unitPickerSelectionIndicator: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    right: 0,
+    height: 50,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#00ff88',
+    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+    pointerEvents: 'none',
+  },
+  unitPickerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 50,
+    backgroundColor: '#2a2a2a',
+    opacity: 0.7,
+    zIndex: 1,
+  },
+  unitPickerOverlayBottom: {
+    top: 'auto',
+    bottom: 0,
+  },
+  unitPickerScrollIndicator: {
+    position: 'absolute',
+    top: 5,
+    left: 0,
+    right: 0,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  unitPickerScrollIndicatorBottom: {
+    top: 'auto',
+    bottom: 5,
+  },
+  unitPickerScrollIndicatorText: {
+    fontSize: 12,
+    color: 'rgba(0, 255, 136, 0.6)',
+    fontWeight: 'bold',
+  },
   unitLabel: {
     fontSize: 14,
     color: '#888',
@@ -1826,7 +3658,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   logButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: '#00ff88',
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1834,7 +3666,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 36,
-    shadowColor: '#4ECDC4',
+    shadowColor: '#00ff88',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
@@ -1880,11 +3712,261 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
   },
+  dateGroup: {
+    marginBottom: 25,
+  },
+  dateHeader: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#00ff88',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    marginBottom: 10,
+  },
+  monthNavButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2a2a2a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthNavButtonText: {
+    fontSize: 24,
+    color: '#00ff88',
+    fontWeight: 'bold',
+  },
+  monthTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  calendarWeekDays: {
+    flexDirection: 'row',
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  weekDayLabel: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  weekDayText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 10,
+    marginBottom: 20,
+  },
+  calendarDay: {
+    width: '14.28%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+    position: 'relative',
+  },
+  calendarDayToday: {
+    backgroundColor: '#2a4a2a',
+    borderRadius: 8,
+  },
+  calendarDayWithWorkout: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+  },
+  calendarDayNumber: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '500',
+  },
+  calendarDayNumberToday: {
+    color: '#00ff88',
+    fontWeight: 'bold',
+  },
+  calendarDayNumberWithWorkout: {
+    color: '#00ff88',
+  },
+  workoutIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    left: '50%',
+    transform: [{ translateX: -3 }],
+  },
+  workoutDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00ff88',
+  },
+  calendarLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+    paddingVertical: 15,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendDotToday: {
+    backgroundColor: '#2a4a2a',
+    borderWidth: 2,
+    borderColor: '#00ff88',
+  },
+  legendDotWorkout: {
+    backgroundColor: '#00ff88',
+  },
+  legendText: {
+    fontSize: 12,
+    color: '#888',
+  },
+  dayDetailsContainer: {
+    marginTop: 20,
+    marginHorizontal: 10,
+    marginBottom: 20,
+    backgroundColor: '#2a2a2a',
+    borderRadius: 15,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  dayDetailsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  dayDetailsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    flex: 1,
+  },
+  closeDayDetailsButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#3a3a3a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeDayDetailsText: {
+    fontSize: 20,
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  dayDetailBubble: {
+    backgroundColor: '#3a3a3a',
+    borderRadius: 12,
+    marginBottom: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#4a4a4a',
+  },
+  dayDetailBubbleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+  },
+  dayDetailBubbleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#00ff88',
+  },
+  dayDetailBubbleArrow: {
+    fontSize: 14,
+    color: '#888',
+  },
+  dayDetailBubbleContent: {
+    paddingHorizontal: 15,
+    paddingBottom: 15,
+  },
+  dayDetailItem: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  dayDetailItemName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  dayDetailItemInfo: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 2,
+  },
+  dayDetailItemMacros: {
+    fontSize: 12,
+    color: '#00ff88',
+  },
+  dayDetailTotals: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  dayDetailTotalsLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  dayDetailTotalsText: {
+    fontSize: 13,
+    color: '#00ff88',
+  },
+  dayDetailEmpty: {
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+    padding: 20,
+  },
   historyItem: {
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
     padding: 15,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  historyHeaderLeft: {
+    flex: 1,
   },
   historyDate: {
     fontSize: 16,
@@ -1892,17 +3974,33 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   historyName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  historyTime: {
     fontSize: 14,
-    color: '#00ff88',
-    marginTop: 2,
+    color: '#888',
+  },
+  historyStatsContainer: {
+    alignItems: 'flex-end',
   },
   historyStats: {
     fontSize: 12,
     color: '#888',
-    marginTop: 4,
+    marginBottom: 4,
   },
-  historyHeader: {
-    marginBottom: 15,
+  viewDetailsContainer: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  viewDetailsText: {
+    fontSize: 14,
+    color: '#00ff88',
+    textAlign: 'right',
   },
   exerciseDetails: {
     backgroundColor: '#3a3a3a',
@@ -2208,15 +4306,90 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
+  micronutrientsTabContainer: {
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  micronutrientsTabButton: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#3a3a3a',
+  },
+  micronutrientsTabButtonActive: {
+    backgroundColor: '#3a3a3a',
+    borderColor: '#4ECDC4',
+  },
+  micronutrientsTabText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  micronutrientsTabTextActive: {
+    color: '#4ECDC4',
+  },
+  micronutrientsBadge: {
+    color: '#00ff88',
+    fontSize: 12,
+  },
+  micronutrientsContainer: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    maxHeight: 300,
+  },
+  micronutrientsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  micronutrientItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#3a3a3a',
+    borderRadius: 6,
+    padding: 8,
+    minWidth: '48%',
+    marginBottom: 8,
+  },
+  micronutrientLabel: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    flex: 1,
+  },
+  micronutrientValue: {
+    color: '#00ff88',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  micronutrientPerServing: {
+    color: '#888',
+    fontSize: 10,
+  },
+  micronutrientsEmpty: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  micronutrientsEmptyText: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   mealButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 15,
   },
   saveMealButton: {
-    backgroundColor: '#6C63FF',
+    backgroundColor: '#00ff88',
     marginLeft: 8,
-    shadowColor: '#6C63FF',
+    shadowColor: '#00ff88',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
@@ -2424,7 +4597,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   mealsTabButtonActive: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: '#00ff88',
   },
   mealsTabText: {
     fontSize: 14,
@@ -2461,6 +4634,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 15,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
   },
   mealHeader: {
     flexDirection: 'row',
@@ -2634,5 +4809,188 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     fontWeight: 'bold',
   },
+  // Workout Plan Styles
+  workoutPlanTabsContainer: {
+    flexDirection: 'row',
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  workoutPlanTab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  workoutPlanTabActive: {
+    borderBottomColor: '#00ff88',
+  },
+  workoutPlanTabText: {
+    color: '#888',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  workoutPlanTabTextActive: {
+    color: '#00ff88',
+    fontWeight: 'bold',
+  },
+  planHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
+  planHeaderLeft: {
+    flex: 1,
+  },
+  planHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  activePlanBadge: {
+    backgroundColor: '#00ff88',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+  },
+  activeToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  activeToggleInactive: {
+    backgroundColor: '#333',
+  },
+  activeToggleText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  weightGraphContainer: {
+    marginTop: 20,
+    marginHorizontal: 10,
+    marginBottom: 20,
+    backgroundColor: '#2a2a2a',
+    borderRadius: 15,
+    padding: 15,
+  },
+  weightGraphHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  weightGraphTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  addWeightButton: {
+    backgroundColor: '#00ff88',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  addWeightButtonText: {
+    color: '#1a1a1a',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  weightGraphEmpty: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  weightGraphEmptyText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  weightGraphEmptySubtext: {
+    color: '#888',
+    fontSize: 14,
+  },
+  weightGraphContent: {
+    flexDirection: 'row',
+  },
+  weightGraphYAxis: {
+    width: 50,
+    justifyContent: 'space-between',
+    paddingRight: 10,
+    height: 200,
+  },
+  weightGraphYLabel: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'right',
+  },
+  weightGraphMain: {
+    flex: 1,
+  },
+  weightGraphSvg: {
+    position: 'relative',
+    marginBottom: 20,
+  },
+  weightGraphGridLine: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: '#333',
+    left: 0,
+  },
+  weightGraphLine: {
+    position: 'absolute',
+    height: 2,
+    backgroundColor: '#00ff88',
+    transformOrigin: 'left center',
+  },
+  weightGraphPoint: {
+    position: 'absolute',
+    backgroundColor: '#00ff88',
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#1a1a1a',
+  },
+  weightGraphXAxis: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    position: 'relative',
+    height: 20,
+  },
+  weightGraphXLabel: {
+    position: 'absolute',
+    color: '#888',
+    fontSize: 11,
+    transform: [{ translateX: -20 }],
+  },
+  weightGraphStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  weightGraphStat: {
+    alignItems: 'center',
+  },
+  weightGraphStatLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 5,
+  },
+  weightGraphStatValue: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   // notifications removed
 });
+
+

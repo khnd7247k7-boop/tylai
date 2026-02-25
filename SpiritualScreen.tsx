@@ -256,6 +256,7 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
               }}
               placeholder={`Gratitude ${index + 1}...`}
               multiline
+              autoCapitalize="words"
             />
           ))}
           
@@ -276,6 +277,7 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
             placeholder="How do these gratitudes make you feel? What do they teach you about your life?"
             multiline
             numberOfLines={4}
+            autoCapitalize="words"
           />
         </View>
 
@@ -390,6 +392,7 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
               onChangeText={setCurrentReflection}
               placeholder="Take your time to reflect deeply on this prompt..."
               multiline
+              autoCapitalize="words"
               numberOfLines={6}
             />
             <TouchableOpacity style={styles.saveButton} onPress={saveReflectionEntry}>

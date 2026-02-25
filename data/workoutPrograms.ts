@@ -41,6 +41,23 @@ export interface WorkoutSession {
   }>;
   notes: string;
   completed: boolean;
+  sorenessLevel?: number; // 1-5 scale
+  energyLevel?: number; // 1-5 scale
+  motivationLevel?: number; // 1-5 scale
+  // Smartwatch/Health data
+  healthMetrics?: {
+    averageHeartRate?: number;
+    maxHeartRate?: number;
+    minHeartRate?: number;
+    caloriesBurned?: number;
+    steps?: number;
+    distance?: number; // in meters
+    heartRateZones?: {
+      fatBurn: number; // minutes
+      cardio: number;  // minutes
+      peak: number;    // minutes
+    };
+  };
 }
 
 export const workoutPrograms: WorkoutProgram[] = [

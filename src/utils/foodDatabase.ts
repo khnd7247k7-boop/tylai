@@ -1,5 +1,37 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export interface Micronutrients {
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
+  calcium?: number;
+  iron?: number;
+  potassium?: number;
+  vitaminA?: number;
+  vitaminC?: number;
+  vitaminD?: number;
+  vitaminE?: number;
+  vitaminK?: number;
+  thiamin?: number;
+  riboflavin?: number;
+  niacin?: number;
+  vitaminB6?: number;
+  folate?: number;
+  vitaminB12?: number;
+  biotin?: number;
+  pantothenicAcid?: number;
+  phosphorus?: number;
+  iodine?: number;
+  magnesium?: number;
+  zinc?: number;
+  selenium?: number;
+  copper?: number;
+  manganese?: number;
+  chromium?: number;
+  molybdenum?: number;
+  chloride?: number;
+}
+
 export interface ScannedFood {
   name: string;
   brand?: string;
@@ -9,6 +41,7 @@ export interface ScannedFood {
   fat: number;
   servingSize: string;
   barcode: string;
+  micronutrients?: Micronutrients;
 }
 
 const CACHE_PREFIX = 'FOOD_CACHE_';
@@ -52,6 +85,48 @@ function parseNutriments(product: any): Omit<ScannedFood, 'barcode'> | null {
     return isNaN(n) ? 0 : Math.round(n * 10) / 10;
   };
 
+  // Extract micronutrients
+  const getMicronutrient = (field: string): number | undefined => {
+    const value = perServing(field) ?? nutriments[`${field}_100g`] ?? nutriments[field];
+    const num = toNum(value);
+    return num > 0 ? num : undefined;
+  };
+
+  const micronutrients: Micronutrients = {
+    fiber: getMicronutrient('fiber'),
+    sugar: getMicronutrient('sugars'),
+    sodium: getMicronutrient('sodium'),
+    calcium: getMicronutrient('calcium'),
+    iron: getMicronutrient('iron'),
+    potassium: getMicronutrient('potassium'),
+    vitaminA: getMicronutrient('vitamin-a'),
+    vitaminC: getMicronutrient('vitamin-c'),
+    vitaminD: getMicronutrient('vitamin-d'),
+    vitaminE: getMicronutrient('vitamin-e'),
+    vitaminK: getMicronutrient('vitamin-k'),
+    thiamin: getMicronutrient('thiamin') ?? getMicronutrient('vitamin-b1'),
+    riboflavin: getMicronutrient('riboflavin') ?? getMicronutrient('vitamin-b2'),
+    niacin: getMicronutrient('niacin') ?? getMicronutrient('vitamin-b3'),
+    vitaminB6: getMicronutrient('vitamin-b6'),
+    folate: getMicronutrient('folate') ?? getMicronutrient('folic-acid'),
+    vitaminB12: getMicronutrient('vitamin-b12'),
+    biotin: getMicronutrient('biotin'),
+    pantothenicAcid: getMicronutrient('pantothenic-acid') ?? getMicronutrient('vitamin-b5'),
+    phosphorus: getMicronutrient('phosphorus'),
+    iodine: getMicronutrient('iodine'),
+    magnesium: getMicronutrient('magnesium'),
+    zinc: getMicronutrient('zinc'),
+    selenium: getMicronutrient('selenium'),
+    copper: getMicronutrient('copper'),
+    manganese: getMicronutrient('manganese'),
+    chromium: getMicronutrient('chromium'),
+    molybdenum: getMicronutrient('molybdenum'),
+    chloride: getMicronutrient('chloride'),
+  };
+
+  // Only include micronutrients if at least one exists
+  const hasMicronutrients = Object.values(micronutrients).some(v => v !== undefined);
+
   return {
     name,
     brand,
@@ -60,6 +135,7 @@ function parseNutriments(product: any): Omit<ScannedFood, 'barcode'> | null {
     carbs: toNum(carbs),
     fat: toNum(fat),
     servingSize,
+    ...(hasMicronutrients && { micronutrients }),
   };
 }
 
