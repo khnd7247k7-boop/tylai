@@ -1,6 +1,19 @@
 import React, { useRef, useState } from 'react';
-import { Animated, PanResponder, Dimensions } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { Animated, PanResponder, Dimensions, Platform } from 'react-native';
+
+// Haptics wrapper: noop on web to avoid web bundle issues
+let Haptics: any = {
+  impactAsync: async () => {},
+};
+
+if (Platform.OS !== 'web') {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    Haptics = require('expo-haptics');
+  } catch (error) {
+    console.warn('Haptics module not available:', error);
+  }
+}
 
 interface TabSwipeNavigationProps {
   children: React.ReactNode;

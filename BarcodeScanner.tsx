@@ -8,12 +8,30 @@ import {
   Alert,
   ActivityIndicator,
   SafeAreaView,
+  Platform,
 } from 'react-native';
-import { CameraView, Camera } from 'expo-camera';
 import { lookupFoodByBarcode, ScannedFood } from './src/utils/foodDatabase';
 import { useToast } from './src/components/ToastProvider';
 
 // ScannedFood type imported from foodDatabase
+
+// Lazy-load camera module to avoid breaking web build where expo-camera
+// may not be available or fully supported.
+let CameraView: any = null;
+let CameraModule: any = null;
+
+if (Platform.OS !== 'web') {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ExpoCamera = require('expo-camera');
+    CameraView = ExpoCamera.CameraView || ExpoCamera.Camera;
+    CameraModule = ExpoCamera.Camera;
+  } catch (error) {
+    console.warn('Camera module not available:', error);
+    CameraView = null;
+    CameraModule = null;
+  }
+}
 
 interface BarcodeScannerProps {
   visible: boolean;
@@ -29,7 +47,11 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
 
   useEffect(() => {
     const getCameraPermissions = async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
+      if (!CameraModule) {
+        setHasPermission(false);
+        return;
+      }
+      const { status } = await CameraModule.requestCameraPermissionsAsync();
       setHasPermission(status === 'granted');
     };
 
@@ -68,6 +90,24 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
   };
 
   if (!visible) return null;
+
+  // Web fallback: barcode scanning not supported yet, show friendly message
+  if (Platform.OS === 'web') {
+    return (
+      <Modal visible={visible} animationType="slide">
+        <SafeAreaView style={styles.container}>
+          <View style={styles.permissionContainer}>
+            <Text style={styles.permissionText}>
+              Barcode scanning isn&apos;t supported in the web version yet. Please use the mobile app to scan barcodes, or add foods manually.
+            </Text>
+            <TouchableOpacity style={styles.permissionButton} onPress={onClose}>
+              <Text style={styles.permissionButtonText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    );
+  }
 
   if (hasPermission === null) {
     return (
