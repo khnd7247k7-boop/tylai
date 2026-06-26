@@ -10,6 +10,7 @@ import {
   TouchableWithoutFeedback,
 } from 'react-native';
 import AIService, { AIInsight, AIRecommendation, UserWellnessData } from './AIService';
+import { AppTheme } from './src/theme/appVisualTheme';
 
 interface AIComponentProps {
   userData: UserWellnessData;
@@ -55,7 +56,7 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
       case 'high': return '#FF6B6B';
       case 'medium': return '#FFA726';
       case 'low': return '#66BB6A';
-      default: return '#4ECDC4';
+      default: return AppTheme.accent;
     }
   };
 
@@ -221,7 +222,7 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
       <Modal
         visible={selectedInsight !== null}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setSelectedInsight(null)}
       >
         <TouchableWithoutFeedback onPress={() => setSelectedInsight(null)}>
@@ -280,15 +281,17 @@ export default function AIComponent({ userData, onRecommendationAction }: AIComp
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: AppTheme.card,
     marginHorizontal: 15,
     marginVertical: 10,
     borderRadius: 12,
     padding: 3,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   tabButton: {
     flex: 1,
@@ -298,15 +301,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tabButtonActive: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
   },
   tabButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   tabButtonTextActive: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
     fontWeight: 'bold',
   },
   scrollView: {
@@ -336,7 +339,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '500',
   },
   emptyContainer: {
@@ -366,10 +369,13 @@ const styles = StyleSheet.create({
     gap: 15,
   },
   insightCard: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
     borderLeftWidth: 4,
+    borderLeftColor: AppTheme.accent,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
@@ -396,7 +402,7 @@ const styles = StyleSheet.create({
   },
   insightCategory: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
   },
   insightPriority: {
@@ -420,18 +426,21 @@ const styles = StyleSheet.create({
   },
   insightConfidence: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '500',
   },
   insightTime: {
     fontSize: 12,
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   recommendationCard: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
     borderLeftWidth: 4,
+    borderLeftColor: AppTheme.accent,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
@@ -458,7 +467,7 @@ const styles = StyleSheet.create({
   },
   recommendationCategory: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
   },
   recommendationPriority: {
@@ -472,7 +481,7 @@ const styles = StyleSheet.create({
   },
   recommendationReason: {
     fontSize: 13,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontStyle: 'italic',
     marginBottom: 10,
   },
@@ -483,11 +492,11 @@ const styles = StyleSheet.create({
   },
   recommendationTime: {
     fontSize: 12,
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   recommendationAction: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
   },
   modalOverlay: {
@@ -499,9 +508,11 @@ const styles = StyleSheet.create({
   modalContainer: {
     width: '90%',
     maxWidth: 400,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 20,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusCard,
     padding: 25,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.5,
@@ -528,7 +539,7 @@ const styles = StyleSheet.create({
   },
   modalCategory: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
   },
   closeButton: {
@@ -536,7 +547,7 @@ const styles = StyleSheet.create({
   },
   closeButtonText: {
     fontSize: 24,
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   modalContent: {
     marginBottom: 20,
@@ -548,9 +559,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modalDetails: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 12,
+    backgroundColor: AppTheme.inputBg,
+    borderRadius: AppTheme.radiusButton,
     padding: 15,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   modalDetailItem: {
     flexDirection: 'row',
@@ -560,7 +573,7 @@ const styles = StyleSheet.create({
   },
   modalDetailLabel: {
     fontSize: 14,
-    color: '#888',
+    color: AppTheme.textMuted,
     fontWeight: '500',
   },
   modalDetailValue: {

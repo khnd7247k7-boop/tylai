@@ -19,6 +19,8 @@ export interface UserProfileData {
   daysPerWeek?: number;
   equipmentAvailability?: string;
   preferredWorkoutLength?: number; // in minutes
+  /** Free-text daily activity (workout questionnaire / profile) — systemic volume tiering */
+  activityLevel?: string;
 }
 
 class UserProfileService {
@@ -43,6 +45,7 @@ class UserProfileService {
         daysPerWeek: profile.daysPerWeek || undefined,
         equipmentAvailability: profile.equipmentAvailability || '',
         preferredWorkoutLength: profile.preferredWorkoutLength || undefined,
+        activityLevel: profile.activityLevel || '',
       };
     } catch (error) {
       console.error('[UserProfileService] Error loading user profile:', error);
@@ -73,6 +76,7 @@ class UserProfileService {
     if (profile.daysPerWeek) parts.push(`Training Days Per Week: ${profile.daysPerWeek}`);
     if (profile.equipmentAvailability) parts.push(`Equipment: ${profile.equipmentAvailability}`);
     if (profile.preferredWorkoutLength) parts.push(`Preferred Workout Length: ${profile.preferredWorkoutLength} minutes`);
+    if (profile.activityLevel) parts.push(`Activity level: ${profile.activityLevel}`);
 
     return parts.join('\n');
   }

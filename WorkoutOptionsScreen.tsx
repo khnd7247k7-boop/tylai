@@ -10,12 +10,14 @@ import {
   FlatList,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { WorkoutPlan } from './data/workoutPrograms';
+import type { GeneratedWorkoutPlan, GeneratedWorkoutPlanDay } from './data/workoutPrograms';
+import { AppTheme } from './src/theme/appVisualTheme';
 
 interface WorkoutOptionsScreenProps {
-  workoutOptions: WorkoutPlan[];
+  workoutOptions: GeneratedWorkoutPlan[];
   generatedGoal?: string;
-  onSelect: (workout: WorkoutPlan) => void;
+  onSave: (workout: GeneratedWorkoutPlan) => void;
+  onStartWorkout?: (workout: GeneratedWorkoutPlan) => void;
   onBack: () => void;
 }
 
@@ -26,7 +28,8 @@ const CARD_SPACING = 20;
 export default function WorkoutOptionsScreen({
   workoutOptions,
   generatedGoal,
-  onSelect,
+  onSave,
+  onStartWorkout,
   onBack,
 }: WorkoutOptionsScreenProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -40,50 +43,64 @@ export default function WorkoutOptionsScreen({
     }
   };
 
-  const handleSelect = () => {
-    onSelect(workoutOptions[currentIndex]);
+  const currentWorkout = workoutOptions[currentIndex];
+
+  const handleSave = () => {
+    if (currentWorkout) onSave(currentWorkout);
   };
 
-  const renderWorkoutCard = ({ item: workout, index }: { item: WorkoutPlan; index: number }) => {
+  const handleStart = () => {
+    if (currentWorkout && onStartWorkout) onStartWorkout(currentWorkout);
+  };
+
+  const renderWorkoutCard = ({
+    item: workout,
+  }: {
+    item: GeneratedWorkoutPlan;
+    index: number;
+  }) => {
     return (
       <View style={styles.cardWrapper}>
         <View style={styles.card}>
-        <ScrollView 
-          style={styles.cardContent} 
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={true}
-          nestedScrollEnabled={true}
-        >
-          <View style={styles.header}>
-            <Text style={styles.workoutName}>{workout.name}</Text>
-            <Text style={styles.workoutInfo}>
-              {workout.daysPerWeek} days/week • {workout.level} • {workout.goal.replace('_', ' ')}
-            </Text>
-          </View>
+          <ScrollView
+            style={styles.cardContent}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={true}
+            nestedScrollEnabled={true}
+          >
+            <View style={styles.header}>
+              <Text style={styles.workoutName}>{workout.name}</Text>
+              <Text style={styles.workoutInfo}>
+                {workout.daysPerWeek} days/week • {workout.level} • {workout.goal.replace('_', ' ')}
+              </Text>
+            </View>
 
-          <View style={styles.daysSection}>
-            <Text style={styles.sectionTitle}>Training Days</Text>
-            {workout.weeklyPlan?.weekDays.map((day, dayIndex) => (
-              <View key={dayIndex} style={styles.dayCard}>
-                <View style={styles.dayHeader}>
-                  <Text style={styles.dayName}>{day.dayName}</Text>
-                  <Text style={styles.dayFocus}>{day.focus}</Text>
-                </View>
-                <Text style={styles.dayDuration}>~{day.duration} min • {day.exercises.length} exercises</Text>
-                
-                <View style={styles.exercisesContainer}>
-                  <Text style={styles.exercisesTitle}>Exercises:</Text>
-                  <Text style={styles.exercisesList}>
-                    {day.exercises.map((ex, idx) => 
-                      `${ex.name} (${ex.sets}×${ex.reps})${idx < day.exercises.length - 1 ? ' • ' : ''}`
-                    ).join('')}
+            <View style={styles.daysSection}>
+              <Text style={styles.sectionTitle}>Training Days</Text>
+              {workout.weeklyPlan?.weekDays.map((day: GeneratedWorkoutPlanDay, dayIndex: number) => (
+                <View key={dayIndex} style={styles.dayCard}>
+                  <View style={styles.dayHeader}>
+                    <Text style={styles.dayName}>{day.dayName}</Text>
+                    <Text style={styles.dayFocus}>{day.focus}</Text>
+                  </View>
+                  <Text style={styles.dayDuration}>
+                    ~{day.duration} min • {day.exercises.length} exercises
                   </Text>
+
+                  <View style={styles.exercisesContainer}>
+                    <Text style={styles.exercisesTitle}>Exercises</Text>
+                    {day.exercises.map((ex, idx) => (
+                      <Text key={`${ex.name}-${idx}`} style={styles.exerciseLine}>
+                        <Text style={styles.exerciseName}>{ex.name}</Text>
+                        <Text style={styles.exerciseSets}> — {ex.sets}×{ex.reps}</Text>
+                      </Text>
+                    ))}
+                  </View>
                 </View>
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-      </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
       </View>
     );
   };
@@ -91,10 +108,15 @@ export default function WorkoutOptionsScreen({
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      
+
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back</Text>
+        <TouchableOpacity
+          onPress={onBack}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Choose Your Workout</Text>
         <View style={styles.placeholder} />
@@ -134,21 +156,24 @@ export default function WorkoutOptionsScreen({
           {workoutOptions.map((_, index) => (
             <View
               key={index}
-              style={[
-                styles.indicator,
-                index === currentIndex && styles.indicatorActive,
-              ]}
+              style={[styles.indicator, index === currentIndex && styles.indicatorActive]}
             />
           ))}
         </View>
-        
+
         <Text style={styles.counter}>
           {currentIndex + 1} of {workoutOptions.length}
         </Text>
 
-        <TouchableOpacity style={styles.selectButton} onPress={handleSelect}>
-          <Text style={styles.selectButtonText}>Select This Workout</Text>
+        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+          <Text style={styles.saveButtonText}>Save Plan</Text>
         </TouchableOpacity>
+
+        {onStartWorkout ? (
+          <TouchableOpacity style={styles.startButton} onPress={handleStart}>
+            <Text style={styles.startButtonText}>Save & Start Workout</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -157,7 +182,7 @@ export default function WorkoutOptionsScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: AppTheme.bgScreen,
   },
   topBar: {
     flexDirection: 'row',
@@ -166,18 +191,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: AppTheme.border,
   },
   backButton: {
     padding: 8,
   },
   backButtonText: {
-    color: '#00ff88',
-    fontSize: 16,
+    color: AppTheme.accent,
+    fontSize: 22,
     fontWeight: '600',
   },
   title: {
-    color: '#ffffff',
+    color: AppTheme.textPrimary,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -189,13 +214,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: 'rgba(0, 255, 136, 0.12)',
-    borderLeftWidth: 4,
-    borderLeftColor: '#00ff88',
-    borderRadius: 8,
+    backgroundColor: AppTheme.card,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    borderRadius: 12,
   },
   nutritionBannerText: {
-    color: '#e0e0e0',
+    color: AppTheme.textSecondary,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -211,10 +236,10 @@ const styles = StyleSheet.create({
   card: {
     width: CARD_WIDTH,
     height: '85%',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.card,
     borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#00ff88',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     overflow: 'hidden',
   },
   cardContent: {
@@ -225,111 +250,145 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     paddingBottom: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
+    borderBottomColor: AppTheme.border,
   },
   workoutName: {
     color: '#ffffff',
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 26,
+    fontWeight: '800',
     marginBottom: 8,
+    letterSpacing: 0.2,
   },
   workoutInfo: {
-    color: '#888888',
-    fontSize: 14,
+    color: AppTheme.textSecondary,
+    fontSize: 15,
+    fontWeight: '600',
   },
   daysSection: {
     marginTop: 10,
   },
   sectionTitle: {
-    color: '#00ff88',
-    fontSize: 18,
-    fontWeight: 'bold',
+    color: AppTheme.accent,
+    fontSize: 20,
+    fontWeight: '800',
     marginBottom: 15,
+    letterSpacing: 0.3,
   },
   dayCard: {
-    backgroundColor: '#0f0f0f',
-    borderRadius: 12,
-    padding: 15,
+    backgroundColor: '#12181f',
+    borderRadius: 14,
+    padding: 16,
     marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: 'rgba(0, 255, 136, 0.22)',
   },
   dayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+    gap: 8,
   },
   dayName: {
     color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
+    flex: 1,
   },
   dayFocus: {
-    color: '#00ff88',
+    color: AppTheme.accent,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   dayDuration: {
-    color: '#888888',
-    fontSize: 12,
-    marginBottom: 10,
+    color: AppTheme.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
   },
   exercisesContainer: {
-    marginTop: 8,
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: AppTheme.border,
   },
   exercisesTitle: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
+    color: AppTheme.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  exercisesList: {
-    color: '#cccccc',
-    fontSize: 13,
-    lineHeight: 20,
-    flexWrap: 'wrap',
+  exerciseLine: {
+    marginBottom: 8,
+    lineHeight: 22,
+  },
+  exerciseName: {
+    color: '#f3f4f6',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  exerciseSets: {
+    color: AppTheme.accent,
+    fontSize: 15,
+    fontWeight: '600',
   },
   footer: {
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
-    backgroundColor: '#0a0a0a',
+    borderTopColor: AppTheme.border,
+    backgroundColor: AppTheme.bgScreen,
+    gap: 10,
   },
   indicatorContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 4,
   },
   indicator: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: AppTheme.border,
     marginHorizontal: 4,
   },
   indicatorActive: {
-    backgroundColor: '#00ff88',
+    backgroundColor: AppTheme.accent,
     width: 24,
   },
   counter: {
-    color: '#888888',
+    color: AppTheme.textMuted,
     fontSize: 14,
     textAlign: 'center',
-    marginBottom: 15,
+    marginBottom: 4,
   },
-  selectButton: {
-    backgroundColor: '#00ff88',
+  saveButton: {
+    backgroundColor: AppTheme.accent,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 12,
     alignItems: 'center',
   },
-  selectButtonText: {
-    color: '#000000',
-    fontSize: 16,
-    fontWeight: 'bold',
+  saveButtonText: {
+    color: AppTheme.accentDark,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  startButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  startButtonText: {
+    color: AppTheme.textSecondary,
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
-

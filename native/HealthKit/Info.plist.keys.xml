@@ -1,0 +1,11 @@
+<!--
+  Add these keys to your iOS target Info.plist (or ios/<AppName>/Info.plist after expo prebuild).
+  In Xcode: Target → Info → Custom iOS Target Properties → +
+
+  NSHealthShareUsageDescription
+  NSHealthUpdateUsageDescription
+-->
+<key>NSHealthShareUsageDescription</key>
+<string>We use your health data to personalize your fitness and recovery coaching.</string>
+<key>NSHealthUpdateUsageDescription</key>
+<string>We sync your activity data to keep your progress up to date.</string>

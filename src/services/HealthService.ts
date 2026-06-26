@@ -1,12 +1,29 @@
 /**
  * Health Service for Smartwatch Integration
- * 
+ *
  * Provides access to health data from Apple Watch (HealthKit) and Android wearables (Google Fit)
  * using expo-health package.
  */
 
 // Note: This service uses expo-health which needs to be installed
 // Run: npx expo install expo-health
+
+import {
+  isAnyExpoHealthMetricEnabled,
+  isHealthMetricEnabled,
+} from '../utils/healthDataPermissions';
+import { isRunningInExpoGo } from '../utils/expoGo';
+
+type ExpoHealthModule = typeof import('expo-health');
+
+async function loadExpoHealth(): Promise<ExpoHealthModule | null> {
+  if (isRunningInExpoGo()) return null;
+  try {
+    return await import('expo-health');
+  } catch {
+    return null;
+  }
+}
 
 export interface HealthMetrics {
   averageHeartRate?: number;
@@ -31,6 +48,11 @@ class HealthService {
   private hasPermissions: boolean = false;
   private estimatedMaxHeartRate: number = 220; // Default, will be calculated based on age if available
 
+  /** Call after user wipes local data so the next permission check re-queries the OS. */
+  clearPermissionCache(): void {
+    this.hasPermissions = false;
+  }
+
   /**
    * Check if health data sync is enabled in user settings
    */
@@ -52,22 +74,37 @@ class HealthService {
    */
   async requestPermissions(): Promise<boolean> {
     try {
-      // Dynamic import to avoid errors if package isn't installed
-      const Health = await import('expo-health');
-      
+      if (!(await this.isHealthDataSyncEnabled())) {
+        return false;
+      }
+      if (!(await isAnyExpoHealthMetricEnabled())) {
+        return false;
+      }
+
+      const Health = await loadExpoHealth();
+      if (!Health) return false;
+
+      const toRequest: string[] = [];
+      if (await isHealthMetricEnabled('heartRate')) toRequest.push('heartRate');
+      if (await isHealthMetricEnabled('activeEnergy')) toRequest.push('activeEnergy');
+      if (await isHealthMetricEnabled('steps')) toRequest.push('steps');
+      if (await isHealthMetricEnabled('distance')) toRequest.push('distance');
+      if (await isHealthMetricEnabled('bodyMass')) toRequest.push('bodyMass');
+
+      if (toRequest.length === 0) {
+        return false;
+      }
+
       const permissions = await Health.requestPermissionsAsync({
-        permissions: [
-          'steps',
-          'heartRate',
-          'activeEnergy',
-          'distance',
-        ],
+        permissions: toRequest,
       });
 
-      this.hasPermissions = 
+      const p = permissions.permissions;
+      const granted = (key: string) => p?.[key] === 'granted';
+
+      this.hasPermissions =
         permissions.status === 'granted' ||
-        (permissions.permissions?.steps === 'granted' &&
-         permissions.permissions?.heartRate === 'granted');
+        toRequest.some((key) => granted(key));
 
       return this.hasPermissions;
     } catch (error) {
@@ -81,16 +118,36 @@ class HealthService {
    * Check if health permissions have been granted
    */
   async checkPermissions(): Promise<boolean> {
+    if (!(await isAnyExpoHealthMetricEnabled())) {
+      this.hasPermissions = false;
+      return false;
+    }
+
     if (this.hasPermissions) return true;
 
     try {
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) {
+        this.hasPermissions = false;
+        return false;
+      }
       const permissions = await Health.getPermissionsAsync();
-      
-      this.hasPermissions = 
+
+      const p = permissions.permissions;
+      const needHr = await isHealthMetricEnabled('heartRate');
+      const needEnergy = await isHealthMetricEnabled('activeEnergy');
+      const needSteps = await isHealthMetricEnabled('steps');
+      const needDist = await isHealthMetricEnabled('distance');
+
+      const okFor = (needed: boolean, key: string) =>
+        !needed || p?.[key] === 'granted';
+
+      this.hasPermissions =
         permissions.status === 'granted' ||
-        (permissions.permissions?.steps === 'granted' &&
-         permissions.permissions?.heartRate === 'granted');
+        (okFor(needHr, 'heartRate') &&
+          okFor(needEnergy, 'activeEnergy') &&
+          okFor(needSteps, 'steps') &&
+          okFor(needDist, 'distance'));
 
       return this.hasPermissions;
     } catch (error) {
@@ -106,16 +163,19 @@ class HealthService {
     endTime: Date
   ): Promise<HeartRateDataPoint[]> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return [];
       }
-      
+      if (!(await isHealthMetricEnabled('heartRate'))) {
+        return [];
+      }
+
       if (!(await this.checkPermissions())) {
         return [];
       }
 
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return [];
       const heartRateData = await Health.getHeartRateAsync({
         startDate: startTime,
         endDate: endTime,
@@ -143,16 +203,19 @@ class HealthService {
     endTime: Date
   ): Promise<number> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return 0;
       }
-      
+      if (!(await isHealthMetricEnabled('activeEnergy'))) {
+        return 0;
+      }
+
       if (!(await this.checkPermissions())) {
         return 0;
       }
 
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return 0;
       const caloriesData = await Health.getActiveEnergyAsync({
         startDate: startTime,
         endDate: endTime,
@@ -180,16 +243,19 @@ class HealthService {
     endTime: Date
   ): Promise<number> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return 0;
       }
-      
+      if (!(await isHealthMetricEnabled('steps'))) {
+        return 0;
+      }
+
       if (!(await this.checkPermissions())) {
         return 0;
       }
 
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return 0;
       const stepsData = await Health.getStepsAsync({
         startDate: startTime,
         endDate: endTime,
@@ -217,16 +283,19 @@ class HealthService {
     endTime: Date
   ): Promise<number> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return 0;
       }
-      
+      if (!(await isHealthMetricEnabled('distance'))) {
+        return 0;
+      }
+
       if (!(await this.checkPermissions())) {
         return 0;
       }
 
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return 0;
       const distanceData = await Health.getDistanceAsync({
         startDate: startTime,
         endDate: endTime,
@@ -294,11 +363,14 @@ class HealthService {
     userAge?: number
   ): Promise<HealthMetrics> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return {};
       }
-      
+
+      if (!(await isAnyExpoHealthMetricEnabled())) {
+        return {};
+      }
+
       if (!(await this.checkPermissions())) {
         return {};
       }
@@ -308,7 +380,6 @@ class HealthService {
         this.estimatedMaxHeartRate = 220 - userAge;
       }
 
-      // Fetch all metrics in parallel
       const [heartRateData, calories, steps, distance] = await Promise.all([
         this.getHeartRateData(startTime, endTime),
         this.getCaloriesBurned(startTime, endTime),
@@ -354,11 +425,13 @@ class HealthService {
    */
   async getCurrentHeartRate(): Promise<number | null> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return null;
       }
-      
+      if (!(await isHealthMetricEnabled('heartRate'))) {
+        return null;
+      }
+
       if (!(await this.checkPermissions())) {
         return null;
       }
@@ -396,7 +469,6 @@ class HealthService {
     distance: Array<{ date: Date; value: number }>;
   }> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return {
           heartRate: [],
@@ -405,7 +477,11 @@ class HealthService {
           distance: [],
         };
       }
-      
+
+      if (!(await isAnyExpoHealthMetricEnabled())) {
+        return { heartRate: [], calories: [], steps: [], distance: [] };
+      }
+
       if (!(await this.checkPermissions())) {
         return { heartRate: [], calories: [], steps: [], distance: [] };
       }
@@ -437,7 +513,8 @@ class HealthService {
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return [];
       const caloriesData = await Health.getActiveEnergyAsync({
         startDate,
         endDate,
@@ -473,7 +550,8 @@ class HealthService {
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return [];
       const stepsData = await Health.getStepsAsync({
         startDate,
         endDate,
@@ -509,7 +587,8 @@ class HealthService {
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await import('expo-health');
+      const Health = await loadExpoHealth();
+      if (!Health) return [];
       const distanceData = await Health.getDistanceAsync({
         startDate,
         endDate,
@@ -545,11 +624,13 @@ class HealthService {
     workoutSessions: Array<{ date: string; duration: number }>
   ): Promise<number | null> {
     try {
-      // Check if health data sync is enabled
       if (!(await this.isHealthDataSyncEnabled())) {
         return null;
       }
-      
+      if (!(await isHealthMetricEnabled('heartRate'))) {
+        return null;
+      }
+
       if (!(await this.checkPermissions()) || workoutSessions.length === 0) {
         return null;
       }
@@ -574,6 +655,84 @@ class HealthService {
     } catch (error) {
       console.error('Error calculating average workout heart rate:', error);
       return null;
+    }
+  }
+
+  /**
+   * Mindful minutes for **today** (device local calendar day) from HealthKit mindful sessions.
+   * Only a numeric aggregate crosses the JS bridge — no per-session timestamps or identifiers.
+   */
+  async getMindfulMinutesTodayLocal(): Promise<{
+    minutes: number;
+    known: boolean;
+    source: 'healthkit_aggregate' | 'unavailable';
+  }> {
+    try {
+      const { Platform } = await import('react-native');
+      if (Platform.OS !== 'ios') {
+        return { minutes: 0, known: false, source: 'unavailable' };
+      }
+      const { fetchMindfulMinutesForDateNative } = await import('../native/mindfulMinutesBridge');
+      const raw = await fetchMindfulMinutesForDateNative(new Date());
+      if (raw === null) {
+        return { minutes: 0, known: false, source: 'unavailable' };
+      }
+      const rounded = Math.round(raw * 10) / 10;
+      return { minutes: rounded, known: true, source: 'healthkit_aggregate' };
+    } catch {
+      return { minutes: 0, known: false, source: 'unavailable' };
+    }
+  }
+
+  /**
+   * Import body-weight samples from Apple Health (smart scales, Health manual entries, etc.).
+   * Returns merged entries and how many new days were added (existing manual entries are kept).
+   */
+  async syncBodyWeightFromAppleHealth(daysBack = 90): Promise<{
+    imported: number;
+    added: number;
+    merged: import('../utils/workoutHistoryChartData').WeightEntry[];
+  }> {
+    const empty = {
+      imported: 0,
+      added: 0,
+      merged: [] as import('../utils/workoutHistoryChartData').WeightEntry[],
+    };
+    try {
+      const { Platform } = await import('react-native');
+      if (Platform.OS !== 'ios') return empty;
+      if (!(await this.isHealthDataSyncEnabled())) return empty;
+      if (!(await isHealthMetricEnabled('bodyMass'))) return empty;
+
+      await this.requestPermissions();
+
+      const { fetchBodyMassSamplesSinceDaysNative } = await import('../native/bodyMassBridge');
+      const { loadUserData } = await import('../utils/userStorage');
+      const { mergeWeightEntriesFromHealth } = await import('../utils/weightSync');
+
+      const samples = await fetchBodyMassSamplesSinceDaysNative(daysBack);
+      if (samples.length === 0) return empty;
+
+      const imported = samples.map((sample) => {
+        const date = new Date(sample.dateMs);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        return { date: dateKey, weightLbs: sample.weightLbs };
+      });
+
+      const existing =
+        (await loadUserData<import('../utils/workoutHistoryChartData').WeightEntry[]>('weightEntries')) ??
+        [];
+      const { merged, added } = mergeWeightEntriesFromHealth(existing, imported);
+
+      if (added > 0) {
+        const { saveUserData } = await import('../utils/userStorage');
+        await saveUserData('weightEntries', merged);
+      }
+
+      return { imported: imported.length, added, merged };
+    } catch (error) {
+      console.warn('[HealthService] Body weight sync failed:', error);
+      return empty;
     }
   }
 }

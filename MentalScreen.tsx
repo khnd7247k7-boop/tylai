@@ -12,6 +12,8 @@ import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { AppTheme } from './src/theme/appVisualTheme';
+import { useSmallWins } from './src/context/SmallWinsContext';
 
 interface MentalExercise {
   id: string;
@@ -45,6 +47,7 @@ interface MentalScreenProps {
 }
 
 export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenProps) {
+  const { onMobilityOnRestDay } = useSmallWins();
   const [activeTab, setActiveTab] = useState<'breathing' | 'visualization' | 'mindfulness' | 'progress'>('breathing');
   const [dailyProgress, setDailyProgress] = useState<DailyMentalProgress[]>([]);
   const [mentalExercises, setMentalExercises] = useState<MentalExercise[]>([
@@ -333,8 +336,9 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
         setDailyProgress(updatedProgress);
         saveDailyProgress(updatedProgress);
       }
-      
+
       onCompleteTask(exercise.title);
+      onMobilityOnRestDay(exercise.title).catch(() => {});
     } else {
       // Removing completion
       if (todayProgress) {
@@ -420,10 +424,10 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
     return (
       <View style={styles.tabContent}>
         <View style={styles.progressOverview}>
-          <Text style={styles.sectionTitle}>Mental Wellness Progress</Text>
+            <Text style={styles.sectionTitle}>Mental performance progress</Text>
           <View style={styles.dailyResetInfo}>
             <Text style={styles.dailyResetText}>
-              Exercise progress resets daily to help you track your daily mental wellness routine
+              Exercise progress resets daily to help you track focus, composure, and recovery habits
             </Text>
           </View>
           <View style={styles.overallProgress}>
@@ -448,7 +452,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
             </Text>
           </View>
           <View style={styles.categoryItem}>
-            <Text style={styles.categoryTitle}>Mindfulness</Text>
+            <Text style={styles.categoryTitle}>Focus</Text>
             <Text style={styles.categoryStats}>
               {stats.mindfulnessCompleted} of {getExercisesByType('mindfulness').length} completed
             </Text>
@@ -497,7 +501,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
               </View>
             ))}
           {dailyProgress.length === 0 && (
-            <Text style={styles.noHistoryText}>No mental wellness history yet</Text>
+            <Text style={styles.noHistoryText}>No mental performance history yet</Text>
           )}
         </View>
       </View>
@@ -510,10 +514,15 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Mental Wellness</Text>
+        <Text style={styles.headerTitle}>Mental performance</Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -521,7 +530,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
       <View style={styles.tabContainer}>
         {renderTabButton('breathing', 'Breathing')}
         {renderTabButton('visualization', 'Visualization')}
-        {renderTabButton('mindfulness', 'Mindfulness')}
+        {renderTabButton('mindfulness', 'Focus')}
         {renderTabButton('progress', 'Progress')}
       </View>
 
@@ -534,9 +543,9 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {activeTab === 'breathing' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionTitle}>Breathing Exercises</Text>
+            <Text style={styles.sectionTitle}>Breathing</Text>
             <Text style={styles.sectionDescription}>
-              Calm your nervous system and reduce stress with these powerful breathing techniques.
+              Regulate arousal and sharpen focus—use before workouts, between sets, or anytime you need a performance reset.
             </Text>
             {getExercisesByType('breathing').map(renderExercise)}
           </View>
@@ -544,9 +553,9 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
 
         {activeTab === 'visualization' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionTitle}>Visualization Techniques</Text>
+            <Text style={styles.sectionTitle}>Visualization</Text>
             <Text style={styles.sectionDescription}>
-              Harness the power of your imagination to create positive mental states and achieve your goals.
+              Rehearse execution, confidence, and recovery—mental reps that complement your physical training.
             </Text>
             {getExercisesByType('visualization').map(renderExercise)}
           </View>
@@ -554,9 +563,9 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
 
         {activeTab === 'mindfulness' && (
           <View style={styles.tabContent}>
-            <Text style={styles.sectionTitle}>Mindfulness Practices</Text>
+            <Text style={styles.sectionTitle}>Focus & composure</Text>
             <Text style={styles.sectionDescription}>
-              Develop present-moment awareness and cultivate inner peace through mindfulness meditation.
+              Train attention and emotional steadiness—skills that carry directly into training, work, and high-pressure moments.
             </Text>
             {getExercisesByType('mindfulness').map(renderExercise)}
           </View>
@@ -572,7 +581,7 @@ export default function MentalScreen({ onBack, onCompleteTask }: MentalScreenPro
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   header: {
     flexDirection: 'row',
@@ -581,14 +590,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: AppTheme.border,
   },
   backButton: {
     padding: 8,
   },
   backButtonText: {
-    color: '#4ECDC4',
-    fontSize: 16,
+    color: AppTheme.accent,
+    fontSize: 22,
     fontWeight: '600',
   },
   headerTitle: {
@@ -603,9 +612,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginHorizontal: 15,
     marginVertical: 10,
-    backgroundColor: '#2a2a2a',
-    borderRadius: 10,
+    backgroundColor: AppTheme.card,
+    borderRadius: 12,
     padding: 3,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   tabButton: {
     flex: 1,
@@ -620,8 +631,8 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   activeTabButton: {
-    backgroundColor: '#4ECDC4',
-    shadowColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
+    shadowColor: AppTheme.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
@@ -629,13 +640,13 @@ const styles = StyleSheet.create({
   },
   tabButtonText: {
     fontSize: 12,
-    color: '#ccc',
+    color: AppTheme.textMuted,
     fontWeight: '700',
     textAlign: 'center',
     lineHeight: 14,
   },
   activeTabButtonText: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
@@ -655,14 +666,14 @@ const styles = StyleSheet.create({
   },
   sectionDescription: {
     fontSize: 16,
-    color: '#ccc',
+    color: AppTheme.textMuted,
     marginBottom: 20,
     textAlign: 'center',
     lineHeight: 24,
   },
   exerciseCard: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 20,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusCard,
     padding: 25,
     marginBottom: 20,
     shadowColor: '#000',
@@ -671,7 +682,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: AppTheme.border,
   },
   exerciseHeader: {
     flexDirection: 'row',
@@ -700,9 +711,9 @@ const styles = StyleSheet.create({
   },
   exerciseDuration: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
-    backgroundColor: 'rgba(78, 205, 196, 0.1)',
+    backgroundColor: 'rgba(0, 255, 136, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -713,26 +724,26 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     borderWidth: 3,
-    borderColor: '#4ECDC4',
+    borderColor: AppTheme.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4ECDC4',
+    shadowColor: AppTheme.accent,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 4,
   },
   checkedBox: {
-    backgroundColor: '#4ECDC4',
-    borderColor: '#4ECDC4',
-    shadowColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
+    borderColor: AppTheme.accent,
+    shadowColor: AppTheme.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.6,
     shadowRadius: 8,
     elevation: 8,
   },
   checkmark: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
     fontSize: 18,
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
@@ -744,7 +755,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     padding: 20,
     borderLeftWidth: 4,
-    borderLeftColor: '#4ECDC4',
+    borderLeftColor: AppTheme.accent,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
@@ -754,9 +765,9 @@ const styles = StyleSheet.create({
   instructionsTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 15,
-    textShadowColor: 'rgba(78, 205, 196, 0.3)',
+    textShadowColor: 'rgba(0, 255, 136, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
@@ -767,21 +778,21 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     paddingLeft: 12,
     borderLeftWidth: 2,
-    borderLeftColor: 'rgba(78, 205, 196, 0.3)',
+    borderLeftColor: 'rgba(0, 255, 136, 0.3)',
   },
   progressOverview: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 20,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusCard,
     padding: 25,
     marginBottom: 20,
     alignItems: 'center',
-    shadowColor: '#4ECDC4',
+    shadowColor: AppTheme.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 8,
     borderWidth: 1,
-    borderColor: 'rgba(78, 205, 196, 0.2)',
+    borderColor: AppTheme.border,
   },
   overallProgress: {
     alignItems: 'center',
@@ -789,9 +800,9 @@ const styles = StyleSheet.create({
   progressPercentage: {
     fontSize: 56,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 15,
-    textShadowColor: 'rgba(78, 205, 196, 0.5)',
+    textShadowColor: 'rgba(0, 255, 136, 0.5)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
@@ -802,10 +813,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   categoryProgress: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   categoryItem: {
     flexDirection: 'row',
@@ -822,12 +835,14 @@ const styles = StyleSheet.create({
   },
   categoryStats: {
     fontSize: 14,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
   },
   completedExercises: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   completedItem: {
     flexDirection: 'row',
@@ -844,19 +859,21 @@ const styles = StyleSheet.create({
   },
   completedDate: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
   },
   noExercisesText: {
     fontSize: 14,
-    color: '#888',
+    color: AppTheme.textMuted,
     textAlign: 'center',
     fontStyle: 'italic',
   },
   dailyHistory: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
     marginTop: 20,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   dayItem: {
     backgroundColor: '#3a3a3a',
@@ -864,7 +881,7 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 12,
     borderLeftWidth: 4,
-    borderLeftColor: '#4ECDC4',
+    borderLeftColor: AppTheme.accent,
   },
   dayHeader: {
     flexDirection: 'row',
@@ -879,7 +896,7 @@ const styles = StyleSheet.create({
   },
   dayStats: {
     fontSize: 12,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontWeight: '600',
   },
   dayExercises: {
@@ -899,16 +916,16 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   dailyResetInfo: {
-    backgroundColor: 'rgba(78, 205, 196, 0.1)',
+    backgroundColor: 'rgba(0, 255, 136, 0.12)',
     borderRadius: 12,
     padding: 15,
     marginBottom: 20,
     borderLeftWidth: 4,
-    borderLeftColor: '#4ECDC4',
+    borderLeftColor: AppTheme.accent,
   },
   dailyResetText: {
     fontSize: 14,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     textAlign: 'center',
     lineHeight: 20,
     fontWeight: '500',

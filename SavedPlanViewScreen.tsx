@@ -14,18 +14,29 @@ import { WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
 import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { loadUserData, saveUserData } from './src/utils/userStorage';
 import AIService, { ProgramAdaptation } from './AIService';
+import { useSmallWins } from './src/context/SmallWinsContext';
+import { useToast } from './src/components/ToastProvider';
+import { getProgramWeeksFromSavedPlan } from './src/utils/customWorkoutPlan';
+import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
+import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
+import { useTourTargetRef } from './src/tour/useTourTargetRef';
 
 interface SavedPlanViewScreenProps {
   plan: any;
   onBack: () => void;
   onWorkoutComplete?: () => void;
+  onEditPlan?: (plan: any) => void;
 }
 
-export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }: SavedPlanViewScreenProps) {
+export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, onEditPlan }: SavedPlanViewScreenProps) {
+  const fitnessSavedPlanStartRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessSavedPlanStart);
+  const { onWorkoutSessionSaved } = useSmallWins();
+  const { showToast } = useToast();
   const [currentPlan, setCurrentPlan] = useState(plan);
   const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([]);
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set());
   const [showAISuggestions, setShowAISuggestions] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<ProgramAdaptation[]>([]);
@@ -38,7 +49,8 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
     loadImplementedSuggestions().then(() => {
       loadAISuggestions();
     });
-  }, []);
+    void showPendingCoachAdaptationNoticeIfAny(plan.id);
+  }, [plan.id]);
 
   const loadAISuggestions = async () => {
     try {
@@ -91,6 +103,14 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
     }
   };
 
+  const handleEditPlan = () => {
+    if (!onEditPlan) {
+      Alert.alert('Edit unavailable', 'Could not open the plan editor.');
+      return;
+    }
+    onEditPlan(currentPlan);
+  };
+
   const handleDeletePlan = async () => {
     Alert.alert(
       'Delete Plan',
@@ -138,44 +158,40 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
     }
   };
 
-  const handleStartWorkout = (dayIndex?: number) => {
-    if (currentPlan.weeklyPlan && currentPlan.weeklyPlan.weekDays && currentPlan.weeklyPlan.weekDays.length > 0) {
-      // Multi-day plan - select which day to start
-      if (dayIndex !== undefined) {
-        const dayWorkout = currentPlan.weeklyPlan.weekDays[dayIndex];
-        const program: WorkoutProgram = {
-          id: `${currentPlan.id}-${dayWorkout.day}`,
-          name: dayWorkout.workoutName,
-          description: dayWorkout.focus,
-          duration: dayWorkout.duration,
-          frequency: 1,
-          level: currentPlan.level || 'intermediate',
-          category: 'strength',
-          exercises: dayWorkout.exercises,
-          focus: dayWorkout.focus,
-          equipment: [],
-        };
-        setSelectedProgram(program);
-        setSelectedDayIndex(dayIndex);
-      } else if (currentPlan.weeklyPlan.weekDays.length === 1) {
-        // Only one day, start it directly
-        const dayWorkout = currentPlan.weeklyPlan.weekDays[0];
-        const program: WorkoutProgram = {
-          id: `${currentPlan.id}-${dayWorkout.day}`,
-          name: dayWorkout.workoutName,
-          description: dayWorkout.focus,
-          duration: dayWorkout.duration,
-          frequency: 1,
-          level: currentPlan.level || 'intermediate',
-          category: 'strength',
-          exercises: dayWorkout.exercises,
-          focus: dayWorkout.focus,
-          equipment: [],
-        };
-        setSelectedProgram(program);
+  const planWeeks = getProgramWeeksFromSavedPlan(currentPlan);
+
+  const launchWorkoutForDay = (weekIndex: number, dayIndex: number) => {
+    const week = planWeeks[weekIndex];
+    const dayWorkout = week?.weekDays?.[dayIndex];
+    if (!dayWorkout) return;
+    const program: WorkoutProgram = {
+      id: `${currentPlan.id}-w${weekIndex + 1}-d${dayWorkout.day}`,
+      name: dayWorkout.workoutName,
+      description: `${week.name} • ${dayWorkout.focus}`,
+      duration: dayWorkout.duration,
+      frequency: 1,
+      level: currentPlan.level || 'intermediate',
+      category: 'strength',
+      exercises: dayWorkout.exercises,
+      focus: dayWorkout.focus,
+      equipment: [],
+    };
+    setSelectedProgram(program);
+    setSelectedWeekIndex(weekIndex);
+    setSelectedDayIndex(dayIndex);
+  };
+
+  const handleStartWorkout = (weekIndex?: number, dayIndex?: number) => {
+    if (planWeeks.length > 0 && planWeeks.some((w) => w.weekDays?.length > 0)) {
+      if (weekIndex !== undefined && dayIndex !== undefined) {
+        launchWorkoutForDay(weekIndex, dayIndex);
+        return;
+      }
+      const flatDays = planWeeks.reduce((n, w) => n + (w.weekDays?.length || 0), 0);
+      if (flatDays === 1) {
+        launchWorkoutForDay(0, 0);
       } else {
-        // Multiple days - show day selector
-        setSelectedDayIndex(-1); // -1 means show day selector
+        setSelectedDayIndex(-1);
       }
     } else if (currentPlan.exercises && currentPlan.exercises.length > 0) {
       // Single workout plan
@@ -204,6 +220,35 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
       console.log('Workout session saved to history:', session);
     } catch (error) {
       console.error('Error saving workout history:', error);
+    }
+
+    try {
+      await onWorkoutSessionSaved(session);
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      const { autoAdaptActivePlans } = await import('./src/services/PlanAdaptationService');
+      const summaries = await autoAdaptActivePlans({ triggerPlanId: currentPlan.id });
+      if (summaries.length > 0) {
+        showToast('Plan updated — open this workout again to see what changed.', 'info', 4500);
+        const refreshed = await loadUserData<any[]>('savedWorkoutPlans');
+        const updated = refreshed?.find((p) => p.id === currentPlan.id);
+        if (updated) setCurrentPlan(updated);
+      }
+    } catch (adaptErr) {
+      console.warn('[SavedPlanView] auto plan adaptation skipped', adaptErr);
+    }
+
+    try {
+      const { autoAdaptNutritionIfNeeded } = await import('./src/services/NutritionAdaptationService');
+      const nutritionMsg = await autoAdaptNutritionIfNeeded();
+      if (nutritionMsg) {
+        showToast(nutritionMsg, 'info', 5000);
+      }
+    } catch (nutErr) {
+      console.warn('[SavedPlanView] nutrition adaptation skipped', nutErr);
     }
 
     setSelectedProgram(null);
@@ -639,35 +684,47 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
     );
   }
 
-  // Day selector for multi-day plans
-  if (selectedDayIndex === -1 && currentPlan.weeklyPlan && currentPlan.weeklyPlan.weekDays) {
+  // Day selector for multi-day / multi-week plans
+  if (selectedDayIndex === -1 && planWeeks.length > 0) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
         
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => setSelectedDayIndex(null)}>
-            <Text style={styles.backButtonText}>Back</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setSelectedDayIndex(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Text style={styles.backButtonText}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Select Day</Text>
+          <Text style={styles.headerTitle}>Select Workout</Text>
           <View style={styles.placeholder} />
         </View>
 
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.section}>
-            <Text style={styles.label}>Choose which day to start</Text>
-            {currentPlan.weeklyPlan.weekDays.map((dayWorkout: any, index: number) => (
-              <TouchableOpacity
-                key={`day-select-${index}-${dayWorkout.dayName}`}
-                style={styles.dayCard}
-                onPress={() => handleStartWorkout(index)}
-              >
-                <Text style={styles.dayCardTitle}>{dayWorkout.dayName}</Text>
-                <Text style={styles.dayCardSubtitle}>{dayWorkout.workoutName}</Text>
-                <Text style={styles.dayCardDetails}>
-                  {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
-                </Text>
-              </TouchableOpacity>
+            <Text style={styles.label}>Choose a workout to start</Text>
+            {planWeeks.map((week, weekIndex) => (
+              <View key={`week-pick-${week.weekNumber}`} style={{ marginBottom: 16 }}>
+                {planWeeks.length > 1 && (
+                  <Text style={[styles.label, { marginBottom: 8 }]}>{week.name}</Text>
+                )}
+                {week.weekDays.map((dayWorkout: any, dayIndex: number) => (
+                  <TouchableOpacity
+                    key={`day-select-${weekIndex}-${dayWorkout.dayName}`}
+                    style={styles.dayCard}
+                    onPress={() => handleStartWorkout(weekIndex, dayIndex)}
+                  >
+                    <Text style={styles.dayCardTitle}>{dayWorkout.workoutName}</Text>
+                    <Text style={styles.dayCardSubtitle}>{dayWorkout.dayName}</Text>
+                    <Text style={styles.dayCardDetails}>
+                      {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             ))}
           </View>
         </ScrollView>
@@ -680,23 +737,41 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
       <StatusBar style="light" />
       
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Workout Plan</Text>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={handleDeletePlan}
-        >
-          <Text style={styles.deleteButtonText}>Delete</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.editButton} onPress={handleEditPlan}>
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={handleDeletePlan}
+          >
+            <Text style={styles.deleteButtonText}>Delete</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
-          <Text style={styles.planName}>{currentPlan.name}</Text>
+          <View style={styles.planNameRow}>
+            <Text style={styles.planName}>{currentPlan.name}</Text>
+            <TouchableOpacity style={styles.editPlanInlineButton} onPress={handleEditPlan}>
+              <Text style={styles.editPlanInlineButtonText}>Edit</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.planDetails}>
-            {currentPlan.level || 'Custom'} • {(currentPlan.goal || 'strength').replace('_', ' ')} • {currentPlan.daysPerWeek || (currentPlan.trainingDays && currentPlan.trainingDays.length) || 1} days/week
+            {currentPlan.level || 'Custom'} • {(currentPlan.goal || 'strength').replace('_', ' ')} •{' '}
+            {currentPlan.daysPerWeek || (currentPlan.trainingDays && currentPlan.trainingDays.length) || 1}{' '}
+            days/week
+            {planWeeks.length > 1 ? ` • ${planWeeks.length} weeks` : ''}
           </Text>
           {currentPlan.trainingDays && currentPlan.trainingDays.length > 0 && (
             <Text style={styles.trainingDays}>
@@ -710,59 +785,70 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
           )}
         </View>
 
-        {/* Multi-day plan view */}
-        {currentPlan.weeklyPlan && currentPlan.weeklyPlan.weekDays && currentPlan.weeklyPlan.weekDays.length > 0 ? (
-          <View style={styles.section}>
-            <Text style={styles.label}>Weekly Schedule</Text>
-            {currentPlan.weeklyPlan.weekDays.map((dayWorkout: any, index: number) => {
-              const isExpanded = expandedDays.has(index);
-              return (
-                <View key={`day-${index}-${dayWorkout.dayName}`} style={styles.dayWorkoutCard}>
-                  <View style={styles.dayWorkoutHeader}>
-                    <TouchableOpacity
-                      style={styles.dayWorkoutHeaderLeft}
-                      onPress={() => toggleDayExpanded(index)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.expandButton}>
-                        <Text style={styles.expandButtonText}>
-                          {isExpanded ? '▼' : '▶'}
-                        </Text>
+        {/* Multi-week / multi-day plan view */}
+        {planWeeks.length > 0 && planWeeks.some((w) => w.weekDays?.length > 0) ? (
+          <View style={styles.section} ref={fitnessSavedPlanStartRef} nativeID={TOUR_TARGET_IDS.fitnessSavedPlanStart}>
+            <Text style={styles.label}>Program Schedule</Text>
+            {planWeeks.map((week, weekIndex) => (
+              <View key={`plan-week-${week.weekNumber}`} style={{ marginBottom: 20 }}>
+                {planWeeks.length > 1 && (
+                  <Text style={[styles.label, { color: '#00ff88', marginBottom: 10 }]}>{week.name}</Text>
+                )}
+                {week.weekDays.map((dayWorkout: any, dayIndex: number) => {
+                  const expandKey = weekIndex * 100 + dayIndex;
+                  const isExpanded = expandedDays.has(expandKey);
+                  return (
+                    <View key={`day-${weekIndex}-${dayIndex}-${dayWorkout.dayName}`} style={styles.dayWorkoutCard}>
+                      <View style={styles.dayWorkoutHeader}>
+                        <TouchableOpacity
+                          style={styles.dayWorkoutHeaderLeft}
+                          onPress={() => toggleDayExpanded(expandKey)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.expandButton}>
+                            <Text style={styles.expandButtonText}>
+                              {isExpanded ? '▼' : '▶'}
+                            </Text>
+                          </View>
+                          <View style={styles.dayWorkoutInfo}>
+                            <Text style={styles.dayWorkoutName}>{dayWorkout.workoutName}</Text>
+                            <Text style={styles.dayWorkoutDay}>{dayWorkout.dayName}</Text>
+                            <Text style={styles.dayWorkoutStats}>
+                              {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.startDayButton}
+                          onPress={() => handleStartWorkout(weekIndex, dayIndex)}
+                        >
+                          <Text style={styles.startDayButtonText}>Start</Text>
+                        </TouchableOpacity>
                       </View>
-                      <View style={styles.dayWorkoutInfo}>
-                        <Text style={styles.dayWorkoutDay}>{dayWorkout.dayName}</Text>
-                        <Text style={styles.dayWorkoutName}>{dayWorkout.workoutName}</Text>
-                        <Text style={styles.dayWorkoutStats}>
-                          {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.startDayButton}
-                      onPress={() => handleStartWorkout(index)}
-                    >
-                      <Text style={styles.startDayButtonText}>Start</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {isExpanded && (
-                    <View style={styles.exercisesList}>
-                      {dayWorkout.exercises.map((exercise: any, exIndex: number) => (
-                        <View key={`day-${index}-ex-${exIndex}-${exercise.id || exercise.name}`} style={styles.exerciseItem}>
-                          <Text style={styles.exerciseName}>
-                            {exIndex + 1}. {exercise.name}
-                          </Text>
-                          <Text style={styles.exerciseDetails}>
-                            {exercise.sets} sets × {exercise.reps} reps
-                            {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
-                            {' • '}{exercise.restTime}s rest
-                          </Text>
+                      {isExpanded && (
+                        <View style={styles.exercisesList}>
+                          {dayWorkout.exercises.map((exercise: any, exIndex: number) => (
+                            <View
+                              key={`day-${weekIndex}-${dayIndex}-ex-${exIndex}-${exercise.id || exercise.name}`}
+                              style={styles.exerciseItem}
+                            >
+                              <Text style={styles.exerciseName}>
+                                {exIndex + 1}. {exercise.name}
+                              </Text>
+                              <Text style={styles.exerciseDetails}>
+                                {exercise.sets} sets × {exercise.reps} reps
+                                {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
+                                {' • '}{exercise.restTime}s rest
+                              </Text>
+                            </View>
+                          ))}
                         </View>
-                      ))}
+                      )}
                     </View>
-                  )}
-                </View>
-              );
-            })}
+                  );
+                })}
+              </View>
+            ))}
             <View style={styles.aiSuggestionsContainer}>
               {aiSuggestions.length > 0 && (
                 <TouchableOpacity
@@ -846,7 +932,7 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
       {/* AI Suggestions Modal */}
       <Modal
         visible={showAISuggestions}
-        animationType="slide"
+        animationType="none"
         presentationStyle="pageSheet"
         transparent={false}
         onRequestClose={() => setShowAISuggestions(false)}
@@ -944,7 +1030,7 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete }:
       {/* Implemented Suggestions Modal */}
       <Modal
         visible={showImplemented}
-        animationType="slide"
+        animationType="none"
         presentationStyle="pageSheet"
         transparent={false}
         onRequestClose={() => setShowImplemented(false)}
@@ -1042,7 +1128,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#00ff88',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   headerTitle: {
@@ -1052,6 +1138,22 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 40,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#00ff88',
+    borderRadius: 8,
+  },
+  editButtonText: {
+    color: '#0d0d0d',
+    fontSize: 14,
+    fontWeight: '600',
   },
   deleteButton: {
     paddingHorizontal: 12,
@@ -1071,11 +1173,30 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 30,
   },
+  planNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 10,
+  },
   planName: {
+    flex: 1,
     fontSize: 24,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 10,
+  },
+  editPlanInlineButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#00ff88',
+  },
+  editPlanInlineButtonText: {
+    color: '#00ff88',
+    fontSize: 14,
+    fontWeight: '600',
   },
   planDetails: {
     fontSize: 16,
@@ -1302,6 +1423,24 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
     fontStyle: 'italic',
+  },
+  emptyState: {
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   modalContainer: {
     flex: 1,

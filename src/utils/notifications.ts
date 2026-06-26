@@ -1,15 +1,35 @@
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { loadUserData } from './userStorage';
 
-// Configure notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+type NotificationsModule = typeof import('expo-notifications');
+
+let notificationsModule: NotificationsModule | null | undefined;
+let handlerConfigured = false;
+
+async function getNotifications(): Promise<NotificationsModule | null> {
+  if (Platform.OS === 'web') return null;
+  if (notificationsModule !== undefined) return notificationsModule;
+  try {
+    const mod = await import('expo-notifications');
+    if (!handlerConfigured) {
+      mod.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: true,
+        }),
+      });
+      handlerConfigured = true;
+    }
+    notificationsModule = mod;
+    return mod;
+  } catch (error) {
+    console.warn('[notifications] Native module unavailable:', error);
+    notificationsModule = null;
+    return null;
+  }
+}
 
 export interface AppSettings {
   notifications: boolean;
@@ -17,22 +37,24 @@ export interface AppSettings {
   [key: string]: any;
 }
 
-// Request notification permissions
 export async function requestNotificationPermissions(): Promise<boolean> {
   try {
+    const Notifications = await getNotifications();
+    if (!Notifications) return false;
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
-    
+
     if (existingStatus !== 'granted') {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
-    
+
     if (finalStatus !== 'granted') {
       console.log('Failed to get push notification permissions');
       return false;
     }
-    
+
     return true;
   } catch (error) {
     console.error('Error requesting notification permissions:', error);
@@ -40,25 +62,26 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 }
 
-// Cancel all scheduled notifications
 export async function cancelAllNotifications() {
+  const Notifications = await getNotifications();
+  if (!Notifications) return;
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-// Schedule daily notification
 export async function scheduleDailyNotification(time: string = '09:00') {
   try {
-    // Cancel existing daily notifications first
+    const Notifications = await getNotifications();
+    if (!Notifications) return false;
+
     await cancelAllNotifications();
-    
+
     const hasPermission = await requestNotificationPermissions();
     if (!hasPermission) {
       return false;
     }
-    
+
     const [hours, minutes] = time.split(':').map(Number);
-    
-    // Create notification channel for Android
+
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Daily Reminders',
@@ -67,23 +90,22 @@ export async function scheduleDailyNotification(time: string = '09:00') {
         lightColor: '#4ECDC4',
       });
     }
-    
-    // Schedule notification for every day at the specified time
+
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: "Daily Wellness Check-in 🌟",
-        body: "Time to focus on your wellness journey! Complete your daily tasks and check in.",
+        title: 'Daily Wellness Check-in 🌟',
+        body: 'Time to focus on your wellness journey! Complete your daily tasks and check in.',
         sound: true,
         priority: Notifications.AndroidNotificationPriority.HIGH,
         data: { type: 'daily_reminder' },
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: hours,
         minute: minutes,
-        repeats: true,
       },
     });
-    
+
     console.log(`Daily notification scheduled for ${time}`);
     return true;
   } catch (error) {
@@ -92,11 +114,10 @@ export async function scheduleDailyNotification(time: string = '09:00') {
   }
 }
 
-// Update notification schedule based on user settings
 export async function updateNotificationSchedule() {
   try {
     const settings = await loadUserData<AppSettings>('appSettings');
-    
+
     if (settings?.notifications && settings?.reminderTime && settings.reminderTime !== 'Off') {
       await scheduleDailyNotification(settings.reminderTime);
       console.log('Notifications enabled and scheduled');
@@ -109,8 +130,8 @@ export async function updateNotificationSchedule() {
   }
 }
 
-// Get all scheduled notifications (for debugging)
 export async function getAllScheduledNotifications() {
-  return await Notifications.getAllScheduledNotificationsAsync();
+  const Notifications = await getNotifications();
+  if (!Notifications) return [];
+  return Notifications.getAllScheduledNotificationsAsync();
 }
-

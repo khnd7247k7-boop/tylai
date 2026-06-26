@@ -1,0 +1,12 @@
+# Maestro workspace: https://docs.maestro.dev
+# Point Maestro at this folder: `maestro test .maestro`
+#
+# iOS bundle id must match the app installed on simulator/device (Xcode target).
+# Expo app.json still lists com.tyl-ai.tylai; native iOS target uses com.travispixton.tylai — update flows if you align them.
+
+flows:
+  - flows/*
+
+platform:
+  ios:
+    snapshotKeyHonorModalViews: true

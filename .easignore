@@ -1,0 +1,15 @@
+node_modules/
+.git/
+.expo/
+.maestro/
+maestro-report.xml
+*.log
+.DS_Store
+ios/build/
+build/
+gemini-proxy/node_modules/
+gemini-proxy/.env
+.env
+.env.local
+*.md
+!README.md

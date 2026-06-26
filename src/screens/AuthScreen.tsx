@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, TextInput, Button, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Button, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { AppTextInput as TextInput } from '../components/AppTextInput';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';

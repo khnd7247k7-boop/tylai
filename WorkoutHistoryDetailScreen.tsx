@@ -39,8 +39,13 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
       <StatusBar style="light" />
       
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Workout Details</Text>
         <View style={styles.placeholder} />
@@ -264,7 +269,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#00ff88',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   headerTitle: {

@@ -1,8 +1,81 @@
 # Complete Exercise Database - All Exercises and Variations
 
-**Total Exercises: 201**
+**Total Exercises: 232**
 
 This document lists all exercises in the database, organized by primary muscle group and category.
+
+---
+
+## 🔥 WARM-UP MOVEMENTS IN THE DATABASE
+
+Every generated workout plan includes a short warm-up routine at the start of each day to get blood moving. There is no separate “warm-up” category in the database; the app uses these existing exercises as warm-ups.
+
+**Routine used by the app (prepended to each day):**
+1. **World's Greatest Stretch** – Step into a deep lunge, place inside hand on the floor, rotate other arm toward the ceiling. Targets hips, hamstrings, and upper back.
+2. **Inchworms** – Fold forward, walk hands out to a plank, pause, walk feet back to hands. Hamstrings, shoulders, and core.
+3. **Arm Circles** – Arms to the side, small-to-large circles. Shoulder mobility and rotator cuff.
+4. **Leg Swings** – Swing one leg forward/back and side-to-side (hold wall for balance). Hip flexors and glutes.
+5. **Bodyweight Squats** – Sit back into a squat with control. Lower body and core.
+6. **Jumping Jacks** – Full-body move to spike heart rate and blood flow.
+
+**Other warm-up–friendly movements in the database:**
+
+| Name | Category | Notes |
+|------|----------|--------|
+| World's Greatest Stretch | flexibility | Hips, hamstrings, upper back |
+| Inchworms | flexibility | Hamstrings, shoulders, core |
+| Arm Circles | flexibility | Shoulders, rotator cuff |
+| Leg Swings | flexibility | Hip flexors, glutes |
+| Bodyweight Squats | strength | Lower body, core |
+| Jumping Jacks | cardio | Full-body, heart rate |
+| High Knees | cardio | Legs + core |
+| Butt Kicks | cardio | Hamstrings, light cardio |
+| Jump Rope | cardio | Optional equipment |
+| Mountain Climbers | cardio | Core + cardio |
+| Walking | cardio | Very light |
+| Jogging | cardio | Light |
+| Hip Flexor Stretch | flexibility | Dynamic or hold |
+| Hamstring Stretch | flexibility | Legs |
+| Quad Stretch | flexibility | Legs |
+| Calf Stretch | flexibility | Lower legs |
+| Shoulder Stretch | flexibility | Upper body |
+| Neck Stretch | flexibility | Upper body |
+| Spinal Twist | flexibility | Spine mobility |
+| Cat-Cow | flexibility | Spine warm-up |
+| Forward Fold | flexibility | Hamstrings, back |
+| Chest Opener | flexibility | Chest, shoulders |
+| Downward Dog | flexibility | Full body stretch |
+| Child's Pose | flexibility | Rest, breathing |
+| Pigeon Pose | flexibility | Hips |
+
+**Muscle-group specific warm-ups (for push / pull / legs / hinge days):**
+
+| Day | Exercise | Description |
+|-----|----------|-------------|
+| **Chest & Shoulders (Push)** | Scapular Push-ups | Plank, sink chest by squeezing shoulder blades, push floor away. Stabilizes shoulder girdle for benching. |
+| | Band Pull-Aparts | Pull a light resistance band apart horizontally. Rear delts and upper back. |
+| | Doorway Chest Stretch | Lean through a doorway with arms at 90° to open pectorals. |
+| | Shoulder External Rotations | Light band: rotate arm outward with elbow pinned to side. Rotator cuff. |
+| **Back & Biceps (Pull)** | Scapular Pull-ups | Hang from bar, pull shoulder blades down and back without bending elbows. Lats and traps. |
+| | Thoracic Rotations | All fours: reach one arm under body, then rotate up toward ceiling. Mid-back for rows. |
+| | Cat-Cow | Arch and round back on all fours. Spine mobility. *(already in DB)* |
+| **Legs (Leg Day)** | Glute Bridge (Bodyweight) | Lie on back, drive hips up to wake up glutes. *(already in DB)* |
+| | Walking Lunges with a Twist | Lunge and rotate torso over front leg. Balance, hips, core. |
+| | Lateral Lunges | Step out to the side; groin stretch and outer glutes. *(already in DB)* |
+| | Ankle Rolls / Bottom Squat Transfer | Deep squat, shift weight side-to-side. Ankle flexibility for deeper lifts. |
+| **Deadlift / Hinge** | Good Mornings (Bodyweight) | Hinge at hips with flat back; hamstring stretch. |
+| | Bird Dog | All fours: extend opposite arm and leg. Core and lower back stabilizers. *(already in DB)* |
+
+### Plyometric progressions (cardio category)
+
+| Category | Beginner (Foundation) | Intermediate (Power) | Advanced (Max Control) |
+|----------|----------------------|----------------------|-------------------------|
+| Stability & Balance | Snap Downs | Single-Leg Linear Hops | Single-Leg Drop Landings |
+| Lateral Stability | Lateral Pogos | Skater Jumps | 90/180-Degree Jumps |
+| Hip & Ankle Mobility | Frog Jumps | Split Squat Jumps | Cossack Squat Hops |
+| Core & Range | Plank Jacks | Reverse Lunge to Knee-Up | Tuck Jumps |
+| Posterior Chain | Box Jump-Ups | Pike Jumps | Depth Jumps |
+| Upper Body | Medicine Ball Slams | Plyo Push-Ups | Rotational Med Ball Throws |
 
 ---
 

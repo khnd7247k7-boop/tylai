@@ -6,14 +6,20 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  TextInput,
   Alert,
   Modal,
+  Switch,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import { WorkoutProgram, WorkoutSession, Exercise } from './data/workoutPrograms';
+import { useSmallWins } from './src/context/SmallWinsContext';
 import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exerciseDatabase';
 import ExerciseVideoPlayer from './src/components/ExerciseVideoPlayer';
+import RestTimerModal, { REST_TIMER_ENABLED_STORAGE_KEY } from './src/components/RestTimerModal';
+import { prefillNumericSetFromPrevious } from './src/utils/setLoggingPrefill';
+import { hasWearableCoverageForSession } from './src/utils/wearableSessionSignals';
 // HealthService is imported dynamically to avoid errors if expo-health isn't installed
 let HealthService: any;
 try {
@@ -32,7 +38,8 @@ interface ProgramExecutionScreenProps {
 
 export default function ProgramExecutionScreen({ program, onBack, onComplete }: ProgramExecutionScreenProps) {
   console.log('ProgramExecutionScreen rendered with program:', program);
-  
+  const { onWorkoutSessionSaved } = useSmallWins();
+
   // All hooks must be called in the same order every time
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSetIndex, setCurrentSetIndex] = useState(0);
@@ -46,6 +53,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       weight: number;
       restTime: number;
       completed: boolean;
+      rir?: number;
     }>;
   }>>([]);
   const [notes, setNotes] = useState('');
@@ -64,6 +72,9 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | undefined>(undefined);
   const [healthMetricsEnabled, setHealthMetricsEnabled] = useState(false);
   const [currentHeartRate, setCurrentHeartRate] = useState<number | null>(null);
+  const [restTimerEnabled, setRestTimerEnabled] = useState(true);
+  const [restModalVisible, setRestModalVisible] = useState(false);
+  const [restModalSeconds, setRestModalSeconds] = useState(90);
 
   // Reset modifiedProgram when program prop changes
   useEffect(() => {
@@ -71,6 +82,14 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       setModifiedProgram(null);
     }
   }, [program]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(REST_TIMER_ENABLED_STORAGE_KEY).then((v) => {
+      if (v !== null) {
+        setRestTimerEnabled(v === 'true');
+      }
+    });
+  }, []);
 
   // Request health permissions and check availability on mount
   useEffect(() => {
@@ -169,8 +188,13 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={onBack}>
-            <Text style={styles.backButtonText}>Back</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Text style={styles.backButtonText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Error</Text>
           <View style={styles.placeholder} />
@@ -341,27 +365,48 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   };
 
 
-  const handleSetComplete = (exerciseIndex: number, setIndex: number, weight: number, reps: number) => {
+  const handleSetComplete = (
+    exerciseIndex: number,
+    setIndex: number,
+    weight: number,
+    reps: number,
+    rir?: number
+  ) => {
     const newData = [...exerciseData];
     newData[exerciseIndex].sets[setIndex] = {
       ...newData[exerciseIndex].sets[setIndex],
       weight,
       reps,
       completed: true,
+      ...(rir != null && Number.isFinite(rir) ? { rir } : {}),
     };
-    setExerciseData(newData);
+    const currentExercise = newData[exerciseIndex];
+    const lastExerciseIdx = currentProgram.exercises.length - 1;
+    const isLastSetOfWorkout =
+      exerciseIndex === lastExerciseIdx && setIndex === currentExercise.sets.length - 1;
+    const restSec = Math.max(0, newData[exerciseIndex].sets[setIndex].restTime ?? 90);
 
     // Auto-advance to next set if available
-    const currentExercise = newData[exerciseIndex];
     if (setIndex < currentExercise.sets.length - 1) {
-      // Move to next set in same exercise
-      setCurrentSetIndex(setIndex + 1);
+      const nextSetIndex = setIndex + 1;
+      newData[exerciseIndex] = {
+        ...newData[exerciseIndex],
+        sets: prefillNumericSetFromPrevious(newData[exerciseIndex].sets, nextSetIndex),
+      };
+      setExerciseData(newData);
+      setCurrentSetIndex(nextSetIndex);
     } else {
+      setExerciseData(newData);
       // All sets completed for this exercise, move to next exercise
       if (exerciseIndex < currentProgram.exercises.length - 1) {
         setCurrentExerciseIndex(exerciseIndex + 1);
         setCurrentSetIndex(0);
       }
+    }
+
+    if (restTimerEnabled && !isLastSetOfWorkout && restSec > 0) {
+      setRestModalSeconds(restSec);
+      setRestModalVisible(true);
     }
   };
 
@@ -382,13 +427,25 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
     }
   };
 
+  const goToSet = (exerciseIndex: number, setIndex: number) => {
+    setExerciseData((prev) => {
+      const next = [...prev];
+      next[exerciseIndex] = {
+        ...next[exerciseIndex],
+        sets: prefillNumericSetFromPrevious(next[exerciseIndex].sets, setIndex),
+      };
+      return next;
+    });
+    setCurrentSetIndex(setIndex);
+  };
+
   const handleNavigateToExercise = (index: number) => {
     setCurrentExerciseIndex(index);
-    // Find first incomplete set, or start at set 0
     const exercise = exerciseData[index];
     if (exercise && exercise.sets.length > 0) {
-      const firstIncompleteSet = exercise.sets.findIndex(set => !set.completed);
-      setCurrentSetIndex(firstIncompleteSet >= 0 ? firstIncompleteSet : 0);
+      const firstIncompleteSet = exercise.sets.findIndex((set) => !set.completed);
+      const targetSet = firstIncompleteSet >= 0 ? firstIncompleteSet : 0;
+      goToSet(index, targetSet);
     } else {
       setCurrentSetIndex(0);
     }
@@ -454,16 +511,45 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
     );
   };
 
+  /** Shared wrap-up after history is saved (with or without subjective check-in fields). */
+  const finishWorkoutUi = async (
+    finalSession: WorkoutSession,
+    usedWearableSignals: boolean
+  ) => {
+    try {
+      await onWorkoutSessionSaved(finalSession);
+    } catch (e) {
+      console.warn('Small wins hook:', e);
+    }
+    setShowPostWorkoutQuestions(false);
+    setSorenessLevel(null);
+    setEnergyLevel(null);
+    setMotivationLevel(null);
+    setPendingSession(null);
+    onComplete(finalSession);
+    const base = `Great job! You completed ${currentProgram.name} in ${finalSession.duration} minutes.`;
+    Alert.alert(
+      'Workout Complete!',
+      usedWearableSignals
+        ? `${base} We found workout data from your wearable or Apple Health for this session, so the quick check-in questions were skipped.`
+        : base
+    );
+  };
+
   const handleWorkoutComplete = async () => {
     const endTime = new Date();
     const duration = Math.round((endTime.getTime() - startTime.getTime()) / 1000 / 60); // in minutes
 
     // Include all exercises - completed ones with sets, and skipped ones with empty sets
-    const completedExercises = exerciseData.map(exercise => ({
-      exerciseId: exercise.exerciseId,
-      name: exercise.name,
-      sets: exercise.skipped ? [] : exercise.sets.filter(set => set.completed),
-    })).filter(exercise => exercise.skipped || exercise.sets.length > 0); // Include skipped exercises or exercises with completed sets
+    const completedExercises = exerciseData
+      .filter(
+        (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
+      )
+      .map((exercise) => ({
+        exerciseId: exercise.exerciseId,
+        name: exercise.name,
+        sets: exercise.skipped ? [] : exercise.sets.filter((set) => set.completed),
+      }));
 
     // Fetch health metrics if enabled
     let healthMetrics;
@@ -487,11 +573,14 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       healthMetrics,
     };
 
-    // Store session and show post-workout questions
     setPendingSession(session);
-    setShowPostWorkoutQuestions(true);
-    
-    // Save to history immediately (before questions)
+
+    const skipSubjectiveCheckIn =
+      healthMetricsEnabled &&
+      HealthService &&
+      hasWearableCoverageForSession(healthMetrics);
+
+    // Save to history immediately (before optional questions)
     try {
       const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
       const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
@@ -500,6 +589,12 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       console.log('Workout session saved to history immediately');
     } catch (error) {
       console.error('Error saving workout history:', error);
+    }
+
+    if (skipSubjectiveCheckIn) {
+      await finishWorkoutUi(session, true);
+    } else {
+      setShowPostWorkoutQuestions(true);
     }
   };
 
@@ -543,16 +638,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       console.error('Error updating workout history:', error);
     }
 
-    // Reset states
-    setShowPostWorkoutQuestions(false);
-    setSorenessLevel(null);
-    setEnergyLevel(null);
-    setMotivationLevel(null);
-    setPendingSession(null);
-
-    // Call onComplete to notify parent component
-    onComplete(finalSession);
-    Alert.alert('Workout Complete!', `Great job! You completed ${currentProgram.name} in ${finalSession.duration} minutes.`);
+    await finishWorkoutUi(finalSession, false);
   };
 
   const getCompletionRate = () => {
@@ -575,16 +661,26 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={onBack}>
-            <Text style={styles.backButtonText}>Back</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Text style={styles.backButtonText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Error</Text>
           <View style={styles.placeholder} />
         </View>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Unable to load workout program</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={onBack}>
-            <Text style={styles.retryButtonText}>Go Back</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Text style={styles.retryButtonText}>←</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -597,8 +693,13 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{program.name}</Text>
         <View style={styles.placeholder} />
@@ -651,13 +752,30 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                 style={styles.substituteButton}
                 onPress={() => handleSubstituteExercise(currentExerciseIndex)}
               >
-                <Text style={styles.substituteButtonText}>↻</Text>
+                <Text style={styles.substituteButtonText}>Change Exercise</Text>
               </TouchableOpacity>
             </View>
           </View>
+          {currentExercise.durationSeconds != null && currentExercise.durationSeconds > 0 && (
+            <Text style={styles.warmupDurationHint}>
+              {currentExercise.durationSeconds} sec — go slow, feel the muscles engage
+            </Text>
+          )}
           {currentExercise.instructions && (
           <Text style={styles.exerciseInstructions}>{currentExercise.instructions}</Text>
           )}
+          <View style={styles.restTimerRow}>
+            <Text style={styles.restTimerLabel}>Rest timer</Text>
+            <Switch
+              value={restTimerEnabled}
+              onValueChange={(v) => {
+                setRestTimerEnabled(v);
+                AsyncStorage.setItem(REST_TIMER_ENABLED_STORAGE_KEY, v ? 'true' : 'false');
+              }}
+              trackColor={{ false: '#444', true: '#006644' }}
+              thumbColor={restTimerEnabled ? '#00ff88' : '#888'}
+            />
+          </View>
           
           {/* Show only current set */}
           {currentExerciseData?.skipped ? (
@@ -686,16 +804,18 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                   set={currentExerciseData.sets[currentSetIndex]}
                   setIndex={currentSetIndex}
                   totalSets={currentExerciseData.sets.length}
-                  onComplete={(weight, reps) => handleSetComplete(currentExerciseIndex, currentSetIndex, weight, reps)}
+                  onComplete={(weight, reps, rir) =>
+                    handleSetComplete(currentExerciseIndex, currentSetIndex, weight, reps, rir)
+                  }
                   onEdit={() => handleEditSet(currentExerciseIndex, currentSetIndex)}
                   onPrevious={() => {
                     if (currentSetIndex > 0) {
-                      setCurrentSetIndex(currentSetIndex - 1);
+                      goToSet(currentExerciseIndex, currentSetIndex - 1);
                     }
                   }}
                   onNext={() => {
                     if (currentSetIndex < currentExerciseData.sets.length - 1) {
-                      setCurrentSetIndex(currentSetIndex + 1);
+                      goToSet(currentExerciseIndex, currentSetIndex + 1);
                     }
                   }}
                   canGoPrevious={currentSetIndex > 0}
@@ -711,7 +831,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                     style={[styles.setNavButton, !(currentSetIndex > 0) && styles.setNavButtonDisabled]}
                     onPress={() => {
                       if (currentSetIndex > 0) {
-                        setCurrentSetIndex(currentSetIndex - 1);
+                        goToSet(currentExerciseIndex, currentSetIndex - 1);
                       }
                     }}
                     disabled={currentSetIndex === 0}
@@ -722,7 +842,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                     style={[styles.setNavButton, !(currentSetIndex < currentExerciseData.sets.length - 1) && styles.setNavButtonDisabled]}
                     onPress={() => {
                       if (currentSetIndex < currentExerciseData.sets.length - 1) {
-                        setCurrentSetIndex(currentSetIndex + 1);
+                        goToSet(currentExerciseIndex, currentSetIndex + 1);
                       }
                     }}
                     disabled={currentSetIndex >= currentExerciseData.sets.length - 1}
@@ -837,12 +957,14 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                           handleSubstituteExercise(index);
                         }}
                       >
-                        <Text style={styles.substituteButtonTextSmall}>↻</Text>
+                        <Text style={styles.substituteButtonTextSmall}>Change</Text>
                       </TouchableOpacity>
                     )}
                   </View>
                 <Text style={[styles.exerciseSets, isSkipped && styles.exerciseSetsSkipped]}>
-                  {exercise.sets} sets • {exercise.reps} reps
+                  {exercise.durationSeconds != null && exercise.durationSeconds > 0
+                    ? `1 set • ${exercise.durationSeconds} sec`
+                    : `${exercise.sets} sets • ${exercise.reps} reps`}
                 </Text>
                   {!isSkipped && exerciseSets.length > 0 && (
                     <Text style={styles.exerciseProgress}>
@@ -903,6 +1025,12 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         })()}
       </ScrollView>
 
+      <RestTimerModal
+        visible={restModalVisible}
+        seconds={restModalSeconds}
+        onDismiss={() => setRestModalVisible(false)}
+      />
+
       {/* Exercise Video Modal */}
       <ExerciseVideoPlayer
         visible={showVideoModal}
@@ -917,7 +1045,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       {/* Post-Workout Questions Modal */}
       <Modal
         visible={showPostWorkoutQuestions}
-        animationType="slide"
+        animationType="none"
         transparent={true}
         onRequestClose={() => {
           // Don't allow closing without answering
@@ -927,7 +1055,10 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         <SafeAreaView style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>How did you feel?</Text>
-            <Text style={styles.modalSubtitle}>Help us improve your next workout</Text>
+            <Text style={styles.modalSubtitle}>
+              We didn&apos;t get enough smartwatch or Apple Health data for this session window, so a
+              quick check-in helps. When watch data is available, these questions are skipped.
+            </Text>
 
             <ScrollView style={styles.questionsContainer} showsVerticalScrollIndicator={false}>
               {/* Soreness Level */}
@@ -1031,7 +1162,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       {/* Exercise Substitution Modal */}
       <Modal
         visible={showSubstitutionModal}
-        animationType="slide"
+        animationType="none"
         transparent={true}
         onRequestClose={() => {
           setShowSubstitutionModal(false);
@@ -1107,10 +1238,11 @@ interface SetTrackerProps {
     weight: number;
     restTime: number;
     completed: boolean;
+    rir?: number;
   };
   setIndex: number;
   totalSets: number;
-  onComplete: (weight: number, reps: number) => void;
+  onComplete: (weight: number, reps: number, rir?: number) => void;
   onEdit?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
@@ -1133,6 +1265,9 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
     const repsValue = set?.reps;
     return repsValue !== undefined && repsValue !== null ? repsValue.toString() : '0';
   });
+  const [rirText, setRirText] = useState(() =>
+    set?.rir != null && set.rir >= 0 ? String(set.rir) : ''
+  );
   const [weightFocused, setWeightFocused] = useState(false);
   const [repsFocused, setRepsFocused] = useState(false);
 
@@ -1149,7 +1284,7 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
         setReps(repsValue.toString());
       }
     }
-  }, [set?.weight, set?.reps]);
+  }, [set?.weight, set?.reps, set?.rir]);
 
   const handleWeightChange = (text: string) => {
     if (text === '0' && weightFocused) {
@@ -1202,7 +1337,17 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
     }
     const weightNum = parseInt(weight) || 0;
     const repsNum = parseInt(reps) || 0;
-    onComplete(weightNum, repsNum);
+    const t = rirText.trim();
+    let rir: number | undefined;
+    if (t.length > 0) {
+      const n = parseInt(t, 10);
+      if (!Number.isFinite(n) || n < 0 || n > 6) {
+        Alert.alert('RIR', 'Enter reps in reserve from 0–6, or leave blank.');
+        return;
+      }
+      rir = n;
+    }
+    onComplete(weightNum, repsNum, rir);
   };
 
   // Conditional rendering after all hooks
@@ -1247,6 +1392,18 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
             editable={true}
           />
         </View>
+      </View>
+      <View style={styles.rirRow}>
+        <Text style={styles.inputLabel}>RIR (optional)</Text>
+        <Text style={styles.rirHint}>Reps left in the tank — 0 = very hard, 4 = several left</Text>
+        <TextInput
+          style={styles.input}
+          keyboardType="numeric"
+          placeholder="—"
+          value={rirText}
+          onChangeText={setRirText}
+          editable={true}
+        />
       </View>
 
       {/* Previous Workout Data */}
@@ -1301,7 +1458,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#00ff88',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   headerTitle: {
@@ -1374,6 +1531,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     fontStyle: 'italic',
   },
+  warmupDurationHint: {
+    fontSize: 14,
+    color: '#00ff88',
+    marginBottom: 12,
+  },
   setTracker: {
     backgroundColor: '#3a3a3a',
     borderRadius: 12,
@@ -1403,6 +1565,15 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 14,
     color: '#fff',
+    marginBottom: 8,
+  },
+  rirRow: {
+    width: '100%',
+    marginBottom: 15,
+  },
+  rirHint: {
+    fontSize: 12,
+    color: '#888',
     marginBottom: 8,
   },
   previousWorkoutContainer: {
@@ -1739,7 +1910,7 @@ const styles = StyleSheet.create({
   },
   retryButtonText: {
     color: '#1a1a1a',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   modalOverlay: {
@@ -1861,9 +2032,9 @@ const styles = StyleSheet.create({
   },
   substituteButton: {
     backgroundColor: '#2a2a2a',
-    borderRadius: 20,
-    width: 36,
-    height: 36,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -1871,8 +2042,26 @@ const styles = StyleSheet.create({
   },
   substituteButtonText: {
     color: '#00ff88',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  restTimerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  restTimerLabel: {
+    color: '#ccc',
+    fontSize: 14,
+    flex: 1,
+    marginRight: 8,
   },
   exerciseNameRow: {
     flexDirection: 'row',
@@ -1881,9 +2070,9 @@ const styles = StyleSheet.create({
   },
   substituteButtonSmall: {
     backgroundColor: '#2a2a2a',
-    borderRadius: 15,
-    width: 28,
-    height: 28,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -1892,8 +2081,8 @@ const styles = StyleSheet.create({
   },
   substituteButtonTextSmall: {
     color: '#00ff88',
-    fontSize: 14,
-    fontWeight: 'bold',
+    fontSize: 10,
+    fontWeight: '600',
   },
   alternativesContainer: {
     maxHeight: 400,

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Platform,
 } from 'react-native';
 
 // Dynamically import expo-av to handle cases where it's not installed
@@ -97,7 +98,7 @@ export default function ExerciseVideoPlayer({
       <Modal
         visible={visible}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={onClose}
       >
         <View style={styles.modalOverlay}>
@@ -121,7 +122,7 @@ export default function ExerciseVideoPlayer({
       <Modal
         visible={visible}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={onClose}
       >
         <View style={styles.modalOverlay}>
@@ -156,7 +157,7 @@ export default function ExerciseVideoPlayer({
       <Modal
         visible={visible}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={onClose}
       >
         <View style={styles.modalOverlay}>
@@ -194,7 +195,7 @@ export default function ExerciseVideoPlayer({
     <Modal
       visible={visible}
       transparent={true}
-      animationType="fade"
+      animationType="none"
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
@@ -306,6 +307,13 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     marginBottom: 20,
+  },
+  codeText: {
+    fontSize: 14,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#00ff88',
+    textAlign: 'center',
+    marginBottom: 16,
   },
   closeIcon: {
     width: 30,

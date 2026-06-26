@@ -6,13 +6,15 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  TextInput,
   Alert,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { AppTheme } from './src/theme/appVisualTheme';
+import { useSmallWins } from './src/context/SmallWinsContext';
 
 interface MoodEntry {
   id: string;
@@ -28,6 +30,8 @@ interface MoodEntry {
   energyLevel: number; // 1-10 scale
   sleepQuality: number; // 1-10 scale
   socialConnections: number; // 1-10 scale
+  /** Optional hours slept (for Recovery Pro / small wins) */
+  sleepHours?: number;
 }
 
 interface EmotionalExercise {
@@ -47,6 +51,8 @@ interface EmotionalScreenProps {
 }
 
 export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScreenProps) {
+  const { onSleepHoursLogged } = useSmallWins();
+  const [sleepHoursInput, setSleepHoursInput] = useState('');
   const [activeTab, setActiveTab] = useState<'mood' | 'exercises' | 'history' | 'insights'>('mood');
   const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
   const [emotionalExercises, setEmotionalExercises] = useState<EmotionalExercise[]>([
@@ -275,11 +281,17 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
     }
   };
 
-  const handleMoodSubmit = () => {
+  const handleMoodSubmit = async () => {
     if (!currentMoodEntry.primaryMood) {
       Alert.alert('Error', 'Please select your primary mood');
       return;
     }
+
+    const parsedHours = parseFloat(sleepHoursInput.replace(',', '.'));
+    const sleepHours =
+      sleepHoursInput.trim() !== '' && Number.isFinite(parsedHours) && parsedHours > 0 && parsedHours <= 24
+        ? parsedHours
+        : undefined;
 
     const newEntry: MoodEntry = {
       id: Date.now().toString(),
@@ -295,13 +307,23 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
       energyLevel: currentMoodEntry.energyLevel || 5,
       sleepQuality: currentMoodEntry.sleepQuality || 5,
       socialConnections: currentMoodEntry.socialConnections || 5,
+      ...(sleepHours != null ? { sleepHours } : {}),
     };
 
     const updatedEntries = [newEntry, ...moodEntries];
     setMoodEntries(updatedEntries);
-    saveMoodEntries(updatedEntries);
+    await saveMoodEntries(updatedEntries);
+
+    if (sleepHours != null && sleepHours >= 7) {
+      try {
+        await onSleepHoursLogged(sleepHours);
+      } catch {
+        /* ignore */
+      }
+    }
 
     // Reset form
+    setSleepHoursInput('');
     setCurrentMoodEntry({
       primaryMood: '',
       intensity: 5,
@@ -598,6 +620,19 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
           <Text style={styles.metricValue}>{currentMoodEntry.sleepQuality}</Text>
         </View>
 
+        <View style={{ marginTop: 12, marginBottom: 4 }}>
+          <Text style={styles.metricLabel}>Hours slept (optional)</Text>
+          <Text style={styles.optionalHint}>7+ hours can unlock a Recovery Pro small win.</Text>
+          <TextInput
+            style={styles.sleepHoursInput}
+            value={sleepHoursInput}
+            onChangeText={setSleepHoursInput}
+            placeholder="e.g. 7.5"
+            placeholderTextColor="#666"
+            keyboardType="decimal-pad"
+          />
+        </View>
+
         <View style={styles.metricRow}>
           <Text style={styles.metricLabel}>Social Connections</Text>
           <View style={styles.metricSlider}>
@@ -763,8 +798,13 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Emotional Wellness</Text>
         <View style={styles.placeholder} />
@@ -816,7 +856,7 @@ export default function EmotionalScreen({ onBack, onCompleteTask }: EmotionalScr
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   header: {
     flexDirection: 'row',
@@ -825,14 +865,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: AppTheme.border,
   },
   backButton: {
     padding: 5,
   },
   backButtonText: {
-    color: '#96CEB4',
-    fontSize: 16,
+    color: AppTheme.accent,
+    fontSize: 22,
     fontWeight: 'bold',
   },
   headerTitle: {
@@ -1125,6 +1165,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     width: 30,
     textAlign: 'center',
+  },
+  optionalHint: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  sleepHoursInput: {
+    backgroundColor: '#3a3a3a',
+    borderRadius: 10,
+    padding: 12,
+    color: '#fff',
+    fontSize: 16,
+    marginTop: 6,
   },
   submitButton: {
     backgroundColor: '#96CEB4',

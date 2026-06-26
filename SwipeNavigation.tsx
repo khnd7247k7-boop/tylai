@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Animated, PanResponder, Dimensions, Platform } from 'react-native';
+import { Animated, PanResponder, Dimensions, Platform, View } from 'react-native';
 
 // Haptics wrapper: noop on web to avoid web bundle issues
 let Haptics: any = {
@@ -25,123 +25,115 @@ interface SwipeNavigationProps {
 }
 
 const { width: screenWidth } = Dimensions.get('window');
+const EDGE_SWIPE_ZONE_PX = 28;
+
+type SwipeOpts = {
+  enableSwipeBack: boolean;
+  enableSwipeForward: boolean;
+  swipeThreshold: number;
+  onSwipeBack?: () => void;
+  onSwipeForward?: () => void;
+};
 
 export default function SwipeNavigation({
   children,
   onSwipeBack,
   onSwipeForward,
   swipeThreshold = 100,
-  enableSwipeBack = true,
+  enableSwipeBack = false,
   enableSwipeForward = false,
 }: SwipeNavigationProps) {
+  const gestureEnabled = enableSwipeBack || enableSwipeForward;
+  const optsRef = useRef<SwipeOpts>({
+    enableSwipeBack,
+    enableSwipeForward,
+    swipeThreshold,
+    onSwipeBack,
+    onSwipeForward,
+  });
+  optsRef.current = {
+    enableSwipeBack,
+    enableSwipeForward,
+    swipeThreshold,
+    onSwipeBack,
+    onSwipeForward,
+  };
+
   const translateX = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only respond to horizontal swipes
-        return Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && 
-               Math.abs(gestureState.dx) > 10;
+        const { enableSwipeBack: backOn, enableSwipeForward: fwdOn } = optsRef.current;
+        const isHorizontalSwipe =
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) &&
+          Math.abs(gestureState.dx) > 10;
+        if (!isHorizontalSwipe) return false;
+
+        if (gestureState.dx > 0 && backOn) {
+          return gestureState.x0 <= EDGE_SWIPE_ZONE_PX;
+        }
+
+        if (gestureState.dx < 0 && fwdOn) {
+          return gestureState.x0 >= screenWidth - EDGE_SWIPE_ZONE_PX;
+        }
+
+        return false;
       },
-             onPanResponderGrant: () => {
-               // Reset any ongoing animations
-               translateX.setOffset((translateX as any)._value);
-               translateX.setValue(0);
-             },
+      onPanResponderGrant: () => {
+        translateX.setOffset((translateX as any)._value);
+        translateX.setValue(0);
+      },
       onPanResponderMove: (_, gestureState) => {
-        // Only allow swiping in enabled directions
-        if (gestureState.dx > 0 && !enableSwipeBack) return;
-        if (gestureState.dx < 0 && !enableSwipeForward) return;
-        
-        // Limit the swipe distance with smoother curve
+        const { enableSwipeBack: backOn, enableSwipeForward: fwdOn } = optsRef.current;
+        if (gestureState.dx > 0 && !backOn) return;
+        if (gestureState.dx < 0 && !fwdOn) return;
+
         const maxSwipe = screenWidth * 0.4;
         const clampedDx = Math.max(-maxSwipe, Math.min(maxSwipe, gestureState.dx));
-        
-        // Apply smooth easing curve to the translation
+
         const progress = Math.abs(clampedDx) / maxSwipe;
-        const easedProgress = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
         const finalDx = clampedDx * easedProgress;
-        
+
         translateX.setValue(finalDx);
-        
-        // Smoother opacity effect - no white flash
+
         const opacityProgress = Math.abs(finalDx) / maxSwipe;
-        opacity.setValue(1 - opacityProgress * 0.15); // Reduced opacity change
+        opacity.setValue(1 - opacityProgress * 0.15);
       },
       onPanResponderRelease: (_, gestureState) => {
         translateX.flattenOffset();
-        
-        // Determine if swipe threshold was met
-        const shouldSwipeBack = gestureState.dx > swipeThreshold && enableSwipeBack;
-        const shouldSwipeForward = gestureState.dx < -swipeThreshold && enableSwipeForward;
-        
-        if (shouldSwipeBack && onSwipeBack) {
-          // Provide haptic feedback
+
+        const o = optsRef.current;
+        const shouldSwipeBack = gestureState.dx > o.swipeThreshold && o.enableSwipeBack;
+        const shouldSwipeForward = gestureState.dx < -o.swipeThreshold && o.enableSwipeForward;
+
+        if (shouldSwipeBack && o.onSwipeBack) {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          
-          // Animate out to the right
-          Animated.parallel([
-            Animated.timing(translateX, {
-              toValue: screenWidth,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-            Animated.timing(opacity, {
-              toValue: 0,
-              duration: 200,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            onSwipeBack();
-            // Reset values for next use
-            translateX.setValue(0);
-            opacity.setValue(1);
-          });
-        } else if (shouldSwipeForward && onSwipeForward) {
-          // Provide haptic feedback
+          translateX.setValue(screenWidth);
+          opacity.setValue(0);
+          o.onSwipeBack?.();
+          translateX.setValue(0);
+          opacity.setValue(1);
+        } else if (shouldSwipeForward && o.onSwipeForward) {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          
-          // Animate out to the left
-          Animated.parallel([
-            Animated.timing(translateX, {
-              toValue: -screenWidth,
-              duration: 250,
-              useNativeDriver: true,
-            }),
-            Animated.timing(opacity, {
-              toValue: 0,
-              duration: 200,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            onSwipeForward();
-            // Reset values for next use
-            translateX.setValue(0);
-            opacity.setValue(1);
-          });
+          translateX.setValue(-screenWidth);
+          opacity.setValue(0);
+          o.onSwipeForward?.();
+          translateX.setValue(0);
+          opacity.setValue(1);
         } else {
-          // Snap back to original position with smoother spring
-          Animated.parallel([
-            Animated.spring(translateX, {
-              toValue: 0,
-              useNativeDriver: true,
-              tension: 120,
-              friction: 9,
-              overshootClamping: true,
-            }),
-            Animated.spring(opacity, {
-              toValue: 1,
-              useNativeDriver: true,
-              tension: 120,
-              friction: 9,
-              overshootClamping: true,
-            }),
-          ]).start();
+          translateX.setValue(0);
+          opacity.setValue(1);
         }
       },
     })
   ).current;
+
+  if (!gestureEnabled) {
+    return <View style={{ flex: 1 }}>{children}</View>;
+  }
 
   return (
     <Animated.View

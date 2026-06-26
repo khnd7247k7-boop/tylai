@@ -1,17 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  TextInput,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   SafeAreaView,
   Modal,
+  AppState,
+  Keyboard,
+  Platform,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import { StatusBar } from 'expo-status-bar';
 import Dashboard from './Dashboard';
 import WorkoutScreen from './WorkoutScreen';
@@ -22,6 +23,7 @@ import AIComponent from './AIComponent';
 import SettingsScreen from './SettingsScreen';
 import SpiritualScreen from './SpiritualScreen';
 import HealthScreen from './HealthScreen';
+import AppleHealthDataScreen from './AppleHealthDataScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 import { ToastProvider } from './src/components/ToastProvider';
@@ -39,13 +41,83 @@ import {
 import UserDataInitializer from './src/services/UserDataInitializer';
 import { useNetworkStatus, checkNetworkConnection } from './src/utils/networkUtils';
 import HealthService from './src/services/HealthService';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import MainBottomTabBar, { MainBottomTabId, MAIN_TAB_BAR_CHROME_HEIGHT } from './MainBottomTabBar';
+import MoreMenuScreen from './MoreMenuScreen';
+import NutritionSearchScreen from './NutritionSearchScreen';
+import { AppTheme } from './src/theme/appVisualTheme';
+import { getStayLoggedInPreference, setStayLoggedInPreference } from './src/utils/stayLoggedIn';
+import { markMindsetCheckInComplete } from './src/utils/mindsetCheckIn';
+import {
+  clearSavedLoginCredentials,
+  getRememberPasswordPreference,
+  loadSavedLoginCredentials,
+  saveLoginCredentials,
+  setRememberPasswordPreference,
+} from './src/utils/rememberPassword';
+import {
+  KeyboardInsetsProvider,
+  KeyboardSafeView,
+  KeyboardModalFrame,
+  DismissKeyboardSurface,
+} from './src/keyboard';
+import { SmallWinsProvider } from './src/context/SmallWinsContext';
+import MedicalDisclaimerGate, {
+  MEDICAL_DISCLAIMER_DEVICE_KEY,
+} from './src/components/MedicalDisclaimerGate';
+import OnboardingWizard from './src/components/onboarding/OnboardingWizard';
+import NutritionBodyProfilePrompt from './src/components/NutritionBodyProfilePrompt';
+import PlatformAppGuide from './src/tour/PlatformAppGuide';
+import type { TourNavHandlers, TourFitnessIntent, TourLogFoodIntent } from './src/tour/types';
+import { shouldShowAppGuide } from './src/utils/appGuide';
+import { shouldShowOnboardingWizard, isPendingFirstWorkoutPlan, shouldShowNutritionBodyProfilePrompt } from './src/services/CoachingProfileService';
+import {
+  applyPendingNutritionSuggestion,
+  dismissPendingNutritionSuggestion,
+  formatNutritionSuggestionSummary,
+  loadPendingNutritionSuggestion,
+  type PendingNutritionSuggestion,
+} from './src/services/NutritionSuggestionService';
+import { AppErrorBoundary } from './src/components/AppErrorBoundary';
+import { SettingsProvider } from './SettingsProvider';
+import { SubscriptionProvider } from './src/context/SubscriptionContext';
+import { firebaseEnvConfigured } from './firebaseConfig';
+
+type LoggedInScreen =
+  | 'dashboard'
+  | 'workout'
+  | 'fitness'
+  | 'mental'
+  | 'emotional'
+  | 'ai'
+  | 'settings'
+  | 'spiritual'
+  | 'health'
+  | 'appleHealthData'
+  | 'nutritionSearch'
+  | 'moreHub';
+
+/** Screens reachable from the More menu — back / task-complete should return to moreHub when opened from there. */
+const MORE_MENU_CHILD_SCREENS: LoggedInScreen[] = [
+  'settings',
+  'health',
+  'appleHealthData',
+  'spiritual',
+  'emotional',
+  'workout',
+  'nutritionSearch',
+];
 
 function AppInner() {
-  const { showToast } = useToast();
+  const insets = useSafeAreaInsets();
+  const { showToast, showNotification, dismissNotification } = useToast();
   const { isOnline } = useNetworkStatus(); // Monitor network connectivity
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings' | 'spiritual' | 'health'>('login');
-  const [navigationHistory, setNavigationHistory] = useState<Array<'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings' | 'spiritual' | 'health'>>(['login']);
+  const [currentScreen, setCurrentScreen] = useState<'login' | LoggedInScreen>('login');
+  const [navigationHistory, setNavigationHistory] = useState<Array<'login' | LoggedInScreen>>(['login']);
+  const [fitnessSyncedTab, setFitnessSyncedTab] = useState<'workouts' | 'nutrition' | 'history'>('workouts');
+  /** Bumps whenever we intend to show Fitness root (clears nested plan/workout overlays inside FitnessScreen). */
+  const [fitnessSurfaceNonce, setFitnessSurfaceNonce] = useState(0);
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -54,7 +126,22 @@ function AppInner() {
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [resetMethod, setResetMethod] = useState<'email' | null>(null);
-  
+  const [medicalDisclaimerGate, setMedicalDisclaimerGate] = useState(false);
+  const [onboardingWizardVisible, setOnboardingWizardVisible] = useState(false);
+  const [onboardingWizardMode, setOnboardingWizardMode] = useState<'onboarding' | 'edit'>('onboarding');
+  const [onboardingGateResolved, setOnboardingGateResolved] = useState(false);
+  const [initialPlanSetupPending, setInitialPlanSetupPending] = useState(false);
+  const [nutritionBodyPromptVisible, setNutritionBodyPromptVisible] = useState(false);
+  const [pendingNutritionSuggestion, setPendingNutritionSuggestion] =
+    useState<PendingNutritionSuggestion | null>(null);
+  const [appGuideVisible, setAppGuideVisible] = useState(false);
+  const nutritionNoticeIdRef = useRef<string | null>(null);
+  const [tourLogFoodIntent, setTourLogFoodIntent] = useState<TourLogFoodIntent | null>(null);
+  const [tourFitnessIntent, setTourFitnessIntent] = useState<TourFitnessIntent | null>(null);
+  const [rememberPassword, setRememberPassword] = useState(false);
+  /** True when the current sub-screen was opened from MoreMenuScreen (not dashboard shortcuts). */
+  const openedFromMoreMenuRef = useRef(false);
+
   // User data for AI analysis
   const [userData, setUserData] = useState({
     moodEntries: [],
@@ -67,31 +154,277 @@ function AppInner() {
     completedTasks: []
   });
 
-  // Initialize notifications on app start
+  // Notifications need native modules; run after sign-in when user storage is available
   useEffect(() => {
+    if (!isLoggedIn) return;
     const initializeNotifications = async () => {
-      await requestNotificationPermissions();
-      await updateNotificationSchedule();
+      try {
+        await requestNotificationPermissions();
+        await updateNotificationSchedule();
+      } catch (e) {
+        console.warn('[App] Notification setup skipped:', e);
+      }
     };
-    
     initializeNotifications();
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setMedicalDisclaimerGate(false);
+      setOnboardingWizardVisible(false);
+      setOnboardingGateResolved(false);
+      setInitialPlanSetupPending(false);
+      setNutritionBodyPromptVisible(false);
+      setPendingNutritionSuggestion(null);
+      setAppGuideVisible(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const { loadUserData } = await import('./src/utils/userStorage');
+        const acceptedUser = await loadUserData<boolean>('onboardingMedicalDisclaimerAccepted');
+        const acceptedDevice =
+          (await AsyncStorage.getItem(MEDICAL_DISCLAIMER_DEVICE_KEY)) === 'true';
+        if (!cancelled && acceptedUser !== true && !acceptedDevice) {
+          setMedicalDisclaimerGate(true);
+        }
+      } catch {
+        if (!cancelled) setMedicalDisclaimerGate(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn || medicalDisclaimerGate) {
+      setOnboardingGateResolved(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const show = await shouldShowOnboardingWizard();
+        if (cancelled) return;
+        if (show) {
+          setAppGuideVisible(false);
+          setOnboardingWizardMode('onboarding');
+          setOnboardingWizardVisible(true);
+        } else {
+          setOnboardingWizardVisible(false);
+        }
+        const pendingPlan = await isPendingFirstWorkoutPlan();
+        if (!cancelled) {
+          setInitialPlanSetupPending(pendingPlan);
+        }
+      } catch {
+        if (!cancelled) {
+          setAppGuideVisible(false);
+          setOnboardingWizardMode('onboarding');
+          setOnboardingWizardVisible(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setOnboardingGateResolved(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, medicalDisclaimerGate]);
+
+  useEffect(() => {
+    if (
+      !isLoggedIn ||
+      medicalDisclaimerGate ||
+      !onboardingGateResolved ||
+      onboardingWizardVisible ||
+      initialPlanSetupPending
+    ) {
+      setNutritionBodyPromptVisible(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const show = await shouldShowNutritionBodyProfilePrompt();
+        if (!cancelled) setNutritionBodyPromptVisible(show);
+      } catch {
+        if (!cancelled) setNutritionBodyPromptVisible(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLoggedIn,
+    medicalDisclaimerGate,
+    onboardingGateResolved,
+    onboardingWizardVisible,
+    initialPlanSetupPending,
+  ]);
+
+  useEffect(() => {
+    if (!isLoggedIn || medicalDisclaimerGate || !onboardingGateResolved) {
+      return;
+    }
+    if (onboardingWizardVisible || initialPlanSetupPending || nutritionBodyPromptVisible) {
+      setAppGuideVisible(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const show = await shouldShowAppGuide();
+        if (!cancelled && show) {
+          setCurrentScreen('dashboard');
+          setAppGuideVisible(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrentScreen('dashboard');
+          setAppGuideVisible(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLoggedIn,
+    medicalDisclaimerGate,
+    onboardingGateResolved,
+    onboardingWizardVisible,
+    initialPlanSetupPending,
+    nutritionBodyPromptVisible,
+  ]);
+
+  const refreshPendingNutritionSuggestion = useCallback(async () => {
+    if (!isLoggedIn) {
+      setPendingNutritionSuggestion(null);
+      return;
+    }
+    const pending = await loadPendingNutritionSuggestion();
+    setPendingNutritionSuggestion(pending);
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    refreshPendingNutritionSuggestion().catch(console.error);
+  }, [refreshPendingNutritionSuggestion, currentScreen]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        refreshPendingNutritionSuggestion().catch(console.error);
+      }
+    });
+    return () => sub.remove();
+  }, [refreshPendingNutritionSuggestion]);
+
+  const handleApplyNutritionSuggestion = useCallback(async () => {
+    try {
+      await applyPendingNutritionSuggestion();
+      setPendingNutritionSuggestion(null);
+      setFitnessSurfaceNonce((n) => n + 1);
+      showToast('Macro goals updated from coach suggestion.', 'success', 3000);
+    } catch (e) {
+      console.warn('[App] apply nutrition suggestion failed', e);
+      Alert.alert('Could not apply', 'Try again from the Nutrition tab.');
+    }
+  }, [showToast]);
+
+  const handleDismissNutritionSuggestion = useCallback(async () => {
+    try {
+      await dismissPendingNutritionSuggestion();
+    } catch {
+      /* best-effort */
+    }
+    setPendingNutritionSuggestion(null);
   }, []);
 
-  // Load stored email when component mounts
   useEffect(() => {
-    const loadStoredEmail = async () => {
+    if (
+      !pendingNutritionSuggestion ||
+      medicalDisclaimerGate ||
+      onboardingWizardVisible ||
+      nutritionBodyPromptVisible
+    ) {
+      if (nutritionNoticeIdRef.current) {
+        dismissNotification(nutritionNoticeIdRef.current);
+        nutritionNoticeIdRef.current = null;
+      }
+      return;
+    }
+
+    if (nutritionNoticeIdRef.current) return;
+
+    const summary = formatNutritionSuggestionSummary(pendingNutritionSuggestion.suggestedGoals);
+    nutritionNoticeIdRef.current = showNotification({
+      title: 'Coach macro suggestion',
+      lines: [`${pendingNutritionSuggestion.reason}`, `Suggested: ${summary}.`],
+      type: 'info',
+      persistent: true,
+      onDismiss: () => {
+        nutritionNoticeIdRef.current = null;
+        void handleDismissNutritionSuggestion();
+      },
+      actions: [
+        {
+          label: 'Not now',
+          style: 'cancel',
+          onPress: () => {
+            nutritionNoticeIdRef.current = null;
+            void handleDismissNutritionSuggestion();
+          },
+        },
+        {
+          label: 'Apply',
+          onPress: () => {
+            nutritionNoticeIdRef.current = null;
+            void handleApplyNutritionSuggestion();
+          },
+        },
+      ],
+    });
+  }, [
+    pendingNutritionSuggestion,
+    medicalDisclaimerGate,
+    onboardingWizardVisible,
+    nutritionBodyPromptVisible,
+    showNotification,
+    dismissNotification,
+    handleApplyNutritionSuggestion,
+    handleDismissNutritionSuggestion,
+  ]);
+
+  // Load stored email / saved password when login screen mounts
+  useEffect(() => {
+    const loadStoredLoginFields = async () => {
       try {
+        const remember = await getRememberPasswordPreference();
+        setRememberPassword(remember);
+
+        const saved = remember ? await loadSavedLoginCredentials() : null;
+        if (saved?.email) {
+          setEmail(saved.email);
+          setPassword(saved.password);
+          return;
+        }
+
         const { getStoredCredentialsSummary } = await import('./src/utils/userStorage');
         const summary = await getStoredCredentialsSummary();
         if (summary.email) {
-          console.log('[App] Found stored email:', summary.email);
-          setEmail(summary.email); // Auto-fill email from stored profile
+          setEmail(summary.email);
         }
-      } catch (error) {
-        console.log('[App] No stored email found');
+      } catch {
+        /* non-critical */
       }
     };
-    loadStoredEmail();
+    loadStoredLoginFields();
   }, []);
 
   // Listen for authentication state changes
@@ -131,8 +464,14 @@ function AppInner() {
           
           // Initialize user data automatically
           try {
-            await UserDataInitializer.initializeUserData();
+            const { keysCopied } = await UserDataInitializer.initializeUserData();
             console.log('[App] User data initialized successfully');
+            if (keysCopied > 0) {
+              showToast(
+                `Restored ${keysCopied} saved item(s) from this device.`,
+                'success'
+              );
+            }
           } catch (error) {
             console.error('[App] Error initializing user data:', error);
           }
@@ -143,19 +482,27 @@ function AppInner() {
             const healthPermissionsRequested = await loadUserData<boolean>('healthPermissionsRequested');
             
             if (!healthPermissionsRequested) {
-              console.log('[App] Requesting health permissions for watch data sync');
-              const hasPermissions = await HealthService.requestPermissions();
-              
-              if (hasPermissions) {
-                console.log('[App] Health permissions granted - watch data can now sync');
-                showToast('Watch data sync enabled! Your smartwatch data will automatically sync to the app.', 'success');
+              const { isAnyExpoHealthMetricEnabled } = await import(
+                './src/utils/healthDataPermissions'
+              );
+              if (!(await isAnyExpoHealthMetricEnabled())) {
+                await saveUserData('healthPermissionsRequested', true);
               } else {
-                console.log('[App] Health permissions not granted or not available');
-                // Don't show error toast - permissions might not be available on all devices
+                console.log('[App] Requesting health permissions for watch data sync');
+                const hasPermissions = await HealthService.requestPermissions();
+
+                if (hasPermissions) {
+                  console.log('[App] Health permissions granted - watch data can now sync');
+                  showToast(
+                    'Watch data sync enabled! Your smartwatch data will automatically sync to the app.',
+                    'success'
+                  );
+                } else {
+                  console.log('[App] Health permissions not granted or not available');
+                }
+
+                await saveUserData('healthPermissionsRequested', true);
               }
-              
-              // Mark that we've requested permissions (even if not granted)
-              await saveUserData('healthPermissionsRequested', true);
             }
           } catch (error) {
             console.error('[App] Error requesting health permissions:', error);
@@ -182,6 +529,25 @@ function AppInner() {
       setIsLoggedIn(false);
       setCurrentScreen('login');
     }
+  }, []);
+
+  // If user chose not to stay logged in, sign out when they leave the app (background)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      if (nextState !== 'background') return;
+      if (!auth || (auth as { _isMock?: boolean })._isMock) {
+        return;
+      }
+      try {
+        const stay = await getStayLoggedInPreference();
+        if (!stay && auth.currentUser) {
+          await signOut(auth);
+        }
+      } catch (e) {
+        console.warn('[App] AppState stay-logged-in handling:', e);
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   const handleSubmit = async () => {
@@ -290,12 +656,49 @@ function AppInner() {
         console.log('[App] Attempting to sign in user:', email);
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         console.log('[App] Sign in successful:', userCredential.user.uid);
+        if (rememberPassword) {
+          await saveLoginCredentials(email, password);
+        } else {
+          await setRememberPasswordPreference(false);
+          await clearSavedLoginCredentials();
+        }
         // Auth state listener will handle the rest
       } else {
         // Create new user account
         console.log('[App] Attempting to create new user:', email);
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         console.log('[App] User creation successful:', userCredential.user.uid);
+        try {
+          const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
+          const profile = (await loadUserData<Record<string, unknown>>('userProfile')) || {};
+          await saveUserData('userProfile', {
+            ...profile,
+            name: name.trim(),
+            email: userCredential.user.email ?? email,
+          });
+        } catch (profileErr) {
+          console.warn('[App] Could not save signup name to profile', profileErr);
+        }
+        Alert.alert(
+          'Stay logged in?',
+          'When enabled, you stay signed in on this device so you don\'t need to enter your password every time you open the app. You can change this anytime in Settings.',
+          [
+            {
+              text: 'Ask each time',
+              style: 'cancel',
+              onPress: async () => {
+                await setStayLoggedInPreference(false);
+              },
+            },
+            {
+              text: 'Stay logged in',
+              onPress: async () => {
+                await setStayLoggedInPreference(true);
+              },
+            },
+          ],
+          { cancelable: false }
+        );
         // Auth state listener will handle the rest
       }
     } catch (error: any) {
@@ -339,11 +742,24 @@ function AppInner() {
           case 'auth/network-request-failed':
             errorMessage = 'Network error. Please check your internet connection and try again.';
             break;
-          case 'auth/network-request-failed':
-            errorMessage = 'Network error. Please check your connection.';
+          case 'auth/invalid-api-key':
+          case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+            errorMessage =
+              'Firebase rejected this API key. Common fixes:\n\n' +
+              '1) Use the Web app snippet from Firebase Console → Project settings → Your apps (JavaScript SDK needs the Web apiKey, not an Android/iOS-only key).\n' +
+              '2) In Google Cloud Console → APIs & Services → Credentials, open the Browser key used by Firebase. If "Application restrictions" are set to HTTP referrers only, React Native Auth often fails — temporarily set restrictions to None or add the right mobile restrictions, then retry.\n' +
+              '3) Ensure every EXPO_PUBLIC_FIREBASE_* value is from the same Web app config, then stop Metro and run: npx expo start -c';
             break;
           case 'auth/app-not-initialized':
             errorMessage = 'Firebase is not initialized. Please restart the app.';
+            break;
+          case 'auth/configuration-not-found':
+            errorMessage =
+              'Firebase Authentication is not set up for this project.\n\n' +
+              'In Firebase Console (same project as EXPO_PUBLIC_FIREBASE_PROJECT_ID):\n' +
+              '1) Build → Authentication → click Get started if shown\n' +
+              '2) Sign-in method → enable Email/Password (and save)\n' +
+              '3) Wait a minute, reload the app, then try again';
             break;
           default:
             errorMessage = error.message || `Error: ${error.code || 'Unknown error'}`;
@@ -358,6 +774,15 @@ function AppInner() {
       }
       
       Alert.alert('Error', errorMessage);
+    }
+  };
+
+  const handleRememberPasswordToggle = async () => {
+    const next = !rememberPassword;
+    setRememberPassword(next);
+    await setRememberPasswordPreference(next);
+    if (!next) {
+      await clearSavedLoginCredentials();
     }
   };
 
@@ -451,54 +876,87 @@ function AppInner() {
   };
 
   const handleNavigateToWorkout = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('workout');
   };
 
   const handleNavigateToFitness = () => {
+    setFitnessSyncedTab('workouts');
+    setFitnessSurfaceNonce((n) => n + 1);
+    navigateToScreen('fitness');
+  };
+
+  const handleNavigateToLogFood = () => {
+    setFitnessSyncedTab('nutrition');
+    setFitnessSurfaceNonce((n) => n + 1);
+    navigateToScreen('fitness');
+  };
+
+  const handleNavigateToFitnessHistory = () => {
+    setFitnessSyncedTab('history');
+    setFitnessSurfaceNonce((n) => n + 1);
     navigateToScreen('fitness');
   };
 
   const handleNavigateToMental = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('mental');
   };
 
+  const handleMentalTaskComplete = useCallback((taskTitle: string) => {
+    void markMindsetCheckInComplete(taskTitle);
+  }, []);
+
+  const handleOpenCoachingQuestionnaireEdit = useCallback(() => {
+    setOnboardingWizardMode('edit');
+    setOnboardingWizardVisible(true);
+  }, []);
+
+  const handleOnboardingWizardComplete = useCallback(() => {
+    const wasEdit = onboardingWizardMode === 'edit';
+    setOnboardingWizardVisible(false);
+    setOnboardingWizardMode('onboarding');
+    setAppGuideVisible(false);
+    if (wasEdit) {
+      return;
+    }
+    void isPendingFirstWorkoutPlan().then((pending) => {
+      setInitialPlanSetupPending(pending);
+    });
+    navigateToScreen('workout');
+  }, [onboardingWizardMode]);
+
+  const handleOnboardingWizardCancel = useCallback(() => {
+    setOnboardingWizardVisible(false);
+    setOnboardingWizardMode('onboarding');
+  }, []);
+
   const handleNavigateToEmotional = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('emotional');
   };
 
   const handleNavigateToAI = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('ai');
   };
 
-  const handleNavigateToSettings = () => {
-    navigateToScreen('settings');
-  };
-
   const handleNavigateToSpiritual = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('spiritual');
   };
 
   const handleNavigateToHealth = () => {
+    openedFromMoreMenuRef.current = false;
     navigateToScreen('health');
   };
 
-  const handleBackToDashboard = () => {
-    setCurrentScreen('dashboard');
+  const handleNavigateToAppleHealthData = () => {
+    openedFromMoreMenuRef.current = false;
+    navigateToScreen('appleHealthData');
   };
 
-  const handleGoBack = () => {
-    // Get the previous screen from navigation history
-    if (navigationHistory.length > 1) {
-      const previousScreen = navigationHistory[navigationHistory.length - 2];
-      setNavigationHistory(prev => prev.slice(0, -1)); // Remove current screen from history
-      setCurrentScreen(previousScreen);
-    } else {
-      // If no history, default to dashboard
-      setCurrentScreen('dashboard');
-    }
-  };
-
-  const navigateToScreen = (screen: 'login' | 'dashboard' | 'workout' | 'fitness' | 'mental' | 'emotional' | 'ai' | 'settings' | 'spiritual' | 'health') => {
+  const navigateToScreen = (screen: 'login' | LoggedInScreen) => {
     setNavigationHistory(prev => {
       // Don't add the same screen twice in a row
       if (prev[prev.length - 1] !== screen) {
@@ -509,23 +967,147 @@ function AppInner() {
     setCurrentScreen(screen);
   };
 
-  // Show Workout Screen
-  if (isLoggedIn && currentScreen === 'workout') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <WorkoutScreen onBack={handleGoBack} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
+  const returnToMoreHub = useCallback(() => {
+    openedFromMoreMenuRef.current = false;
+    setNavigationHistory((prev) => {
+      const trimmed = prev.slice(0, -1);
+      const last = trimmed[trimmed.length - 1];
+      if (last === 'moreHub') return trimmed;
+      const moreIdx = trimmed.lastIndexOf('moreHub');
+      if (moreIdx >= 0) return trimmed.slice(0, moreIdx + 1);
+      return [...trimmed, 'moreHub'];
+    });
+    setCurrentScreen('moreHub');
+  }, []);
 
-  // Show Fitness Screen
-  if (isLoggedIn && currentScreen === 'fitness') {
+  const handleGoBack = useCallback(() => {
+    if (
+      openedFromMoreMenuRef.current &&
+      MORE_MENU_CHILD_SCREENS.includes(currentScreen as LoggedInScreen)
+    ) {
+      returnToMoreHub();
+      return;
+    }
+
+    if (navigationHistory.length > 1) {
+      const previousScreen = navigationHistory[navigationHistory.length - 2];
+      setNavigationHistory((prev) => prev.slice(0, -1));
+      setCurrentScreen(previousScreen);
+      return;
+    }
+
+    if (MORE_MENU_CHILD_SCREENS.includes(currentScreen as LoggedInScreen)) {
+      returnToMoreHub();
+      return;
+    }
+
+    setCurrentScreen('dashboard');
+  }, [currentScreen, navigationHistory, returnToMoreHub]);
+
+  const openAppGuide = () => {
+    if (onboardingWizardVisible || initialPlanSetupPending) {
+      return;
+    }
+    if (!openedFromMoreMenuRef.current) {
+      navigateToScreen('dashboard');
+    }
+    setAppGuideVisible(true);
+  };
+
+  const handleInitialPlanSaved = useCallback(() => {
+    setInitialPlanSetupPending(false);
+    setAppGuideVisible(false);
+    void (async () => {
+      try {
+        const show = await shouldShowAppGuide();
+        if (show) {
+          if (!openedFromMoreMenuRef.current) {
+            navigateToScreen('dashboard');
+          }
+          setAppGuideVisible(true);
+        }
+      } catch {
+        /* non-critical */
+      }
+    })();
+  }, [navigateToScreen]);
+
+  const appTourNav = useMemo<TourNavHandlers>(
+    () => ({
+      ensureDashboard: () => {
+        navigateToScreen('dashboard');
+      },
+      ensureWorkouts: () => {
+        setFitnessSyncedTab('workouts');
+        setFitnessSurfaceNonce((n) => n + 1);
+        navigateToScreen('fitness');
+      },
+      ensureNutrition: () => {
+        setTourFitnessIntent({ id: Date.now(), closeAll: true });
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setFitnessSyncedTab('nutrition');
+        navigateToScreen('fitness');
+      },
+      ensureMore: () => {
+        openedFromMoreMenuRef.current = false;
+        navigateToScreen('moreHub');
+      },
+      ensureLogFoodOpen: (mode = 'precision') => {
+        setTourFitnessIntent({ id: Date.now(), closeAll: true });
+        setFitnessSyncedTab('nutrition');
+        navigateToScreen('fitness');
+        setTourLogFoodIntent({ id: Date.now(), open: true, mode });
+      },
+      closeLogFood: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+      },
+      ensureWorkoutsHome: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setTourFitnessIntent({ id: Date.now(), closeAll: true });
+        setFitnessSyncedTab('workouts');
+        navigateToScreen('fitness');
+      },
+      ensureMyPlansOpen: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setTourFitnessIntent({ id: Date.now(), myPlansPanel: true });
+        setFitnessSyncedTab('workouts');
+        navigateToScreen('fitness');
+      },
+      ensureBuildWorkoutOpen: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setTourFitnessIntent({ id: Date.now(), buildWorkout: true });
+        setFitnessSyncedTab('workouts');
+        navigateToScreen('fitness');
+      },
+      ensureAiWorkoutOpen: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setTourFitnessIntent({ id: Date.now(), aiWorkout: true });
+        setFitnessSyncedTab('workouts');
+        navigateToScreen('fitness');
+      },
+      ensurePlanPreviewOpen: () => {
+        setTourLogFoodIntent({ id: Date.now(), open: false });
+        setTourFitnessIntent({ id: Date.now(), planPreview: true });
+        setFitnessSyncedTab('workouts');
+        navigateToScreen('fitness');
+      },
+      closeWorkoutTour: () => {
+        setTourFitnessIntent({ id: Date.now(), closeAll: true });
+      },
+      dismissFitnessOverlays: () => {
+        setFitnessSurfaceNonce((n) => n + 1);
+      },
+    }),
+    []
+  );
+
+  const openScreenFromMoreMenu = (screen: LoggedInScreen) => {
+    openedFromMoreMenuRef.current = true;
+    navigateToScreen(screen);
+  };
+
+  if (isLoggedIn) {
     const handleFitnessSwipeBack = () => {
-      // Check if FitnessScreen has an internal back handler (for sub-screens)
       const internalHandler = (FitnessScreen as any).internalBackHandler;
       if (internalHandler) {
         internalHandler();
@@ -534,118 +1116,307 @@ function AppInner() {
       }
     };
 
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleFitnessSwipeBack}>
-            <FitnessScreen 
-              onBack={handleGoBack} 
-              onCompleteTask={(taskTitle: string) => {
-                // This will be handled by the Dashboard component
-                console.log('Task completed:', taskTitle);
+    const mainBottomActiveTab: MainBottomTabId = (() => {
+      switch (currentScreen) {
+        case 'dashboard':
+          return 'dashboard';
+        case 'fitness':
+          return fitnessSyncedTab === 'nutrition' ? 'nutrition' : 'workouts';
+        case 'mental':
+          return 'mindset';
+        case 'moreHub':
+          return 'more';
+        case 'workout':
+          return 'workouts';
+        case 'settings':
+        case 'health':
+        case 'appleHealthData':
+        case 'spiritual':
+        case 'emotional':
+        case 'nutritionSearch':
+          return 'more';
+        case 'ai':
+          return 'dashboard';
+        default:
+          return 'dashboard';
+      }
+    })();
+
+    const mainTabBarBottomReserve =
+      MAIN_TAB_BAR_CHROME_HEIGHT + Math.max(insets.bottom, 10);
+
+    const handleMainBottomTabPress = (tab: MainBottomTabId) => {
+      switch (tab) {
+        case 'dashboard':
+          navigateToScreen('dashboard');
+          break;
+        case 'workouts':
+          setFitnessSyncedTab('workouts');
+          setFitnessSurfaceNonce((n) => n + 1);
+          navigateToScreen('fitness');
+          break;
+        case 'nutrition':
+          setFitnessSyncedTab('nutrition');
+          setFitnessSurfaceNonce((n) => n + 1);
+          navigateToScreen('fitness');
+          break;
+        case 'mindset':
+          navigateToScreen('mental');
+          break;
+        case 'more':
+          openedFromMoreMenuRef.current = false;
+          navigateToScreen('moreHub');
+          break;
+      }
+    };
+
+    const dashboardEl = (
+      <Dashboard
+        onLogout={handleLogout}
+        onNavigateToFitness={handleNavigateToFitness}
+        onNavigateToLogFood={handleNavigateToLogFood}
+        onNavigateToHistory={handleNavigateToFitnessHistory}
+        onNavigateToMental={handleNavigateToMental}
+        onNavigateToEmotional={handleNavigateToEmotional}
+        onNavigateToAI={handleNavigateToAI}
+        onNavigateToSpiritual={handleNavigateToSpiritual}
+        onNavigateToHealth={handleNavigateToHealth}
+        onNavigateToAppleHealthData={handleNavigateToAppleHealthData}
+      />
+    );
+
+    let body: React.ReactNode;
+    switch (currentScreen) {
+      case 'workout':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <WorkoutScreen onBack={handleGoBack} onPlanSetupComplete={handleInitialPlanSaved} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'fitness':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleFitnessSwipeBack}>
+              <FitnessScreen
+                onBack={handleGoBack}
+                syncedFitnessTab={fitnessSyncedTab}
+                fitnessSurfaceNonce={fitnessSurfaceNonce}
+                tourLogFoodIntent={tourLogFoodIntent}
+                tourFitnessIntent={tourFitnessIntent}
+                onFitnessTabChange={setFitnessSyncedTab}
+                onCompleteTask={(taskTitle: string) => {
+                  console.log('Task completed:', taskTitle);
+                }}
+              />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'mental':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <MentalScreen
+                onBack={handleGoBack}
+                onCompleteTask={handleMentalTaskComplete}
+              />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'emotional':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <EmotionalScreen
+                onBack={handleGoBack}
+                onCompleteTask={(taskTitle: string) => {
+                  console.log('Task completed:', taskTitle);
+                }}
+              />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'spiritual':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <SpiritualScreen
+                onBack={handleGoBack}
+                onCompleteTask={(taskTitle: string) => {
+                  console.log('Task completed:', taskTitle);
+                }}
+              />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'settings':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <SettingsScreen
+                onBack={handleGoBack}
+                onLogout={handleLogout}
+                onOpenAppGuide={openAppGuide}
+                onEditCoachingQuestionnaire={handleOpenCoachingQuestionnaireEdit}
+              />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'health':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <HealthScreen onBack={handleGoBack} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'appleHealthData':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <AppleHealthDataScreen onBack={handleGoBack} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'nutritionSearch':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <NutritionSearchScreen onBack={handleGoBack} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'ai':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <AIComponent userData={userData as any} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'moreHub':
+        body = (
+          <SmoothTransition isVisible={true} direction="fadeIn">
+            <MoreMenuScreen
+              onOpen={(target) => {
+                switch (target) {
+                  case 'settings':
+                    openScreenFromMoreMenu('settings');
+                    break;
+                  case 'health':
+                    openScreenFromMoreMenu('health');
+                    break;
+                  case 'spiritual':
+                    openScreenFromMoreMenu('spiritual');
+                    break;
+                  case 'emotional':
+                    openScreenFromMoreMenu('emotional');
+                    break;
+                  case 'workout':
+                    openScreenFromMoreMenu('workout');
+                    break;
+                  case 'nutritionSearch':
+                    openScreenFromMoreMenu('nutritionSearch');
+                    break;
+                  case 'appGuide':
+                    openedFromMoreMenuRef.current = true;
+                    openAppGuide();
+                    break;
+                }
               }}
             />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
+          </SmoothTransition>
+        );
+        break;
+      case 'dashboard':
+      default:
+        body = (
+          <SmoothTransition isVisible={true} direction="fadeIn">
+            {dashboardEl}
+          </SmoothTransition>
+        );
+    }
 
-  // Show Mental Screen
-  if (isLoggedIn && currentScreen === 'mental') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <MentalScreen onBack={handleGoBack} onCompleteTask={(taskTitle: string) => {
-              // This will be handled by the Dashboard component
-              console.log('Task completed:', taskTitle);
-            }} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
+    const blockMainChrome = medicalDisclaimerGate || onboardingWizardVisible;
 
-  // Show Emotional Screen
-  if (isLoggedIn && currentScreen === 'emotional') {
     return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <EmotionalScreen onBack={handleGoBack} onCompleteTask={(taskTitle: string) => {
-              // This will be handled by the Dashboard component
-              console.log('Task completed:', taskTitle);
-            }} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
-
-  // Show Spiritual Screen
-  if (isLoggedIn && currentScreen === 'spiritual') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <SpiritualScreen onBack={handleGoBack} onCompleteTask={(taskTitle: string) => {
-              // This will be handled by the Dashboard component
-              console.log('Task completed:', taskTitle);
-            }} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
-
-  // Show Settings Screen
-  if (isLoggedIn && currentScreen === 'settings') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <SettingsScreen onBack={handleGoBack} onLogout={handleLogout} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
-
-  // Show Health Screen
-  if (isLoggedIn && currentScreen === 'health') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="slideInRight">
-          <SwipeNavigation onSwipeBack={handleGoBack}>
-            <HealthScreen onBack={handleGoBack} />
-          </SwipeNavigation>
-        </SmoothTransition>
-      </ToastProvider>
-    );
-  }
-
-  // Show Dashboard if logged in
-  if (isLoggedIn && currentScreen === 'dashboard') {
-    return (
-      <ToastProvider>
-        <SmoothTransition isVisible={true} direction="fadeIn">
-          <Dashboard onLogout={handleLogout} onNavigateToFitness={handleNavigateToFitness} onNavigateToMental={handleNavigateToMental} onNavigateToEmotional={handleNavigateToEmotional} onNavigateToAI={handleNavigateToAI} onNavigateToSettings={handleNavigateToSettings} onNavigateToSpiritual={handleNavigateToSpiritual} onNavigateToHealth={handleNavigateToHealth} />
-        </SmoothTransition>
-      </ToastProvider>
+      <SmallWinsProvider>
+      <View style={{ flex: 1, backgroundColor: '#0d0d0d' }}>
+        <View
+          pointerEvents={blockMainChrome ? 'none' : 'auto'}
+          style={{ flex: 1, paddingBottom: mainTabBarBottomReserve }}
+        >
+          {body}
+        </View>
+        <View
+          pointerEvents={blockMainChrome ? 'none' : 'box-none'}
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 100000,
+            elevation: 100000,
+          }}
+        >
+          <MainBottomTabBar activeTab={mainBottomActiveTab} onTabPress={handleMainBottomTabPress} />
+        </View>
+        <MedicalDisclaimerGate
+          visible={medicalDisclaimerGate}
+          onAccepted={() => setMedicalDisclaimerGate(false)}
+        />
+        <OnboardingWizard
+          visible={onboardingWizardVisible}
+          mode={onboardingWizardMode}
+          onComplete={handleOnboardingWizardComplete}
+          onCancel={handleOnboardingWizardCancel}
+        />
+        <NutritionBodyProfilePrompt
+          visible={nutritionBodyPromptVisible}
+          onComplete={() => {
+            setNutritionBodyPromptVisible(false);
+            refreshPendingNutritionSuggestion().catch(console.error);
+          }}
+          onDismiss={() => setNutritionBodyPromptVisible(false)}
+        />
+        <PlatformAppGuide
+          visible={
+            appGuideVisible &&
+            !onboardingWizardVisible &&
+            !initialPlanSetupPending &&
+            !nutritionBodyPromptVisible &&
+            !medicalDisclaimerGate
+          }
+          onClose={() => setAppGuideVisible(false)}
+          nav={appTourNav}
+        />
+      </View>
+      </SmallWinsProvider>
     );
   }
 
   // Show Login Screen
   return (
-    <ToastProvider>
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <KeyboardSafeView style={styles.keyboardView}>
+        <DismissKeyboardSurface style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
           <View style={styles.header}>
             <Text style={styles.logo}>TYLAI</Text>
             <Text style={styles.tagline}>Your AI Fitness Coach</Text>
@@ -707,8 +1478,30 @@ function AppInner() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                autoComplete={isLogin ? 'password' : 'new-password'}
               />
             </View>
+
+            {isLogin && (
+              <TouchableOpacity
+                style={styles.rememberRow}
+                onPress={handleRememberPasswordToggle}
+                activeOpacity={0.7}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: rememberPassword }}
+                accessibilityLabel="Remember password on this device"
+              >
+                <View
+                  style={[
+                    styles.rememberCheckbox,
+                    rememberPassword && styles.rememberCheckboxChecked,
+                  ]}
+                >
+                  {rememberPassword ? <Text style={styles.rememberCheckmark}>✓</Text> : null}
+                </View>
+                <Text style={styles.rememberLabel}>Remember password on this device</Text>
+              </TouchableOpacity>
+            )}
 
             {!isLogin && (
               <View style={styles.inputContainer}>
@@ -750,12 +1543,13 @@ function AppInner() {
             )}
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+        </DismissKeyboardSurface>
+      </KeyboardSafeView>
 
       {/* Forgot Password Modal */}
       <Modal
         visible={showForgotPassword}
-        animationType="slide"
+        animationType="none"
         transparent={true}
         onRequestClose={() => {
           setShowForgotPassword(false);
@@ -763,6 +1557,7 @@ function AppInner() {
           setResetMethod(null);
         }}
       >
+        <KeyboardModalFrame justifyContent="center">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Reset Password</Text>
@@ -827,34 +1622,83 @@ function AppInner() {
                       setResetMethod(null);
                       setResetEmail('');
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go back"
                   >
-                    <Text style={styles.modalBackButtonText}>Back</Text>
+                    <Text style={styles.modalBackButtonText}>←</Text>
                   </TouchableOpacity>
                 </View>
               </>
             ) : null}
           </View>
         </View>
+        </KeyboardModalFrame>
       </Modal>
     </SafeAreaView>
-    </ToastProvider>
   );
 }
 
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ToastProvider>
-        <AppInner />
-      </ToastProvider>
+      <SafeAreaProvider style={{ flex: 1 }}>
+        <AppErrorBoundary>
+          <KeyboardInsetsProvider>
+            <ToastProvider>
+              <SettingsProvider>
+                <SubscriptionProvider>
+                {!firebaseEnvConfigured ? (
+                  <View style={styles.configErrorScreen}>
+                    <Text style={styles.configErrorTitle}>Configuration needed</Text>
+                    <Text style={styles.configErrorBody}>
+                      {__DEV__
+                        ? 'Copy .env.example to .env, add your Firebase keys, then restart Metro:'
+                        : 'This TestFlight build is missing Firebase configuration. Rebuild with EAS production secrets set (EXPO_PUBLIC_FIREBASE_*), then reinstall from TestFlight.'}
+                    </Text>
+                    {__DEV__ ? (
+                      <Text style={styles.configErrorCode}>npx expo start --clear</Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <AppInner />
+                )}
+                </SubscriptionProvider>
+              </SettingsProvider>
+            </ToastProvider>
+          </KeyboardInsetsProvider>
+        </AppErrorBoundary>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  configErrorScreen: {
+    flex: 1,
+    backgroundColor: AppTheme.bgScreen,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  configErrorTitle: {
+    color: AppTheme.accent,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 12,
+  },
+  configErrorBody: {
+    color: AppTheme.textPrimary,
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 8,
+  },
+  configErrorCode: {
+    color: '#9ae6b4',
+    fontSize: 14,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   keyboardView: {
     flex: 1,
@@ -871,18 +1715,20 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 48,
     fontWeight: 'bold',
-    color: '#00ff88',
+    color: AppTheme.accent,
     marginBottom: 8,
   },
   tagline: {
     fontSize: 16,
-    color: '#888',
+    color: AppTheme.textMuted,
     textAlign: 'center',
   },
   formContainer: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 20,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusCard,
     padding: 30,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -901,7 +1747,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: '#888',
+    color: AppTheme.textMuted,
     textAlign: 'center',
     marginBottom: 30,
   },
@@ -915,17 +1761,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#3a3a3a',
-    borderRadius: 12,
+    backgroundColor: AppTheme.inputBg,
+    borderRadius: AppTheme.radiusButton,
     padding: 16,
     fontSize: 16,
     color: '#fff',
     borderWidth: 1,
-    borderColor: '#4a4a4a',
+    borderColor: AppTheme.inputBorder,
   },
   button: {
-    backgroundColor: '#00ff88',
-    borderRadius: 12,
+    backgroundColor: AppTheme.accent,
+    borderRadius: AppTheme.radiusButton,
     padding: 16,
     alignItems: 'center',
     marginTop: 10,
@@ -934,7 +1780,7 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
   },
   toggleButton: {
     alignItems: 'center',
@@ -942,7 +1788,7 @@ const styles = StyleSheet.create({
   },
   toggleText: {
     fontSize: 16,
-    color: '#00ff88',
+    color: AppTheme.accent,
     textDecorationLine: 'underline',
   },
   forgotPassword: {
@@ -959,6 +1805,39 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginLeft: 4,
     fontStyle: 'italic',
+  },
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: -8,
+    marginBottom: 16,
+  },
+  rememberCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: AppTheme.inputBorder,
+    backgroundColor: AppTheme.inputBg,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rememberCheckboxChecked: {
+    borderColor: AppTheme.accent,
+    backgroundColor: AppTheme.accent,
+  },
+  rememberCheckmark: {
+    color: AppTheme.accentDark,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 16,
+  },
+  rememberLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: AppTheme.textMuted,
+    lineHeight: 20,
   },
   networkWarning: {
     backgroundColor: '#ff6b6b',
@@ -1076,7 +1955,7 @@ const styles = StyleSheet.create({
   },
   modalBackButtonText: {
     color: '#aaa',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   modalCancelButton: {

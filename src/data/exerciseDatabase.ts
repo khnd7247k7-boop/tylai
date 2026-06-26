@@ -40,7 +40,19 @@ export type Equipment =
   | 'pull-up bar' 
   | 'bench' 
   | 'mat' 
-  | 'none';
+  | 'none'
+  | 'medicine ball'
+  | 'box'
+  | 'platform'
+  | 'wall'
+  | 'jump rope'
+  | 'battle ropes'
+  | 'sled'
+  | 'bike'
+  | 'rower'
+  | 'stairs'
+  | 'elliptical machine'
+  | 'treadmill';
 
 export type MuscleRegion = 
   | 'upper'    // Upper portion of muscle (e.g., upper chest, upper back)
@@ -102,7 +114,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['pull-up bar'],
     difficulty: 'intermediate',
     potentialRisks: ['Shoulder impingement', 'Elbow tendinitis', 'Neck strain if form is poor'],
-    alternatives: ['Assisted Pull-ups', 'Lat Pulldowns', 'Inverted Rows'],
+    alternatives: ['Lat Pulldowns', 'Chin-ups', 'Straight Arm Cable Pulldowns'],
     category: 'strength',
     muscleRegion: 'upper',
     muscleGroups: ['back', 'biceps', 'shoulders'],
@@ -117,7 +129,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell', 'bench'],
     difficulty: 'intermediate',
     potentialRisks: ['Shoulder injury', 'Pectoral strain', 'Wrist injury', 'Lower back strain if arching excessively'],
-    alternatives: ['Dumbbell Press', 'Push-ups', 'Chest Press Machine'],
+    alternatives: ['Dumbbell Chest Press', 'Push-ups', 'Chest Press Machine'],
     category: 'strength',
     muscleRegion: 'mid',
     muscleGroups: ['chest', 'shoulders', 'triceps'],
@@ -132,7 +144,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell', 'bodyweight'],
     difficulty: 'beginner',
     potentialRisks: ['Knee injury if form is poor', 'Lower back strain', 'Hip flexor tightness'],
-    alternatives: ['Goblet Squats', 'Bodyweight Squats', 'Leg Press'],
+    alternatives: ['Leg Press', 'Goblet Squats', 'Hack Squat'],
     category: 'strength',
     muscleGroups: ['quadriceps', 'glutes', 'hamstrings', 'core'],
     equipment: ['barbell', 'bodyweight']
@@ -146,7 +158,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell', 'dumbbells'],
     difficulty: 'intermediate',
     potentialRisks: ['Lower back injury if form is poor', 'Hamstring strain', 'Herniated disc risk', 'Knee injury'],
-    alternatives: ['Romanian Deadlift', 'Dumbbell Deadlift', 'Good Mornings'],
+    alternatives: ['Romanian Deadlift', 'Trap Bar Deadlift', 'Sumo Deadlift'],
     category: 'strength',
     muscleGroups: ['hamstrings', 'glutes', 'back', 'core'],
     equipment: ['barbell', 'dumbbells']
@@ -160,7 +172,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell', 'dumbbells'],
     difficulty: 'intermediate',
     potentialRisks: ['Shoulder impingement', 'Lower back strain', 'Wrist injury'],
-    alternatives: ['Dumbbell Shoulder Press', 'Pike Push-ups', 'Lateral Raises'],
+    alternatives: ['Dumbbell Shoulder Press', 'Military Press', 'Handstand Push-ups'],
     category: 'strength',
     muscleGroups: ['shoulders', 'triceps', 'core'],
     equipment: ['barbell', 'dumbbells']
@@ -174,7 +186,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell'],
     difficulty: 'intermediate',
     potentialRisks: ['Lower back strain if form is poor', 'Shoulder injury', 'Wrist strain'],
-    alternatives: ['Dumbbell Row', 'Cable Rows', 'T-Bar Row'],
+    alternatives: ['Seated Cable Row', 'Dumbbell Row', 'Inverted Rows'],
     category: 'strength',
     muscleGroups: ['back', 'biceps', 'rear delts'],
     equipment: ['barbell']
@@ -202,7 +214,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['bodyweight', 'dumbbells'],
     difficulty: 'beginner',
     potentialRisks: ['Knee injury if form is poor', 'Hip flexor strain', 'Ankle instability'],
-    alternatives: ['Reverse Lunges', 'Walking Lunges', 'Bulgarian Split Squats'],
+    alternatives: ['Bulgarian Split Squats', 'Step-ups', 'Reverse Lunges'],
     category: 'strength',
     muscleGroups: ['quadriceps', 'glutes', 'hamstrings'],
     equipment: ['bodyweight', 'dumbbells']
@@ -216,7 +228,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['smith machine'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back strain if depth is excessive', 'Knee injury if form is poor'],
-    alternatives: ['Squats', 'Goblet Squats', 'Bulgarian Split Squats'],
+    alternatives: ['Squat', 'Goblet Squats', 'Hack Squat'],
     category: 'strength',
     muscleGroups: ['quadriceps', 'glutes', 'hamstrings'],
     equipment: ['smith machine']
@@ -230,7 +242,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['bodyweight', 'dumbbells'],
     difficulty: 'beginner',
     potentialRisks: ['Achilles tendon strain', 'Calf muscle strain'],
-    alternatives: ['Single Leg Calf Raises', 'Seated Calf Raises', 'Jump Rope'],
+    alternatives: ['Seated Calf Raises', 'Donkey Calf Raises', 'Single Leg Calf Raises'],
     category: 'strength',
     muscleGroups: ['calves'],
     equipment: ['bodyweight', 'dumbbells']
@@ -359,7 +371,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell', 'dumbbells'],
     difficulty: 'intermediate',
     potentialRisks: ['Lower back strain if form is poor', 'Hamstring strain'],
-    alternatives: ['Deadlift', 'Good Mornings', 'Single Leg Deadlift'],
+    alternatives: ['Deadlift', 'Stiff-Leg Deadlift', 'Hip Thrusts'],
     category: 'strength',
     muscleGroups: ['hamstrings', 'glutes', 'back'],
     equipment: ['barbell', 'dumbbells']
@@ -486,7 +498,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['smith machine', 'bench'],
     difficulty: 'beginner',
     potentialRisks: ['Shoulder injury', 'Pectoral strain', 'Wrist injury', 'Limited range of motion'],
-    alternatives: ['Incline Dumbbell Press', 'Incline Push-ups', 'Dumbbell Bench Press'],
+    alternatives: ['Incline Barbell Press', 'Incline Dumbbell Press', 'Low-to-High Cable Flys'],
     category: 'strength',
     muscleRegion: 'upper',
     muscleGroups: ['chest', 'shoulders', 'triceps'],
@@ -1017,6 +1029,198 @@ export const exerciseDatabase: ExerciseData[] = [
     equipment: ['none']
   },
 
+  // General warm-up / mobility
+  {
+    id: 'worlds-greatest-stretch',
+    name: 'World\'s Greatest Stretch',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'hip flexors',
+    secondaryMuscleGroups: ['hamstrings', 'upper back', 'shoulders'],
+    equipmentRequired: ['mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Knee strain if lunge is too deep', 'Lower back rounding'],
+    alternatives: ['Hip Flexor Stretch', 'Lunges', 'Spinal Twist'],
+    category: 'flexibility',
+    muscleGroups: ['hip flexors', 'hamstrings', 'upper back'],
+    equipment: ['mat']
+  },
+  {
+    id: 'inchworms',
+    name: 'Inchworms',
+    movementPattern: 'stretch',
+    primaryMuscleGroup: 'hamstrings',
+    secondaryMuscleGroups: ['shoulders', 'core'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Hamstring strain', 'Wrist discomfort', 'Lower back rounding'],
+    alternatives: ['Forward Fold', 'Plank', 'Walkouts'],
+    category: 'flexibility',
+    muscleGroups: ['hamstrings', 'shoulders', 'core'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'arm-circles',
+    name: 'Arm Circles',
+    movementPattern: 'stretch',
+    primaryMuscleGroup: 'shoulders',
+    secondaryMuscleGroups: ['rotator cuff', 'upper back'],
+    equipmentRequired: ['none'],
+    difficulty: 'beginner',
+    potentialRisks: ['Shoulder impingement if circles are too large too soon'],
+    alternatives: ['Shoulder Stretch', 'Band Pull-Aparts', 'Wall Angels'],
+    category: 'flexibility',
+    muscleGroups: ['shoulders', 'rotator cuff'],
+    equipment: ['none']
+  },
+  {
+    id: 'leg-swings',
+    name: 'Leg Swings',
+    movementPattern: 'stretch',
+    primaryMuscleGroup: 'hip flexors',
+    secondaryMuscleGroups: ['glutes', 'hamstrings'],
+    equipmentRequired: ['none'],
+    difficulty: 'beginner',
+    potentialRisks: ['Loss of balance', 'Overstretching if swing is too high'],
+    alternatives: ['Hip Flexor Stretch', 'High Knees', 'Butt Kicks'],
+    category: 'flexibility',
+    muscleGroups: ['hip flexors', 'glutes', 'hamstrings'],
+    equipment: ['none']
+  },
+
+  // Muscle-group warm-ups: Push (Chest & Shoulders)
+  {
+    id: 'scapular-push-ups',
+    name: 'Scapular Push-ups',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'shoulders',
+    secondaryMuscleGroups: ['upper back', 'serratus'],
+    equipmentRequired: ['bodyweight', 'mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Wrist strain', 'Shoulder discomfort if done too deep'],
+    alternatives: ['Push-ups', 'Plank', 'Wall Push-ups'],
+    category: 'flexibility',
+    muscleGroups: ['shoulders', 'upper back'],
+    equipment: ['bodyweight', 'mat']
+  },
+  {
+    id: 'band-pull-aparts',
+    name: 'Band Pull-Aparts',
+    movementPattern: 'pull',
+    primaryMuscleGroup: 'upper back',
+    secondaryMuscleGroups: ['rear delts', 'rhomboids'],
+    equipmentRequired: ['resistance bands'],
+    difficulty: 'beginner',
+    potentialRisks: ['Band snap risk', 'Shoulder strain if band too heavy'],
+    alternatives: ['Shoulder Stretch', 'Arm Circles', 'Face Pulls'],
+    category: 'flexibility',
+    muscleGroups: ['upper back', 'rear delts'],
+    equipment: ['resistance bands']
+  },
+  {
+    id: 'doorway-chest-stretch',
+    name: 'Doorway Chest Stretch',
+    movementPattern: 'stretch',
+    primaryMuscleGroup: 'chest',
+    secondaryMuscleGroups: ['shoulders'],
+    equipmentRequired: ['none'],
+    difficulty: 'beginner',
+    potentialRisks: ['Shoulder impingement if overstretched'],
+    alternatives: ['Chest Opener', 'Shoulder Stretch', 'Wall Stretch'],
+    category: 'flexibility',
+    muscleGroups: ['chest', 'shoulders'],
+    equipment: ['none']
+  },
+  {
+    id: 'shoulder-external-rotations',
+    name: 'Shoulder External Rotations',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'rotator cuff',
+    secondaryMuscleGroups: ['shoulders'],
+    equipmentRequired: ['resistance bands'],
+    difficulty: 'beginner',
+    potentialRisks: ['Shoulder strain if band too heavy', 'Elbow drift'],
+    alternatives: ['Arm Circles', 'Band Pull-Aparts', 'Cable External Rotation'],
+    category: 'flexibility',
+    muscleGroups: ['rotator cuff', 'shoulders'],
+    equipment: ['resistance bands']
+  },
+
+  // Muscle-group warm-ups: Pull (Back & Biceps)
+  {
+    id: 'scapular-pull-ups',
+    name: 'Scapular Pull-ups',
+    movementPattern: 'pull',
+    primaryMuscleGroup: 'back',
+    secondaryMuscleGroups: ['lats', 'traps'],
+    equipmentRequired: ['pull-up bar'],
+    difficulty: 'beginner',
+    potentialRisks: ['Shoulder strain', 'Grip fatigue'],
+    alternatives: ['Pull-ups', 'Scapular Push-ups', 'Band Rows'],
+    category: 'flexibility',
+    muscleGroups: ['lats', 'traps', 'upper back'],
+    equipment: ['pull-up bar']
+  },
+  {
+    id: 'thoracic-rotations',
+    name: 'Thoracic Rotations',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'upper back',
+    secondaryMuscleGroups: ['core', 'mid-back'],
+    equipmentRequired: ['mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Lower back compensation', 'Neck strain'],
+    alternatives: ['Cat-Cow', 'Spinal Twist', 'World\'s Greatest Stretch'],
+    category: 'flexibility',
+    muscleGroups: ['upper back', 'mid-back', 'core'],
+    equipment: ['mat']
+  },
+
+  // Muscle-group warm-ups: Legs (Leg Day)
+  {
+    id: 'walking-lunges-with-twist',
+    name: 'Walking Lunges with a Twist',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'hips',
+    secondaryMuscleGroups: ['core', 'balance', 'quadriceps'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Knee strain', 'Loss of balance', 'Lower back twist'],
+    alternatives: ['Lunges', 'World\'s Greatest Stretch', 'Lateral Lunges'],
+    category: 'flexibility',
+    muscleGroups: ['hips', 'core', 'quadriceps'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'ankle-rolls-bottom-squat-transfer',
+    name: 'Ankle Rolls / Bottom Squat Transfer',
+    movementPattern: 'squat',
+    primaryMuscleGroup: 'ankles',
+    secondaryMuscleGroups: ['calves', 'hips'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Knee strain', 'Ankle roll if unstable'],
+    alternatives: ['Bodyweight Squats', 'Goblet Squats', 'Hip Flexor Stretch'],
+    category: 'flexibility',
+    muscleGroups: ['ankles', 'calves', 'hips'],
+    equipment: ['bodyweight']
+  },
+
+  // Muscle-group warm-ups: Deadlift / Hinge Day
+  {
+    id: 'good-mornings-bodyweight',
+    name: 'Good Mornings (Bodyweight)',
+    movementPattern: 'hinge',
+    primaryMuscleGroup: 'hamstrings',
+    secondaryMuscleGroups: ['glutes', 'back'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Lower back rounding', 'Hamstring strain if overstretched'],
+    alternatives: ['Romanian Deadlift', 'Good Mornings (Barbell)', 'Bird Dog'],
+    category: 'flexibility',
+    muscleGroups: ['hamstrings', 'glutes', 'back'],
+    equipment: ['bodyweight']
+  },
+
   // Balance Exercises
   {
     id: 'plank',
@@ -1027,7 +1231,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['mat'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back strain if form is poor', 'Wrist strain', 'Shoulder fatigue'],
-    alternatives: ['Knee Plank', 'Side Plank', 'Forearm Plank'],
+    alternatives: ['Dead Bug', 'Ab Wheel Rollouts', 'Hollow Body Hold'],
     category: 'balance',
     muscleGroups: ['core', 'shoulders'],
     equipment: ['mat']
@@ -1069,7 +1273,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['mat'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back strain if form is poor'],
-    alternatives: ['Bird Dog', 'Plank', 'Leg Raises'],
+    alternatives: ['Plank', 'Hollow Body Hold', 'Ab Wheel Rollouts'],
     category: 'balance',
     muscleGroups: ['core'],
     equipment: ['mat']
@@ -1172,7 +1376,119 @@ export const exerciseDatabase: ExerciseData[] = [
     muscleGroups: ['glutes', 'hamstrings', 'core'],
     equipment: ['mat']
   },
-
+  // Core strength & rotation exercises
+  {
+    id: 'ab-wheel-rollouts',
+    name: 'Ab Wheel Rollouts',
+    movementPattern: 'isometric',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['shoulders', 'lats'],
+    equipmentRequired: ['none'],
+    difficulty: 'advanced',
+    potentialRisks: ['Lower back strain if range is too large', 'Shoulder strain'],
+    alternatives: ['Plank', 'Dead Bug', 'Hollow Body Hold'],
+    category: 'strength',
+    muscleGroups: ['core', 'shoulders', 'lats'],
+    equipment: ['none']
+  },
+  {
+    id: 'hollow-body-hold',
+    name: 'Hollow Body Hold',
+    movementPattern: 'isometric',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: [],
+    equipmentRequired: ['mat'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Lower back strain if form is poor'],
+    alternatives: ['Dead Bug', 'Plank', 'Ab Wheel Rollouts'],
+    category: 'strength',
+    muscleGroups: ['core'],
+    equipment: ['mat']
+  },
+  {
+    id: 'crunches',
+    name: 'Crunches',
+    movementPattern: 'hinge',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: [],
+    equipmentRequired: ['mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Neck strain if pulling on head', 'Lower back discomfort'],
+    alternatives: ['Sit-ups', 'Hanging Knee Raises', 'Cable Crunches'],
+    category: 'strength',
+    muscleGroups: ['core'],
+    equipment: ['mat']
+  },
+  {
+    id: 'hanging-knee-raises',
+    name: 'Hanging Knee Raises',
+    movementPattern: 'hinge',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['hip flexors'],
+    equipmentRequired: ['pull-up bar'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Grip fatigue', 'Shoulder strain'],
+    alternatives: ['Crunches', 'Leg Raises', 'Cable Crunches'],
+    category: 'strength',
+    muscleGroups: ['core', 'hip flexors'],
+    equipment: ['pull-up bar']
+  },
+  {
+    id: 'sit-ups',
+    name: 'Sit-ups',
+    movementPattern: 'hinge',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['hip flexors'],
+    equipmentRequired: ['mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Lower back strain', 'Hip flexor tightness'],
+    alternatives: ['Crunches', 'Hanging Knee Raises', 'Cable Crunches'],
+    category: 'strength',
+    muscleGroups: ['core', 'hip flexors'],
+    equipment: ['mat']
+  },
+  {
+    id: 'cable-crunches',
+    name: 'Cable Crunches',
+    movementPattern: 'hinge',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: [],
+    equipmentRequired: ['cable machine'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Neck strain if form is poor', 'Lower back strain'],
+    alternatives: ['Crunches', 'Hanging Knee Raises', 'Sit-ups'],
+    category: 'strength',
+    muscleGroups: ['core'],
+    equipment: ['cable machine']
+  },
+  {
+    id: 'cable-woodchoppers',
+    name: 'Cable Woodchoppers',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'obliques',
+    secondaryMuscleGroups: ['core', 'shoulders'],
+    equipmentRequired: ['cable machine'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Lower back strain if rotated too far', 'Shoulder strain'],
+    alternatives: ['Russian Twists', 'Side Plank', 'Bicycle Crunches'],
+    category: 'strength',
+    muscleGroups: ['obliques', 'core', 'shoulders'],
+    equipment: ['cable machine']
+  },
+  {
+    id: 'bicycle-crunches',
+    name: 'Bicycle Crunches',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'obliques',
+    secondaryMuscleGroups: ['core', 'hip flexors'],
+    equipmentRequired: ['mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Neck strain', 'Lower back discomfort'],
+    alternatives: ['Russian Twists', 'Cable Woodchoppers', 'Side Plank'],
+    category: 'strength',
+    muscleGroups: ['obliques', 'core', 'hip flexors'],
+    equipment: ['mat']
+  },
   // ========== EXERCISE VARIATIONS ==========
   // Push-up Variations
   {
@@ -1329,7 +1645,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['dumbbells', 'bench'],
     difficulty: 'intermediate',
     potentialRisks: ['Shoulder injury', 'Pectoral strain', 'Wrist injury'],
-    alternatives: ['Incline Push-ups', 'Dumbbell Bench Press', 'Overhead Press'],
+    alternatives: ['Incline Barbell Press', 'Low-to-High Cable Flys', 'Incline Push-ups'],
     category: 'strength',
     muscleRegion: 'upper',
     muscleGroups: ['chest', 'shoulders', 'triceps'],
@@ -1403,7 +1719,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['cable machine'],
     difficulty: 'beginner',
     potentialRisks: ['Shoulder impingement', 'Elbow tendinitis', 'Neck strain'],
-    alternatives: ['Pull-ups', 'Assisted Pull-ups', 'Cable Rows'],
+    alternatives: ['Pull-ups', 'Chin-ups', 'Straight Arm Cable Pulldowns'],
     category: 'strength',
     muscleRegion: 'upper',
     muscleGroups: ['back', 'biceps', 'shoulders'],
@@ -1418,7 +1734,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['pull-up bar'],
     difficulty: 'intermediate',
     potentialRisks: ['Elbow tendinitis', 'Shoulder impingement'],
-    alternatives: ['Pull-ups', 'Bicep Curls', 'Cable Curls'],
+    alternatives: ['Pull-ups', 'Lat Pulldowns', 'Straight Arm Cable Pulldowns'],
     category: 'strength',
     muscleGroups: ['biceps', 'back', 'shoulders'],
     equipment: ['pull-up bar']
@@ -1476,7 +1792,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['cable machine'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back strain', 'Shoulder injury', 'Cable snap risk'],
-    alternatives: ['Dumbbell Row', 'Barbell Row', 'Resistance Band Rows'],
+    alternatives: ['Barbell Row', 'One-Arm Dumbbell Row', 'Inverted Rows'],
     category: 'strength',
     muscleGroups: ['back', 'biceps', 'rear delts'],
     equipment: ['cable machine']
@@ -1534,7 +1850,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['dumbbells'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back injury if form is poor', 'Hamstring strain'],
-    alternatives: ['Deadlift', 'Romanian Deadlift', 'Kettlebell Deadlift'],
+    alternatives: ['Deadlift', 'Romanian Deadlift', 'Trap Bar Deadlift'],
     category: 'strength',
     muscleGroups: ['hamstrings', 'glutes', 'back', 'core'],
     equipment: ['dumbbells']
@@ -1548,7 +1864,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['kettlebell'],
     difficulty: 'beginner',
     potentialRisks: ['Lower back injury if form is poor', 'Hamstring strain'],
-    alternatives: ['Deadlift', 'Dumbbell Deadlift', 'Romanian Deadlift'],
+    alternatives: ['Deadlift', 'Romanian Deadlift', 'Trap Bar Deadlift'],
     category: 'strength',
     muscleGroups: ['hamstrings', 'glutes', 'back', 'core'],
     equipment: ['kettlebell']
@@ -1648,7 +1964,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['dumbbells'],
     difficulty: 'intermediate',
     potentialRisks: ['Shoulder impingement', 'Lower back strain', 'Wrist injury'],
-    alternatives: ['Overhead Press', 'Kettlebell Press', 'Pike Push-ups'],
+    alternatives: ['Overhead Press', 'Military Press', 'Handstand Push-ups'],
     category: 'strength',
     muscleGroups: ['shoulders', 'triceps', 'core'],
     equipment: ['dumbbells']
@@ -1807,7 +2123,7 @@ export const exerciseDatabase: ExerciseData[] = [
     equipmentRequired: ['barbell'],
     difficulty: 'beginner',
     potentialRisks: ['Elbow tendinitis', 'Wrist strain', 'Shoulder strain'],
-    alternatives: ['Bicep Curls', 'Hammer Curls', 'Cable Curls'],
+    alternatives: ['Dumbbell Curls', 'Hammer Curls', 'Preacher Curls'],
     category: 'strength',
     muscleGroups: ['biceps'],
     equipment: ['barbell']
@@ -2957,6 +3273,266 @@ export const exerciseDatabase: ExerciseData[] = [
     category: 'cardio',
     muscleGroups: ['quadriceps', 'core', 'cardiovascular'],
     equipment: ['resistance bands']
+  },
+
+  // Plyometric progressions (foundation → power → max control)
+  // Stability & Balance
+  {
+    id: 'snap-downs',
+    name: 'Snap Downs',
+    movementPattern: 'squat',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'core', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Knee injury', 'Lower back strain if form is poor'],
+    alternatives: ['Bodyweight Squats', 'Box Jump-Ups', 'Jumping Jacks'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'core', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'single-leg-linear-hops',
+    name: 'Single-Leg Linear Hops',
+    movementPattern: 'gait',
+    primaryMuscleGroup: 'calves',
+    secondaryMuscleGroups: ['quadriceps', 'glutes', 'ankles', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Ankle sprain', 'Knee injury', 'Loss of balance'],
+    alternatives: ['Snap Downs', 'Lateral Pogos', 'High Knees'],
+    category: 'cardio',
+    muscleGroups: ['calves', 'quadriceps', 'glutes', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'single-leg-drop-landings',
+    name: 'Single-Leg Drop Landings',
+    movementPattern: 'squat',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'calves', 'core', 'cardiovascular'],
+    equipmentRequired: ['box', 'platform', 'mat'],
+    difficulty: 'advanced',
+    potentialRisks: ['Ankle sprain', 'Knee injury', 'ACL stress if landing poorly'],
+    alternatives: ['Single-Leg Linear Hops', 'Depth Jumps', 'Box Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'core', 'cardiovascular'],
+    equipment: ['box', 'platform', 'mat']
+  },
+  // Lateral Stability
+  {
+    id: 'lateral-pogos',
+    name: 'Lateral Pogos',
+    movementPattern: 'gait',
+    primaryMuscleGroup: 'calves',
+    secondaryMuscleGroups: ['ankles', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Ankle sprain', 'Achilles tendon strain'],
+    alternatives: ['Jumping Jacks', 'Skater Jumps', 'High Knees'],
+    category: 'cardio',
+    muscleGroups: ['calves', 'ankles', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'skater-jumps',
+    name: 'Skater Jumps',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'calves', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Ankle sprain', 'Knee injury', 'Loss of balance'],
+    alternatives: ['Lateral Pogos', 'Lateral Lunges', '90/180-Degree Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'calves', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: '90-180-degree-jumps',
+    name: '90/180-Degree Jumps',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'core', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'advanced',
+    potentialRisks: ['Knee injury', 'Ankle sprain', 'Lower back twist'],
+    alternatives: ['Skater Jumps', 'Box Jumps', 'Tuck Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'core', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  // Hip & Ankle Mobility
+  {
+    id: 'frog-jumps',
+    name: 'Frog Jumps',
+    movementPattern: 'squat',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'adductors', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'beginner',
+    potentialRisks: ['Knee injury', 'Groin strain', 'Lower back strain'],
+    alternatives: ['Bodyweight Squats', 'Split Squat Jumps', 'Goblet Squats'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'adductors', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'split-squat-jumps',
+    name: 'Split Squat Jumps',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'calves', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Knee injury', 'Ankle sprain', 'Lower back strain'],
+    alternatives: ['Frog Jumps', 'Lunges', 'Cossack Squat Hops'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'cossack-squat-hops',
+    name: 'Cossack Squat Hops',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'adductors', 'ankles', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'advanced',
+    potentialRisks: ['Groin strain', 'Knee injury', 'Ankle sprain'],
+    alternatives: ['Lateral Lunges', 'Split Squat Jumps', 'Frog Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'adductors', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  // Core & Range
+  {
+    id: 'plank-jacks',
+    name: 'Plank Jacks',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['shoulders', 'cardiovascular'],
+    equipmentRequired: ['bodyweight', 'mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Wrist strain', 'Lower back strain', 'Shoulder fatigue'],
+    alternatives: ['Plank', 'Mountain Climbers', 'Jumping Jacks'],
+    category: 'cardio',
+    muscleGroups: ['core', 'shoulders', 'cardiovascular'],
+    equipment: ['bodyweight', 'mat']
+  },
+  {
+    id: 'reverse-lunge-to-knee-up',
+    name: 'Reverse Lunge to Knee-Up',
+    movementPattern: 'lunge',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'core', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Knee injury', 'Loss of balance', 'Hip flexor strain'],
+    alternatives: ['Lunges', 'High Knees', 'Tuck Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'core', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'tuck-jumps',
+    name: 'Tuck Jumps',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['core', 'calves', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'advanced',
+    potentialRisks: ['Knee injury', 'Ankle sprain', 'Lower back strain on landing'],
+    alternatives: ['High Knees', 'Box Jumps', 'Jumping Jacks'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'core', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  // Posterior Chain
+  {
+    id: 'box-jump-ups',
+    name: 'Box Jump-Ups',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'hamstrings', 'cardiovascular'],
+    equipmentRequired: ['box', 'platform'],
+    difficulty: 'beginner',
+    potentialRisks: ['Achilles tendon strain', 'Knee injury', 'Shin splints'],
+    alternatives: ['Snap Downs', 'Box Jumps', 'Step-ups'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'hamstrings', 'cardiovascular'],
+    equipment: ['box', 'platform']
+  },
+  {
+    id: 'pike-jumps',
+    name: 'Pike Jumps',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'hamstrings',
+    secondaryMuscleGroups: ['core', 'shoulders', 'calves', 'cardiovascular'],
+    equipmentRequired: ['bodyweight'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Hamstring strain', 'Lower back strain', 'Ankle sprain'],
+    alternatives: ['Box Jump-Ups', 'Depth Jumps', 'Inchworms'],
+    category: 'cardio',
+    muscleGroups: ['hamstrings', 'core', 'shoulders', 'cardiovascular'],
+    equipment: ['bodyweight']
+  },
+  {
+    id: 'depth-jumps',
+    name: 'Depth Jumps',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'quadriceps',
+    secondaryMuscleGroups: ['glutes', 'calves', 'cardiovascular'],
+    equipmentRequired: ['box', 'platform', 'mat'],
+    difficulty: 'advanced',
+    potentialRisks: ['Knee injury', 'Achilles tendon rupture', 'Shin splints'],
+    alternatives: ['Box Jumps', 'Box Jump-Ups', 'Pike Jumps'],
+    category: 'cardio',
+    muscleGroups: ['quadriceps', 'glutes', 'calves', 'cardiovascular'],
+    equipment: ['box', 'platform', 'mat']
+  },
+  // Upper Body
+  {
+    id: 'medicine-ball-slams',
+    name: 'Medicine Ball Slams',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['shoulders', 'back', 'cardiovascular'],
+    equipmentRequired: ['medicine ball', 'mat'],
+    difficulty: 'beginner',
+    potentialRisks: ['Lower back strain', 'Shoulder strain', 'Toe crush if ball drops'],
+    alternatives: ['Kettlebell Swings', 'Battle Ropes', 'Rotational Med Ball Throws'],
+    category: 'cardio',
+    muscleGroups: ['core', 'shoulders', 'back', 'cardiovascular'],
+    equipment: ['medicine ball', 'mat']
+  },
+  {
+    id: 'plyo-push-ups',
+    name: 'Plyo Push-ups',
+    movementPattern: 'push',
+    primaryMuscleGroup: 'chest',
+    secondaryMuscleGroups: ['shoulders', 'triceps', 'core', 'cardiovascular'],
+    equipmentRequired: ['bodyweight', 'mat'],
+    difficulty: 'intermediate',
+    potentialRisks: ['Wrist injury', 'Shoulder impingement', 'Face impact if failed'],
+    alternatives: ['Push-ups', 'Medicine Ball Slams', 'Pike Push-ups'],
+    category: 'cardio',
+    muscleGroups: ['chest', 'shoulders', 'triceps', 'cardiovascular'],
+    equipment: ['bodyweight', 'mat']
+  },
+  {
+    id: 'rotational-med-ball-throws',
+    name: 'Rotational Med Ball Throws',
+    movementPattern: 'rotation',
+    primaryMuscleGroup: 'core',
+    secondaryMuscleGroups: ['shoulders', 'obliques', 'cardiovascular'],
+    equipmentRequired: ['medicine ball', 'wall'],
+    difficulty: 'advanced',
+    potentialRisks: ['Shoulder strain', 'Lower back rotation injury', 'Wall impact'],
+    alternatives: ['Cable Woodchoppers', 'Medicine Ball Slams', 'Landmine Press'],
+    category: 'cardio',
+    muscleGroups: ['core', 'shoulders', 'obliques', 'cardiovascular'],
+    equipment: ['medicine ball', 'wall']
   }
 ];
 

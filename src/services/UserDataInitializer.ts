@@ -5,8 +5,9 @@
  * It initializes data for all screens and categories.
  */
 
-import { loadUserData } from '../utils/userStorage';
+import { loadUserData, tryRecoverOrphanedUserDataOnDevice } from '../utils/userStorage';
 import WellnessDataManager from './WellnessDataManager';
+import { notifyUserDataReady } from '../utils/userDataEvents';
 
 interface UserDataState {
   isInitialized: boolean;
@@ -23,10 +24,19 @@ class UserDataInitializer {
    * Initialize all user data when user logs in
    * This should be called after authentication
    */
-  async initializeUserData(): Promise<void> {
+  async initializeUserData(): Promise<{ keysCopied: number }> {
     console.log('[UserDataInitializer] Initializing user data...');
-    
+
+    let keysCopied = 0;
     try {
+      const recovery = await tryRecoverOrphanedUserDataOnDevice();
+      keysCopied = recovery.keysCopied;
+      if (recovery.recovered) {
+        console.log(
+          `[UserDataInitializer] Restored ${recovery.keysCopied} local data key(s) from a previous session on this device`
+        );
+      }
+
       // Initialize Wellness Data Manager (for AI sync)
       await WellnessDataManager.initialize();
       
@@ -59,9 +69,12 @@ class UserDataInitializer {
       };
 
       console.log('[UserDataInitializer] User data initialization complete');
+      return { keysCopied };
     } catch (error) {
       console.error('[UserDataInitializer] Error initializing user data:', error);
       throw error;
+    } finally {
+      notifyUserDataReady();
     }
   }
 

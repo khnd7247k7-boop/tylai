@@ -182,20 +182,20 @@ class WellnessDataAggregator {
         dailyMentalProgress,
         savedWorkoutPlans,
       ] = await Promise.all([
-        loadUserData('moodEntries'),
-        loadUserData('workoutHistory'),
-        loadUserData('mentalExercises'),
-        loadUserData('nutritionData'),
-        loadUserData('completedTasks'),
-        loadUserData('emotionalExercises'),
-        loadUserData('gratitudeEntries'),
-        loadUserData('affirmationEntries'),
-        loadUserData('reflectionEntries'),
-        loadUserData('breathingExercises'),
-        loadUserData('visualizationExercises'),
-        loadUserData('mindfulnessExercises'),
-        loadUserData('dailyMentalProgress'),
-        loadUserData('savedWorkoutPlans'),
+        loadUserData<EmotionalData['moodEntries']>('moodEntries'),
+        loadUserData<FitnessData['workoutHistory']>('workoutHistory'),
+        loadUserData<UserWellnessData['mentalExercises']>('mentalExercises'),
+        loadUserData<FitnessData['nutritionData']>('nutritionData'),
+        loadUserData<ExtendedUserWellnessData['completedTasks']>('completedTasks'),
+        loadUserData<EmotionalData['emotionalExercises']>('emotionalExercises'),
+        loadUserData<SpiritualData['gratitudeEntries']>('gratitudeEntries'),
+        loadUserData<SpiritualData['affirmationEntries']>('affirmationEntries'),
+        loadUserData<SpiritualData['reflectionEntries']>('reflectionEntries'),
+        loadUserData<MentalData['breathingExercises']>('breathingExercises'),
+        loadUserData<MentalData['visualizationExercises']>('visualizationExercises'),
+        loadUserData<MentalData['mindfulnessExercises']>('mindfulnessExercises'),
+        loadUserData<MentalData['dailyProgress']>('dailyMentalProgress'),
+        loadUserData<FitnessData['savedWorkoutPlans']>('savedWorkoutPlans'),
       ]);
 
       // Normalize and structure the data
@@ -279,8 +279,8 @@ class WellnessDataAggregator {
     if (!entries || entries.length === 0) return null;
 
     const dates = entries
-      .map(entry => entry.completedAt || entry.date)
-      .filter(date => date)
+      .map((entry) => entry.completedAt || entry.date)
+      .filter((date): date is string => typeof date === 'string' && date.length > 0)
       .sort()
       .reverse();
 

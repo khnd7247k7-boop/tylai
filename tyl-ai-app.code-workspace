@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "name": "tyl-ai-app (canonical — edit here)",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/.expo": true
+    }
+  }
+}

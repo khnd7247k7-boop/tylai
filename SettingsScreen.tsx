@@ -6,19 +6,60 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  TextInput,
   Alert,
   Switch,
   Modal,
   TouchableWithoutFeedback,
   Platform,
+  Linking,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import * as FileSystem from 'expo-file-system';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { saveUserData, loadUserData, clearAllUserData } from './src/utils/userStorage';
+import { subscribeUserDataReady } from './src/utils/userDataEvents';
+import {
+  COACH_MOCK_HEALTH_KEY,
+  DEFAULT_COACH_MOCK_HEALTH,
+  type CoachMockHealthSettings,
+} from './src/constants/coachMockHealth';
 import { updateNotificationSchedule } from './src/utils/notifications';
 import { NOTICE_CONTENT, LICENSE_CONTENT, LICENSING_SUMMARY_CONTENT, THIRD_PARTY_CONTENT } from './src/constants/legalDocuments';
+import {
+  MEDICAL_DISCLAIMER_SHORT,
+  APPLE_HEALTH_PRIVACY_SUMMARY,
+  WORKOUT_LIABILITY_WAIVER_SHORT,
+  LOCAL_DATA_DELETION_FOOTNOTE,
+} from './src/constants/complianceDisclosures';
+import { AppTheme } from './src/theme/appVisualTheme';
+import { getStayLoggedInPreference, setStayLoggedInPreference } from './src/utils/stayLoggedIn';
+import { KeyboardSafeView } from './src/keyboard';
+import type { Auth } from 'firebase/auth';
+import {
+  DEFAULT_HEALTH_DATA_PERMISSIONS,
+  EXPO_HEALTH_METRIC_KEYS,
+  HEALTH_METRIC_ORDER,
+  HEALTH_METRIC_COPY,
+  loadHealthDataPermissions,
+  saveHealthDataPermissions,
+  type HealthDataPermissions,
+  type HealthMetricKey,
+} from './src/utils/healthDataPermissions';
+import { useUserSettings } from './SettingsProvider';
+import { useSubscription } from './src/context/SubscriptionContext';
+import { tierLabel } from './src/constants/featureTiers';
+import {
+  loadCoachingProfile,
+  saveCoachingProfileDraft,
+  syncCoachingProfileToUserProfile,
+} from './src/services/CoachingProfileService';
+import {
+  PRIMARY_GOAL_LABELS,
+  type CoachingProfile,
+  type ChallengeDial,
+  isCoachingProfileComplete,
+} from './src/types/coachingProfile';
 
 interface UserProfile {
   name: string;
@@ -35,6 +76,13 @@ interface UserProfile {
   daysPerWeek?: number;
   equipmentAvailability?: string;
   preferredWorkoutLength?: number; // in minutes
+  nutritionGoals?: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    water: number;
+  };
 }
 
 interface AppSettings {
@@ -58,9 +106,26 @@ interface InterfaceSettings {
 interface SettingsScreenProps {
   onBack: () => void;
   onLogout: () => void;
+  onOpenAppGuide?: () => void;
+  onEditCoachingQuestionnaire?: () => void;
 }
 
-export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
+export default function SettingsScreen({
+  onBack,
+  onLogout,
+  onOpenAppGuide,
+  onEditCoachingQuestionnaire,
+}: SettingsScreenProps) {
+  const { showPredictiveWeight, enableMacroPreview, autoRestTimer, setPreference } = useUserSettings();
+  const {
+    tier,
+    isPremium,
+    presentUpgrade,
+    restorePurchases,
+    setDevPremiumOverride,
+    basicFeatures,
+    premiumFeatures,
+  } = useSubscription();
   const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings' | 'legal'>('profile');
   const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
   const [documentContent, setDocumentContent] = useState<string>('');
@@ -68,6 +133,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
     name: '',
     email: '',
     age: '',
+    sex: '',
     height: '',
     weight: '',
     fitnessGoal: 'General Fitness',
@@ -92,6 +158,12 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDocumentModal, setShowDocumentModal] = useState(false);
+  const [stayLoggedIn, setStayLoggedIn] = useState(true);
+  const [healthDataPerms, setHealthDataPerms] = useState<HealthDataPermissions>(
+    DEFAULT_HEALTH_DATA_PERMISSIONS
+  );
+  const [coachMockHealth, setCoachMockHealth] = useState<CoachMockHealthSettings>(DEFAULT_COACH_MOCK_HEALTH);
+  const [coachingProfile, setCoachingProfile] = useState<CoachingProfile | null>(null);
 
   const loadDocument = (documentName: string) => {
     let title = '';
@@ -125,6 +197,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   useEffect(() => {
     loadSettingsData();
+    return subscribeUserDataReady(loadSettingsData);
   }, []);
 
   const loadSettingsData = async () => {
@@ -142,6 +215,19 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       if (savedInterfaceSettings) {
         setInterfaceSettings(savedInterfaceSettings);
       }
+      setHealthDataPerms(await loadHealthDataPermissions());
+      setStayLoggedIn(await getStayLoggedInPreference());
+      const savedMock = await loadUserData<Partial<CoachMockHealthSettings>>(COACH_MOCK_HEALTH_KEY);
+      if (savedMock) {
+        setCoachMockHealth({
+          enabled: !!savedMock.enabled,
+          mindfulMinutesMock: savedMock.mindfulMinutesMock === 20 ? 20 : 0,
+        });
+      } else {
+        setCoachMockHealth(DEFAULT_COACH_MOCK_HEALTH);
+      }
+      const cp = await loadCoachingProfile();
+      setCoachingProfile(cp.completedAt ? cp : null);
     } catch (error) {
       console.error('Error loading user data:', error);
     }
@@ -178,6 +264,15 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
     }
   };
 
+  const persistCoachMockHealth = async (next: CoachMockHealthSettings) => {
+    try {
+      setCoachMockHealth(next);
+      await saveUserData(COACH_MOCK_HEALTH_KEY, next);
+    } catch (error) {
+      console.error('Error saving coach mock health:', error);
+    }
+  };
+
   const handleLogout = () => {
     setShowLogoutModal(true);
   };
@@ -187,7 +282,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       // Sign out from Firebase (data persists for next login)
       try {
         const { signOut } = await import('firebase/auth');
-        const { auth } = await import('./firebaseConfig');
+        const { auth } = (await import('./firebaseConfig')) as { auth: Auth };
         await signOut(auth);
         // Auth state listener in App.tsx will handle the rest
       } catch (firebaseError) {
@@ -208,6 +303,78 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   const renderProfileTab = () => (
     <View style={styles.tabContent}>
+      {onOpenAppGuide ? (
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.guideReplayRow}
+            onPress={onOpenAppGuide}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Open app guide"
+          >
+            <View style={styles.settingLabelContainer}>
+              <Text style={styles.settingLabel}>App guide</Text>
+              <Text style={styles.settingDescription}>
+                Quick tour — what each main button does.
+              </Text>
+            </View>
+            <Text style={styles.guideReplayChevron}>▶</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Subscription</Text>
+        <View style={styles.subscriptionStatusRow}>
+          <Text style={styles.settingLabel}>Current plan</Text>
+          <Text style={[styles.subscriptionTierPill, isPremium && styles.subscriptionTierPillPremium]}>
+            {tierLabel(tier)}
+          </Text>
+        </View>
+        <Text style={styles.settingDescription}>
+          Basic includes workout tracking, your plans, nutrition & macros, and all trends. Premium adds Gemini AI
+          Coach, Food coach, and AI Workout builder.
+        </Text>
+
+        {!isPremium ? (
+          <TouchableOpacity style={styles.subscriptionPrimaryBtn} onPress={presentUpgrade} activeOpacity={0.88}>
+            <Text style={styles.subscriptionPrimaryBtnText}>Upgrade to Premium</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <TouchableOpacity style={styles.subscriptionSecondaryBtn} onPress={() => restorePurchases()} activeOpacity={0.7}>
+          <Text style={styles.subscriptionSecondaryBtnText}>Restore purchases</Text>
+        </TouchableOpacity>
+
+        <Text style={[styles.settingDescription, { marginTop: 14, marginBottom: 6 }]}>Included with Basic</Text>
+        {basicFeatures.slice(0, 6).map((f) => (
+          <Text key={f.id} style={styles.subscriptionFeatureLine}>
+            • {f.label}
+          </Text>
+        ))}
+        <Text style={[styles.settingDescription, { marginTop: 10, marginBottom: 6 }]}>Premium (Gemini)</Text>
+        {premiumFeatures.map((f) => (
+          <Text key={f.id} style={styles.subscriptionFeatureLine}>
+            • {f.label}
+          </Text>
+        ))}
+
+        {__DEV__ ? (
+          <View style={[styles.settingRow, { marginTop: 16 }]}>
+            <View style={styles.settingLabelContainer}>
+              <Text style={styles.settingLabel}>Premium (dev override)</Text>
+              <Text style={styles.settingDescription}>Simulate an active subscription for testing gates.</Text>
+            </View>
+            <Switch
+              value={isPremium}
+              onValueChange={(v) => void setDevPremiumOverride(v)}
+              trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+              thumbColor={isPremium ? '#fff' : '#888'}
+            />
+          </View>
+        ) : null}
+      </View>
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
         
@@ -272,40 +439,142 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Fitness Goals</Text>
-        
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Fitness Goal</Text>
-          <TextInput
-            style={styles.input}
-            value={profile.fitnessGoal}
-            onChangeText={(text) => setProfile({ ...profile, fitnessGoal: text })}
-            placeholder="e.g., Weight Loss, Muscle Gain, General Fitness"
-            editable={isEditingProfile}
-            autoCapitalize="words"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Experience Level</Text>
-          <TextInput
-            style={styles.input}
-            value={profile.experienceLevel}
-            onChangeText={(text) => setProfile({ ...profile, experienceLevel: text })}
-            placeholder="e.g., Beginner, Intermediate, Advanced"
-            editable={isEditingProfile}
-            autoCapitalize="words"
-          />
-        </View>
+        <Text style={styles.sectionTitle}>Coaching profile</Text>
+        <Text style={styles.settingDescription}>
+          Your goals, schedule, equipment, and body stats from onboarding. Update the full questionnaire
+          if your goals change or you want to fix an answer.
+        </Text>
+        {onEditCoachingQuestionnaire ? (
+          <TouchableOpacity
+            style={[styles.guideReplayRow, { marginTop: 10, marginBottom: 12 }]}
+            onPress={onEditCoachingQuestionnaire}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Update coaching questionnaire"
+          >
+            <View style={styles.settingLabelContainer}>
+              <Text style={styles.settingLabel}>Update questionnaire</Text>
+              <Text style={styles.settingDescription}>
+                Revisit goals, training days, experience, injuries, and nutrition targets.
+              </Text>
+            </View>
+            <Text style={styles.guideReplayChevron}>▶</Text>
+          </TouchableOpacity>
+        ) : null}
+        {coachingProfile && isCoachingProfileComplete(coachingProfile) ? (
+          <>
+            <Text style={styles.coachingReadonlyLine}>
+              Goal:{' '}
+              {coachingProfile.goalProfile.primaryGoal
+                ? PRIMARY_GOAL_LABELS[coachingProfile.goalProfile.primaryGoal]
+                : '—'}
+            </Text>
+            <Text style={styles.coachingReadonlyLine}>
+              Schedule: {coachingProfile.scheduleProfile.daysPerWeek} days ×{' '}
+              {coachingProfile.scheduleProfile.sessionLengthMinutes} min (
+              {coachingProfile.scheduleProfile.bestTimeOfDay})
+            </Text>
+            <Text style={styles.coachingReadonlyLine}>
+              Experience: {coachingProfile.experienceProfile.level}
+            </Text>
+            <Text style={styles.coachingReadonlyLine}>
+              Equipment: {coachingProfile.equipmentProfile.access?.replace(/_/g, ' ')}
+            </Text>
+            <Text style={[styles.label, { marginTop: 16 }]}>Challenge dial</Text>
+            <View style={styles.challengeRow}>
+              {(['easy', 'balanced', 'maximum'] as ChallengeDial[]).map((d) => (
+                <TouchableOpacity
+                  key={d}
+                  style={[
+                    styles.challengeChip,
+                    coachingProfile.adherenceProfile.challengeDial === d &&
+                      styles.challengeChipActive,
+                  ]}
+                  onPress={async () => {
+                    const next = {
+                      ...coachingProfile,
+                      adherenceProfile: { ...coachingProfile.adherenceProfile, challengeDial: d },
+                    };
+                    setCoachingProfile(next);
+                    await saveCoachingProfileDraft(next, 8);
+                    await syncCoachingProfileToUserProfile(next);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.challengeChipText,
+                      coachingProfile.adherenceProfile.challengeDial === d &&
+                        styles.challengeChipTextActive,
+                    ]}
+                  >
+                    {d === 'easy'
+                      ? 'Easy'
+                      : d === 'balanced'
+                        ? 'Balanced'
+                        : 'Max'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {isEditingProfile ? (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Exercises you enjoy</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={coachingProfile.preferenceProfile.likedExercises ?? ''}
+                    onChangeText={(text) =>
+                      setCoachingProfile({
+                        ...coachingProfile,
+                        preferenceProfile: {
+                          ...coachingProfile.preferenceProfile,
+                          likedExercises: text,
+                        },
+                      })
+                    }
+                    placeholder="Optional"
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Exercises to avoid</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={coachingProfile.preferenceProfile.dislikedExercises ?? ''}
+                    onChangeText={(text) =>
+                      setCoachingProfile({
+                        ...coachingProfile,
+                        preferenceProfile: {
+                          ...coachingProfile.preferenceProfile,
+                          dislikedExercises: text,
+                        },
+                      })
+                    }
+                    placeholder="Optional"
+                  />
+                </View>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <Text style={styles.settingDescription}>
+            Complete onboarding after sign-in to build your coaching profile, or tap Update questionnaire
+            above when available.
+          </Text>
+        )}
       </View>
 
-      <View style={styles.buttonContainer}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Account details</Text>
         {isEditingProfile ? (
           <>
             <TouchableOpacity
               style={[styles.button, styles.saveButton]}
-              onPress={() => {
-                saveProfile(profile);
+              onPress={async () => {
+                await saveProfile(profile);
+                if (coachingProfile) {
+                  await saveCoachingProfileDraft(coachingProfile, 8);
+                  await syncCoachingProfileToUserProfile(coachingProfile);
+                }
                 setIsEditingProfile(false);
               }}
             >
@@ -357,7 +626,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
               setSettings(newSettings);
               saveSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.notifications ? '#fff' : '#888'}
           />
         </View>
@@ -374,7 +643,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
               setSettings(newSettings);
               saveSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.reminderTime !== 'Off' ? '#fff' : '#888'}
           />
         </View>
@@ -382,6 +651,113 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>App Preferences</Text>
+
+        {onOpenAppGuide ? (
+          <TouchableOpacity
+            style={styles.guideReplayRow}
+            onPress={onOpenAppGuide}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Replay app guide"
+          >
+            <View style={styles.settingLabelContainer}>
+              <Text style={styles.settingLabel}>App guide</Text>
+              <Text style={styles.settingDescription}>
+                Short tap tour — what each main button does.
+              </Text>
+            </View>
+            <Text style={styles.guideReplayChevron}>▶</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Show predictive workout target</Text>
+            <Text style={styles.settingDescription}>
+              Displays a target card with suggested load and reps from previous performance.
+            </Text>
+          </View>
+          <Switch
+            value={showPredictiveWeight}
+            onValueChange={(value) => setPreference('showPredictiveWeight', value)}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={showPredictiveWeight ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Enable macro impact preview</Text>
+            <Text style={styles.settingDescription}>
+              Shows current vs predicted macros in nutrition search before adding food.
+            </Text>
+          </View>
+          <Switch
+            value={enableMacroPreview}
+            onValueChange={(value) => setPreference('enableMacroPreview', value)}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={enableMacroPreview ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Auto rest timer after set log</Text>
+            <Text style={styles.settingDescription}>
+              Automatically starts a 2:00 timer when a set is logged.
+            </Text>
+          </View>
+          <Switch
+            value={autoRestTimer}
+            onValueChange={(value) => setPreference('autoRestTimer', value)}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={autoRestTimer ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Stay logged in</Text>
+            <Text style={styles.settingDescription}>
+              Keep your session on this device so you don&apos;t need to sign in every time you open the app
+            </Text>
+          </View>
+          <Switch
+            value={stayLoggedIn}
+            onValueChange={(value) => {
+              if (!value) {
+                Alert.alert(
+                  'Turn off stay logged in?',
+                  'You will be signed out now. When stay logged in is off, you will also be signed out whenever you leave the app.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Sign out',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          await setStayLoggedInPreference(false);
+                          setStayLoggedIn(false);
+                          const { signOut } = await import('firebase/auth');
+                          const { auth } = (await import('./firebaseConfig')) as { auth: Auth };
+                          await signOut(auth);
+                        } catch (e) {
+                          console.error('Error updating stay logged in:', e);
+                        }
+                      },
+                    },
+                  ]
+                );
+                return;
+              }
+              setStayLoggedInPreference(true)
+                .then(() => setStayLoggedIn(true))
+                .catch((e) => console.error('Error saving stay logged in:', e));
+            }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={stayLoggedIn ? '#fff' : '#888'}
+          />
+        </View>
         
         <View style={styles.settingRow}>
           <Text style={styles.settingLabel}>Haptic Feedback</Text>
@@ -392,7 +768,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
               setSettings(newSettings);
               saveSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.hapticFeedback ? '#fff' : '#888'}
           />
         </View>
@@ -406,7 +782,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
               setSettings(newSettings);
               saveSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.darkMode ? '#fff' : '#888'}
           />
         </View>
@@ -420,7 +796,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
               setSettings(newSettings);
               saveSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.autoBackup ? '#fff' : '#888'}
           />
         </View>
@@ -431,9 +807,10 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
         
         <View style={styles.settingRow}>
           <View style={styles.settingLabelContainer}>
-            <Text style={styles.settingLabel}>Watch & Health Data Sync</Text>
+            <Text style={styles.settingLabel}>Watch & Apple Health sync</Text>
             <Text style={styles.settingDescription}>
-              Allow the app to pull data from your smartwatch, Health app, and fitness apps
+              On iPhone, allow the app to read metrics from Apple Health, your Apple Watch, and other
+              apps that write to Apple Health. On Android, similar data may come from Google Fit.
             </Text>
           </View>
           <Switch
@@ -461,16 +838,140 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 }
               } else {
                 Alert.alert(
-                  'Health Data Sync Disabled',
-                  'Health data sync has been disabled. The app will no longer pull data from your watch or health apps.',
+                  'Sync disabled',
+                  'The app will no longer read workout or activity metrics from Apple Health or connected services.',
                   [{ text: 'OK' }]
                 );
               }
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.healthDataSyncEnabled ? '#fff' : '#888'}
           />
         </View>
+
+        <Text style={styles.healthCategoriesIntro}>
+          Choose which types of data the app may read from Apple Health (iOS), Google Fit (Android),
+          and wearables. Turning a category off stops this app from using that data. System controls in
+          Apple Health (Data Access & Devices) still apply separately.
+        </Text>
+
+        {Platform.OS === 'ios' && (
+          <TouchableOpacity
+            style={styles.secondaryActionButton}
+            onPress={() => Linking.openSettings()}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.secondaryActionButtonText}>Open iPhone Settings</Text>
+            <Text style={styles.secondaryActionButtonSubtext}>
+              Then Apple Health → Data Access & Devices → TYLAI to adjust what Apple Health shares
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {HEALTH_METRIC_ORDER.map((key: HealthMetricKey) => {
+          const copy = HEALTH_METRIC_COPY[key];
+          const isExpoMetric = (EXPO_HEALTH_METRIC_KEYS as readonly HealthMetricKey[]).includes(key);
+          return (
+            <View key={key} style={styles.settingRow}>
+              <View style={styles.settingLabelContainer}>
+                <Text style={styles.settingLabel}>{copy.title}</Text>
+                <Text style={styles.settingDescription}>{copy.description}</Text>
+                {!isExpoMetric && (
+                  <Text style={styles.settingDescriptionMuted}>
+                    Not used by in-app Fitness charts in this build; your choice is saved for privacy
+                    and future Health features.
+                  </Text>
+                )}
+              </View>
+              <Switch
+                value={healthDataPerms[key]}
+                disabled={!settings.healthDataSyncEnabled}
+                onValueChange={async (value) => {
+                  const next: HealthDataPermissions = { ...healthDataPerms, [key]: value };
+                  setHealthDataPerms(next);
+                  await saveHealthDataPermissions(next);
+                  if (value && settings.healthDataSyncEnabled && isExpoMetric) {
+                    try {
+                      const HealthService = (await import('./src/services/HealthService')).default;
+                      await HealthService.requestPermissions();
+                    } catch (e) {
+                      console.warn('Health permission request after category enable:', e);
+                    }
+                  }
+                }}
+                trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+                thumbColor={healthDataPerms[key] ? '#fff' : '#888'}
+              />
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>AI Coach (testing)</Text>
+        <Text style={styles.settingDescription}>
+          Override mindful minutes for the Dashboard AI Coach only. Real Apple Health reads still run for
+          charts unless sync is off; this mock only replaces the coach snapshot so you can compare replies.
+        </Text>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Mock health data</Text>
+            <Text style={styles.settingDescription}>
+              When on, the coach uses the simulated mindful minutes below instead of HealthKit for that field.
+            </Text>
+          </View>
+          <Switch
+            value={coachMockHealth.enabled}
+            onValueChange={(value) => {
+              void persistCoachMockHealth({ ...coachMockHealth, enabled: value });
+            }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={coachMockHealth.enabled ? '#fff' : '#888'}
+          />
+        </View>
+
+        {coachMockHealth.enabled && (
+          <View style={styles.mockMindfulBlock}>
+            <Text style={styles.settingLabel}>Simulated mindful minutes</Text>
+            <View style={styles.optionButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.optionButton,
+                  coachMockHealth.mindfulMinutesMock === 0 && styles.optionButtonActive,
+                ]}
+                onPress={() => void persistCoachMockHealth({ ...coachMockHealth, mindfulMinutesMock: 0 })}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.optionButtonText,
+                    coachMockHealth.mindfulMinutesMock === 0 && styles.optionButtonTextActive,
+                  ]}
+                >
+                  0 min
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.optionButton,
+                  coachMockHealth.mindfulMinutesMock === 20 && styles.optionButtonActive,
+                ]}
+                onPress={() => void persistCoachMockHealth({ ...coachMockHealth, mindfulMinutesMock: 20 })}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.optionButtonText,
+                    coachMockHealth.mindfulMinutesMock === 20 && styles.optionButtonTextActive,
+                  ]}
+                >
+                  20 min
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -486,26 +987,79 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Text style={styles.actionButtonSubtext}>Restore from backup</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.actionButton, styles.dangerButton]}
-          onPress={() => Alert.alert(
-            'Clear All Data',
-            'This will permanently delete all your wellness data. This action cannot be undone.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Delete All', 
-                style: 'destructive',
-                onPress: () => {
-                  // Clear all data logic here
-                  Alert.alert('Data Cleared', 'All data has been deleted');
-                }
-              }
-            ]
-          )}
+          onPress={() =>
+            Alert.alert(
+              'Delete data on this device?',
+              `This removes wellness data stored locally for your account on this phone (workouts, logs, preferences in this app). This cannot be undone.\n\n${LOCAL_DATA_DELETION_FOOTNOTE}`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete local data',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await clearAllUserData();
+                      try {
+                        const HealthService = (await import('./src/services/HealthService')).default;
+                        HealthService.clearPermissionCache();
+                      } catch {
+                        /* optional module */
+                      }
+                      setProfile({
+                        name: '',
+                        email: '',
+                        age: '',
+                        sex: '',
+                        height: '',
+                        weight: '',
+                        fitnessGoal: 'General Fitness',
+                        experienceLevel: 'Beginner',
+                      });
+                      setSettings({
+                        notifications: true,
+                        hapticFeedback: true,
+                        darkMode: true,
+                        autoBackup: true,
+                        reminderTime: '09:00',
+                        language: 'English',
+                        healthDataSyncEnabled: true,
+                      });
+                      setInterfaceSettings({
+                        theme: 'dark',
+                        fontSize: 'medium',
+                        animations: true,
+                        compactMode: false,
+                        showProgressBars: true,
+                      });
+                      setHealthDataPerms(DEFAULT_HEALTH_DATA_PERMISSIONS);
+                      setCoachMockHealth(DEFAULT_COACH_MOCK_HEALTH);
+                      setCoachingProfile(null);
+                      await saveUserData(COACH_MOCK_HEALTH_KEY, DEFAULT_COACH_MOCK_HEALTH);
+                      await saveHealthDataPermissions(DEFAULT_HEALTH_DATA_PERMISSIONS);
+                      await updateNotificationSchedule();
+                      Alert.alert(
+                        'Local data removed',
+                        'Your wellness data for this account has been deleted from this device. The app no longer stores those personal metrics here. If you use cloud sign-in, deleting your account may require a separate step with your provider.'
+                      );
+                    } catch (e) {
+                      console.error('Local data wipe failed:', e);
+                      Alert.alert(
+                        'Could not finish',
+                        'Something went wrong while deleting data. Try again or reinstall the app.'
+                      );
+                    }
+                  },
+                },
+              ]
+            )
+          }
         >
-          <Text style={styles.actionButtonText}>Clear All Data</Text>
-          <Text style={styles.actionButtonSubtext}>Permanently delete all data</Text>
+          <Text style={styles.actionButtonText}>Delete data on this device</Text>
+          <Text style={styles.actionButtonSubtext}>
+            Erase local wellness data for this account (right to be forgotten on device)
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -525,7 +1079,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.theme === 'dark' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, theme: 'dark' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, theme: 'dark' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -541,7 +1095,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.theme === 'light' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, theme: 'light' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, theme: 'light' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -557,7 +1111,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.theme === 'auto' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, theme: 'auto' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, theme: 'auto' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -579,7 +1133,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.fontSize === 'small' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, fontSize: 'small' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, fontSize: 'small' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -595,7 +1149,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.fontSize === 'medium' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, fontSize: 'medium' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, fontSize: 'medium' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -611,7 +1165,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 interfaceSettings.fontSize === 'large' && styles.optionButtonActive
               ]}
               onPress={() => {
-                const newSettings = { ...interfaceSettings, fontSize: 'large' };
+                const newSettings: InterfaceSettings = { ...interfaceSettings, fontSize: 'large' };
                 setInterfaceSettings(newSettings);
                 saveInterfaceSettings(newSettings);
               }}
@@ -629,11 +1183,11 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Switch
             value={interfaceSettings.animations}
             onValueChange={(value) => {
-              const newSettings = { ...interfaceSettings, animations: value };
+              const newSettings: InterfaceSettings = { ...interfaceSettings, animations: value };
               setInterfaceSettings(newSettings);
               saveInterfaceSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={interfaceSettings.animations ? '#fff' : '#888'}
           />
         </View>
@@ -643,11 +1197,11 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Switch
             value={interfaceSettings.compactMode}
             onValueChange={(value) => {
-              const newSettings = { ...interfaceSettings, compactMode: value };
+              const newSettings: InterfaceSettings = { ...interfaceSettings, compactMode: value };
               setInterfaceSettings(newSettings);
               saveInterfaceSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={interfaceSettings.compactMode ? '#fff' : '#888'}
           />
         </View>
@@ -657,11 +1211,11 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           <Switch
             value={interfaceSettings.showProgressBars}
             onValueChange={(value) => {
-              const newSettings = { ...interfaceSettings, showProgressBars: value };
+              const newSettings: InterfaceSettings = { ...interfaceSettings, showProgressBars: value };
               setInterfaceSettings(newSettings);
               saveInterfaceSettings(newSettings);
             }}
-            trackColor={{ false: '#3a3a3a', true: '#4ECDC4' }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={interfaceSettings.showProgressBars ? '#fff' : '#888'}
           />
         </View>
@@ -672,9 +1226,19 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
   const renderLegalTab = () => (
     <View style={styles.tabContent}>
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Legal Documents</Text>
+        <Text style={styles.sectionTitle}>Privacy & safety</Text>
+        <Text style={styles.complianceHeading}>Medical disclaimer</Text>
+        <Text style={styles.complianceBlock}>{MEDICAL_DISCLAIMER_SHORT}</Text>
+        <Text style={styles.complianceHeading}>Apple Health & HealthKit</Text>
+        <Text style={styles.complianceBlock}>{APPLE_HEALTH_PRIVACY_SUMMARY}</Text>
+        <Text style={styles.complianceHeading}>Workouts & liability</Text>
+        <Text style={styles.complianceBlock}>{WORKOUT_LIABILITY_WAIVER_SHORT}</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Legal documents</Text>
         <Text style={styles.sectionDescription}>
-          View licenses, notices, and legal information for this application.
+          Licenses, notices, and third-party information for this application.
         </Text>
       </View>
 
@@ -724,12 +1288,18 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 
   return (
     <SafeAreaView style={styles.container}>
+      <KeyboardSafeView style={{ flex: 1 }}>
       <StatusBar style="light" />
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Settings</Text>
         <View style={styles.placeholder} />
@@ -764,7 +1334,11 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       </View>
 
       {/* Content */}
-      <ScrollView style={styles.contentContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {activeTab === 'profile' && renderProfileTab()}
         {activeTab === 'interface' && renderInterfaceTab()}
         {activeTab === 'settings' && renderSettingsTab()}
@@ -775,13 +1349,13 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       <Modal
         visible={showLogoutModal}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setShowLogoutModal(false)}
       >
         <TouchableWithoutFeedback onPress={() => setShowLogoutModal(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={() => {}}>
-              <View style={styles.modalContainer}>
+              <View style={styles.confirmLogoutModalCard}>
             <Text style={styles.modalTitle}>Confirm Logout</Text>
             <Text style={styles.modalMessage}>
               Are you sure you want to logout? All your data will be saved and you can continue where you left off when you sign back in.
@@ -794,7 +1368,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
                 <Text style={styles.modalButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.logoutButton]}
+                style={[styles.modalButton, styles.modalLogoutTint]}
                 onPress={confirmLogout}
               >
                 <Text style={styles.modalButtonText}>Logout</Text>
@@ -809,10 +1383,10 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
       {/* Document Viewer Modal */}
       <Modal
         visible={showDocumentModal}
-        animationType="slide"
+        animationType="none"
         onRequestClose={() => setShowDocumentModal(false)}
       >
-        <SafeAreaView style={styles.modalContainer}>
+        <SafeAreaView style={styles.documentModalContainer}>
           <View style={styles.documentHeader}>
             <Text style={styles.documentTitle}>{selectedDocument || 'Document'}</Text>
             <TouchableOpacity
@@ -827,6 +1401,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
           </ScrollView>
         </SafeAreaView>
       </Modal>
+      </KeyboardSafeView>
     </SafeAreaView>
   );
 }
@@ -834,7 +1409,7 @@ export default function SettingsScreen({ onBack, onLogout }: SettingsScreenProps
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   header: {
     flexDirection: 'row',
@@ -843,14 +1418,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: AppTheme.border,
   },
   backButton: {
     padding: 5,
   },
   backButtonText: {
-    color: '#4ECDC4',
-    fontSize: 16,
+    color: AppTheme.accent,
+    fontSize: 22,
     fontWeight: 'bold',
   },
   headerTitle: {
@@ -863,11 +1438,13 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: AppTheme.card,
     marginHorizontal: 20,
     marginVertical: 15,
     borderRadius: 12,
     padding: 4,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   tabButton: {
     flex: 1,
@@ -876,15 +1453,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tabButtonActive: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
   },
   tabButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   tabButtonTextActive: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
   },
   tabContent: {
     paddingHorizontal: 20,
@@ -894,6 +1471,11 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 30,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    padding: 14,
   },
   sectionTitle: {
     fontSize: 20,
@@ -911,14 +1493,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   input: {
-    backgroundColor: '#3a3a3a',
+    backgroundColor: '#121212',
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
     fontSize: 16,
     color: '#fff',
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: AppTheme.border,
   },
   settingRow: {
     flexDirection: 'row',
@@ -926,7 +1508,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: AppTheme.border,
+  },
+  guideReplayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: AppTheme.border,
+  },
+  subscriptionStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  subscriptionTierPill: {
+    color: AppTheme.textMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  subscriptionTierPillPremium: {
+    color: '#111',
+    backgroundColor: AppTheme.accent,
+  },
+  subscriptionPrimaryBtn: {
+    marginTop: 12,
+    backgroundColor: AppTheme.accent,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  subscriptionPrimaryBtnText: {
+    color: '#111',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  subscriptionSecondaryBtn: {
+    marginTop: 10,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  subscriptionSecondaryBtnText: {
+    color: AppTheme.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  subscriptionFeatureLine: {
+    color: '#9ca3af',
+    fontSize: 13,
+    lineHeight: 20,
+    marginLeft: 4,
+  },
+  guideReplayChevron: {
+    color: AppTheme.accent,
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 12,
   },
   settingLabel: {
     fontSize: 16,
@@ -939,9 +1583,85 @@ const styles = StyleSheet.create({
   },
   settingDescription: {
     fontSize: 12,
-    color: '#888',
+    color: AppTheme.textMuted,
     marginTop: 4,
     lineHeight: 16,
+  },
+  settingDescriptionMuted: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 6,
+    lineHeight: 15,
+    fontStyle: 'italic',
+  },
+  healthCategoriesIntro: {
+    fontSize: 13,
+    color: '#aaa',
+    lineHeight: 18,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  secondaryActionButton: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  secondaryActionButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  secondaryActionButtonSubtext: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 6,
+    lineHeight: 16,
+  },
+  complianceHeading: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  complianceBlock: {
+    fontSize: 14,
+    color: '#bbb',
+    lineHeight: 20,
+  },
+  coachingReadonlyLine: {
+    fontSize: 14,
+    color: '#ccc',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  challengeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  challengeChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#444',
+    alignItems: 'center',
+  },
+  challengeChipActive: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(255, 107, 53, 0.15)',
+  },
+  challengeChipText: {
+    color: '#aaa',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  challengeChipTextActive: {
+    color: AppTheme.accent,
   },
   buttonContainer: {
     marginTop: 20,
@@ -954,10 +1674,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   editButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
   },
   saveButton: {
-    backgroundColor: '#00ff88',
+    backgroundColor: AppTheme.accent,
   },
   cancelButton: {
     backgroundColor: '#666',
@@ -965,15 +1685,15 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
   },
   actionButton: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: AppTheme.card,
     borderRadius: 10,
     padding: 15,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: AppTheme.border,
   },
   dangerButton: {
     borderColor: '#ff4444',
@@ -1011,7 +1731,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContainer: {
+  confirmLogoutModalCard: {
     backgroundColor: '#2a2a2a',
     borderRadius: 15,
     padding: 25,
@@ -1043,13 +1763,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 5,
   },
-  logoutButton: {
+  modalLogoutTint: {
     backgroundColor: '#ff4444',
   },
   modalButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  mockMindfulBlock: {
+    marginTop: 8,
+    marginBottom: 4,
   },
   optionButtons: {
     flexDirection: 'row',
@@ -1064,30 +1788,30 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   optionButtonActive: {
-    backgroundColor: '#4ECDC4',
-    borderColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
+    borderColor: AppTheme.accent,
   },
   optionButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   optionButtonTextActive: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
   },
   sectionDescription: {
     fontSize: 14,
-    color: '#888',
+    color: AppTheme.textMuted,
     marginBottom: 20,
     lineHeight: 20,
   },
   documentButton: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#121212',
     borderRadius: 10,
     padding: 15,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: AppTheme.border,
   },
   documentButtonTitle: {
     fontSize: 16,
@@ -1097,11 +1821,11 @@ const styles = StyleSheet.create({
   },
   documentButtonSubtext: {
     fontSize: 14,
-    color: '#888',
+    color: AppTheme.textMuted,
   },
-  modalContainer: {
+  documentModalContainer: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   documentHeader: {
     flexDirection: 'row',
@@ -1110,8 +1834,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
-    backgroundColor: '#2a2a2a',
+    borderBottomColor: AppTheme.border,
+    backgroundColor: AppTheme.card,
   },
   documentTitle: {
     fontSize: 18,
@@ -1122,11 +1846,11 @@ const styles = StyleSheet.create({
   closeButton: {
     paddingHorizontal: 15,
     paddingVertical: 8,
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
     borderRadius: 8,
   },
   closeButtonText: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
     fontSize: 16,
     fontWeight: '600',
   },

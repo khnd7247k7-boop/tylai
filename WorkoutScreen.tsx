@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,16 +6,78 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  TextInput,
   Alert,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import { loadUserData, saveUserData } from './src/utils/userStorage';
 import AIService, { ProgramAdaptation } from './AIService';
+import { MAX_WORKING_SETS, clampWorkingSets, canAddWorkingSet, applyWeightProgression, roundToPlateWeight, MIN_WEIGHT_PROGRESSION_LBS } from './src/utils/progressionLimits';
 import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exerciseDatabase';
+import { AppTheme } from './src/theme/appVisualTheme';
+
+/** Plyometric exercises (by id) — used when user wants athleticism, mobility, or stability */
+const PLYOMETRIC_EXERCISE_IDS = new Set([
+  'snap-downs',
+  'single-leg-linear-hops',
+  'single-leg-drop-landings',
+  'lateral-pogos',
+  'skater-jumps',
+  '90-180-degree-jumps',
+  'frog-jumps',
+  'split-squat-jumps',
+  'cossack-squat-hops',
+  'plank-jacks',
+  'reverse-lunge-to-knee-up',
+  'tuck-jumps',
+  'box-jump-ups',
+  'pike-jumps',
+  'depth-jumps',
+  'medicine-ball-slams',
+  'plyo-push-ups',
+  'rotational-med-ball-throws',
+]);
 import UserProfileService from './src/services/UserProfileService';
+import {
+  loadCoachingProfile,
+  buildWorkoutGenerationInput,
+  isPendingFirstWorkoutPlan,
+  clearPendingFirstWorkoutPlan,
+  isOnboardingComplete,
+} from './src/services/CoachingProfileService';
+import { PRIMARY_GOAL_LABELS } from './src/types/coachingProfile';
+import type { CoachingProfile } from './src/types/coachingProfile';
+import {
+  allowedDifficulties,
+  buildWorkoutGenerationModifiers,
+  type WorkoutGenerationModifiers,
+} from './src/services/GoalDrivenCoaching';
+import {
+  isHeavyCompound,
+  maxRepCapForExercise,
+  nextLoadOrRepProgression,
+} from './src/utils/compoundRepCaps';
+import { computeSystemicVolumeContext, adjustSplitFocusesForSystemicTax } from './src/utils/systemicVolume';
 import WorkoutOptionsScreen from './WorkoutOptionsScreen';
+import type { GeneratedWorkoutPlan } from './data/workoutPrograms';
+import { useSmallWins } from './src/context/SmallWinsContext';
+import WorkoutSession from './WorkoutSession';
+import WarmupBlockSession from './src/components/WarmupBlockSession';
+import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
+import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
+import { useTourTargetRef } from './src/tour/useTourTargetRef';
+import { useUserSettings } from './SettingsProvider';
+import {
+  buildInitialExerciseLogs,
+  buildTrackingExercises,
+  expandCompletedExercisesForHistory,
+  getWarmupProgress,
+  syncWarmupSetCompletion,
+  type ExerciseLogEntry,
+} from './src/utils/workoutWarmupLogging';
 
 interface Exercise {
   id: string;
@@ -26,12 +88,19 @@ interface Exercise {
   completed: boolean;
   category: 'strength' | 'cardio' | 'flexibility' | 'balance';
   restTime?: number; // seconds between sets
+  /** For warm-up exercises: suggested duration in seconds (slow, controlled). Total warm-up block ~10 min. */
+  durationSeconds?: number;
   // Enhanced exercise data
   movementPattern?: string;
   muscleGroups?: string[];
   equipment?: string[];
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
   alternatives?: string[];
+  /** Display grouping block inside a generated workout day. */
+  phase?: 'Warm-Up' | 'Main Lift' | 'Secondary Lifts' | 'Accessory Lifts' | 'Finisher' | 'Cooldown';
+  /** Collapsed warm-up block for workout tracking (multiple stretches → one log entry). */
+  isWarmupBlock?: boolean;
+  warmupItems?: Array<{ id: string; name: string; durationSeconds?: number }>;
 }
 
 interface ExerciseSet {
@@ -41,12 +110,7 @@ interface ExerciseSet {
   completed: boolean;
 }
 
-interface ExerciseLog {
-  exerciseId: string;
-  exerciseName: string;
-  sets: ExerciseSet[];
-  totalSets: number;
-}
+type ExerciseLog = ExerciseLogEntry;
 
 interface WorkoutPlan {
   id: string;
@@ -90,27 +154,15 @@ interface SavedWorkoutPlan extends WorkoutPlan {
   lastSaved?: string;
 }
 
-export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.Element {
-  // Q&A State for AI-powered workout plan generation
-  const [fitnessGoals, setFitnessGoals] = useState<string>('');
-  const [secondaryGoals, setSecondaryGoals] = useState<string>('');
-  const [gender, setGender] = useState<'male' | 'female' | 'other' | ''>('');
-  const [experienceLevel, setExperienceLevel] = useState<string>('');
-  const [workoutFrequency, setWorkoutFrequency] = useState<string>('');
-  const [preferredWorkoutLength, setPreferredWorkoutLength] = useState<string>('');
-  const [injuriesLimitations, setInjuriesLimitations] = useState<string>('');
-  const [exerciseLimitations, setExerciseLimitations] = useState<string>('');
-  const [currentActivityLevel, setCurrentActivityLevel] = useState<string>('');
-  const [availableEquipment, setAvailableEquipment] = useState<string>('');
-  const [preferredWorkoutTime, setPreferredWorkoutTime] = useState<string>('');
-  const [dietaryPreferences, setDietaryPreferences] = useState<string>('');
-  const [additionalInfo, setAdditionalInfo] = useState<string>('');
-  
-  // Legacy state (keeping for compatibility)
-  const [selectedGoal, setSelectedGoal] = useState<string>('');
-  const [selectedLevel, setSelectedLevel] = useState<string>('');
-  const [daysPerWeek, setDaysPerWeek] = useState<number | null>(null);
-  const [excludedExercises, setExcludedExercises] = useState<string[]>([]);
+export default function WorkoutScreen({
+  onBack,
+  onPlanSetupComplete,
+}: {
+  onBack: () => void;
+  onPlanSetupComplete?: () => void;
+}): React.ReactElement {
+  const fitnessAiGenerateRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessAiGenerate);
+  const [generatingPlan, setGeneratingPlan] = useState(false);
   const [currentWorkout, setCurrentWorkout] = useState<WorkoutPlan | null>(null);
   const [currentWeeklyPlan, setCurrentWeeklyPlan] = useState<WeeklyWorkoutPlan | null>(null);
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
@@ -129,20 +181,17 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
   const [showAdaptationsModal, setShowAdaptationsModal] = useState(false);
   const [showWorkoutOptions, setShowWorkoutOptions] = useState(false);
   const [workoutOptions, setWorkoutOptions] = useState<WorkoutPlan[]>([]);
+  const [coachingProfile, setCoachingProfile] = useState<CoachingProfile | null>(null);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  const { showPredictiveWeight, autoRestTimer } = useUserSettings();
 
-  const goals = [
-    { id: 'strength', name: 'Build Strength' },
-    { id: 'weight_loss', name: 'Weight Loss' },
-    { id: 'muscle_gain', name: 'Muscle Gain' },
-    { id: 'endurance', name: 'Endurance' },
-    { id: 'flexibility', name: 'Flexibility' },
-  ];
+  const trackingExercises = useMemo(
+    () => (currentWorkout?.exercises?.length ? buildTrackingExercises(currentWorkout.exercises) : []),
+    [currentWorkout?.exercises]
+  );
 
-  const levels = [
-    { id: 'beginner', name: 'Beginner', description: 'New to fitness' },
-    { id: 'intermediate', name: 'Intermediate', description: 'Some experience' },
-    { id: 'advanced', name: 'Advanced', description: 'Experienced athlete' },
-  ];
+  const initExerciseLogs = (exercises: Exercise[]): ExerciseLog[] =>
+    buildInitialExerciseLogs(buildTrackingExercises(exercises));
 
   // Comprehensive exercise library
   const exerciseLibrary = {
@@ -185,10 +234,78 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
 
   const allExercises = getAllExercises();
 
-  // Load saved plans on mount
+  // Load saved plans and coaching profile
   useEffect(() => {
     loadSavedPlans();
+    void refreshCoachingProfile();
   }, []);
+
+  const refreshCoachingProfile = async () => {
+    const cp = await loadCoachingProfile();
+    setCoachingProfile(cp);
+    setOnboardingReady(await isOnboardingComplete());
+  };
+
+  const runGenerateFromProfile = async (cp: CoachingProfile) => {
+    const input = buildWorkoutGenerationInput(cp);
+    if (input.missingFields.length > 0) {
+      Alert.alert(
+        'Coaching profile incomplete',
+        `Please complete onboarding first. Missing: ${input.missingFields.join(', ')}.`
+      );
+      return;
+    }
+    setGeneratingPlan(true);
+    try {
+      const userProfile = await UserProfileService.getUserProfileData();
+      const gender =
+        userProfile?.sex === 'male' || userProfile?.sex === 'female' ? userProfile.sex : undefined;
+      const options = await generateMultipleWorkoutPlans(
+        input.goal,
+        input.level,
+        input.days,
+        input.excludedExercises,
+        gender,
+        input.secondaryGoals,
+        input.preferredLength,
+        3,
+        input.modifiers
+      );
+      if (!options || options.length === 0) {
+        Alert.alert('Error', 'Failed to generate workout plans. Please try again.');
+        return;
+      }
+      setWorkoutOptions(options);
+      setShowWorkoutOptions(true);
+    } finally {
+      setGeneratingPlan(false);
+    }
+  };
+
+  useEffect(() => {
+    void (async () => {
+      const pending = await isPendingFirstWorkoutPlan();
+      if (!pending) return;
+      const complete = await isOnboardingComplete();
+      if (!complete) return;
+      const cp = await loadCoachingProfile();
+      await refreshCoachingProfile();
+      try {
+        await runGenerateFromProfile(cp);
+      } catch (e) {
+        console.error('Auto-generate first plan', e);
+        Alert.alert(
+          'Plan generation failed',
+          'Your answers were saved. Tap Generate My Personalized Plan to try again.'
+        );
+      }
+    })();
+  }, []);
+
+  const { onWorkoutLoggerOpened } = useSmallWins();
+  useEffect(() => {
+    onWorkoutLoggerOpened().catch(() => {});
+  }, [onWorkoutLoggerOpened]);
 
   const loadSavedPlans = async () => {
     try {
@@ -241,6 +358,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
   };
 
   const loadPlan = async (plan: SavedWorkoutPlan) => {
+    void showPendingCoachAdaptationNoticeIfAny(plan.id);
     setCurrentWorkout(plan);
     setCurrentWeeklyPlan(plan.weeklyPlan || null);
     if (plan.weeklyPlan && plan.weeklyPlan.weekDays.length > 0) {
@@ -251,46 +369,28 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       });
       // Restore saved progress if available
       if (plan.exerciseLogs && plan.exerciseLogs.length > 0) {
-        setExerciseLogs(plan.exerciseLogs);
+        const tracked = initExerciseLogs(plan.weeklyPlan.weekDays[0].exercises);
+        setExerciseLogs(
+          plan.exerciseLogs.length === tracked.length ? plan.exerciseLogs : tracked
+        );
         setCurrentExerciseIndex(plan.currentExerciseIndex || 0);
         setCurrentSetIndex(plan.currentSetIndex || 0);
       } else {
-        // Initialize fresh logs
-        const initialLogs: ExerciseLog[] = plan.weeklyPlan.weekDays[0].exercises.map(ex => ({
-          exerciseId: ex.id,
-          exerciseName: ex.name,
-          totalSets: ex.sets,
-          sets: Array.from({ length: ex.sets }, (_, i) => ({
-            setNumber: i + 1,
-            reps: ex.reps,
-            weight: 0,
-            completed: false
-          }))
-        }));
-        setExerciseLogs(initialLogs);
+        setExerciseLogs(initExerciseLogs(plan.weeklyPlan.weekDays[0].exercises));
         setCurrentExerciseIndex(0);
         setCurrentSetIndex(0);
       }
     } else {
       // Restore saved progress if available
       if (plan.exerciseLogs && plan.exerciseLogs.length > 0) {
-        setExerciseLogs(plan.exerciseLogs);
+        const tracked = initExerciseLogs(plan.exercises);
+        setExerciseLogs(
+          plan.exerciseLogs.length === tracked.length ? plan.exerciseLogs : tracked
+        );
         setCurrentExerciseIndex(plan.currentExerciseIndex || 0);
         setCurrentSetIndex(plan.currentSetIndex || 0);
       } else {
-        // Initialize fresh logs
-        const initialLogs: ExerciseLog[] = plan.exercises.map(ex => ({
-          exerciseId: ex.id,
-          exerciseName: ex.name,
-          totalSets: ex.sets,
-          sets: Array.from({ length: ex.sets }, (_, i) => ({
-            setNumber: i + 1,
-            reps: ex.reps,
-            weight: 0,
-            completed: false
-          }))
-        }));
-        setExerciseLogs(initialLogs);
+        setExerciseLogs(initExerciseLogs(plan.exercises));
         setCurrentExerciseIndex(0);
         setCurrentSetIndex(0);
       }
@@ -352,10 +452,11 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
     level: string, 
     days: number, 
     excludedExercises: string[],
-    gender?: 'male' | 'female' | 'other',
+    gender?: 'male' | 'female',
     secondaryGoals?: string[],
     preferredLength?: number,
-    count: number = 3
+    count: number = 3,
+    modifiers?: WorkoutGenerationModifiers
   ): Promise<WorkoutPlan[]> => {
     const plans: WorkoutPlan[] = [];
     
@@ -370,7 +471,8 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
           gender,
           secondaryGoals,
           preferredLength,
-          i // Pass variation index to create different plans
+          i,
+          modifiers
         );
         // Add variation identifier to name
         plan.name = `${plan.name} - Option ${i + 1}`;
@@ -389,37 +491,76 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
     level: string, 
     days: number, 
     excludedExercises: string[],
-    gender?: 'male' | 'female' | 'other',
+    gender?: 'male' | 'female',
     secondaryGoals?: string[],
     preferredLength?: number,
-    variationIndex: number = 0
+    variationIndex: number = 0,
+    modifiers?: WorkoutGenerationModifiers
   ): Promise<WorkoutPlan> => {
     const userProfile = await UserProfileService.getUserProfileData();
-    const userEquipment = userProfile?.equipmentAvailability?.toLowerCase() || availableEquipment.toLowerCase();
+    const userEquipment = userProfile?.equipmentAvailability?.toLowerCase() || '';
     const workoutLength = preferredLength || userProfile?.preferredWorkoutLength || 45;
     const workoutHistory = (await loadUserData<any[]>('workoutHistory')) || [];
 
     // ─── Step 1: Determine goal (from fitness goals + secondary goals questions) ───
     const resolvedGoal = goal || 'strength';
     const resolvedSecondaryGoals = secondaryGoals ?? [];
+    const coachingMods = modifiers;
+    const isCalisthenicsFocus =
+      coachingMods?.primaryGoal === 'calisthenics' ||
+      resolvedSecondaryGoals.some((g) => g.toLowerCase().includes('calisthenics'));
+    /** Strength-style days use the 6-block workout template; flexibility/endurance keep simpler flow */
+    const useOptimalPeakStructure =
+      resolvedGoal === 'strength' ||
+      resolvedGoal === 'muscle_gain' ||
+      resolvedGoal === 'weight_loss';
 
     // ─── Step 2: Determine split structure (from goal + days per week question) ───
     const getSplitStructure = (): { focuses: string[]; workoutDayIndices: number[] } => {
-      const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      const getStrengthSplitVariants = (trainingDays: number): string[][] => {
+        if (trainingDays <= 3) {
+          return [
+            ['Full Body', 'Full Body', 'Full Body'],
+            ['Upper Body', 'Lower Body', 'Full Body'],
+            ['Chest & Back', 'Quads & Calves', 'Glutes & Hamstrings'],
+          ];
+        }
+        if (trainingDays === 4) {
+          return [
+            ['Upper Body', 'Lower Body', 'Upper Body', 'Lower Body'],
+            ['Chest & Back', 'Arms & Shoulders', 'Quads & Calves', 'Glutes & Hamstrings'],
+            ['Push', 'Pull', 'Legs', 'Full Body'],
+          ];
+        }
+        if (trainingDays === 5) {
+          return [
+            ['Push', 'Pull', 'Legs', 'Push', 'Pull'],
+            ['Chest & Back', 'Arms & Shoulders', 'Quads & Calves', 'Glutes & Hamstrings', 'Full Body'],
+            ['Upper Body', 'Lower Body', 'Push', 'Pull', 'Legs'],
+          ];
+        }
+        if (trainingDays === 6) {
+          return [
+            ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs'],
+            ['Chest & Back', 'Arms & Shoulders', 'Quads & Calves', 'Glutes & Hamstrings', 'Upper Body', 'Lower Body'],
+            ['Upper Body', 'Lower Body', 'Full Body', 'Push', 'Pull', 'Legs'],
+          ];
+        }
+        return [
+          ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs', 'Active Recovery'],
+          ['Chest & Back', 'Arms & Shoulders', 'Quads & Calves', 'Glutes & Hamstrings', 'Upper Body', 'Lower Body', 'Active Recovery'],
+          ['Upper Body', 'Lower Body', 'Full Body', 'Push', 'Pull', 'Legs', 'Active Recovery'],
+        ];
+      };
+
       let focuses: string[] = [];
       if (resolvedGoal === 'strength' || resolvedGoal === 'muscle_gain') {
-        if (days <= 3) focuses = ['Full Body', 'Full Body', 'Full Body'];
-        else if (days === 4) focuses = ['Upper Body', 'Lower Body', 'Upper Body', 'Lower Body'];
-        else if (days === 5) focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull'];
-        else if (days === 6) focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs'];
-        else focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs', 'Active Recovery'];
+        const splitVariants = getStrengthSplitVariants(days);
+        focuses = splitVariants[variationIndex % splitVariants.length];
       } else if (resolvedGoal === 'weight_loss') {
-        // Same split as strength — weight is lost in the kitchen, not by adding extra cardio
-        if (days <= 3) focuses = ['Full Body', 'Full Body', 'Full Body'];
-        else if (days === 4) focuses = ['Upper Body', 'Lower Body', 'Upper Body', 'Lower Body'];
-        else if (days === 5) focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull'];
-        else if (days === 6) focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs'];
-        else focuses = ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs', 'Active Recovery'];
+        // Keep weight-loss days strength-structured; cardio comes from effort and daily activity.
+        const splitVariants = getStrengthSplitVariants(days);
+        focuses = splitVariants[variationIndex % splitVariants.length];
       } else if (resolvedGoal === 'endurance') {
         focuses = Array(days).fill('Cardio & Endurance');
       } else if (resolvedGoal === 'flexibility') {
@@ -435,7 +576,14 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       else workoutDayIndices = [0, 1, 2, 3, 4, 5, 6];
       return { focuses, workoutDayIndices };
     };
-    const { focuses: splitFocuses, workoutDayIndices } = getSplitStructure();
+    const { focuses: splitFocusesRaw, workoutDayIndices } = getSplitStructure();
+
+    // ─── Systemic tax: age + activity → weekly set targets, MRV, deload, split/session bias ───
+    const systemicVolumeContext = computeSystemicVolumeContext({
+      ageStr: userProfile?.age,
+      activityDescription: userProfile?.activityLevel || '',
+    });
+    const splitFocuses = adjustSplitFocusesForSystemicTax(splitFocusesRaw, days, systemicVolumeContext);
 
     // ─── Step 3: Determine progression stage (from experience level question) ───
     const progressionStage = level;
@@ -453,7 +601,16 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
     // ─── Step 4: Check recovery (from workout history + frequency/length preferences) ───
     const recoveryAdjustment = suggestLighterWeek ? 'reduce_volume' : 'none';
     const exercisesPerDayBase = level === 'beginner' ? 4 : level === 'intermediate' ? 5 : 6;
-    const exercisesPerDay = recoveryAdjustment === 'reduce_volume' ? Math.max(3, exercisesPerDayBase - 1) : exercisesPerDayBase;
+    let exercisesPerDay = recoveryAdjustment === 'reduce_volume' ? Math.max(3, exercisesPerDayBase - 1) : exercisesPerDayBase;
+    exercisesPerDay = Math.max(3, exercisesPerDay - systemicVolumeContext.sessionExercisePenalty);
+    if (coachingMods && coachingMods.recoveryScore < 45) {
+      exercisesPerDay = Math.max(3, exercisesPerDay - 1);
+    }
+
+    const difficultyAllow = allowedDifficulties(
+      level,
+      coachingMods?.difficultyBias ?? 0
+    );
 
     // ─── Step 5: Select movements (equipment + injuries/limitations + goal + split) ───
     const getExercisePool = (): ExerciseData[] => {
@@ -461,12 +618,17 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       if (resolvedGoal === 'strength' || resolvedGoal === 'muscle_gain') {
         pool = exerciseDatabase.filter(ex => ex.category === 'strength');
       } else if (resolvedGoal === 'weight_loss') {
-        // Strength-focused; don't auto-add cardio — focus on nutrition for weight loss
         pool = exerciseDatabase.filter(ex => ex.category === 'strength');
       } else if (resolvedGoal === 'endurance') {
         pool = exerciseDatabase.filter(ex => ex.category === 'cardio');
       } else if (resolvedGoal === 'flexibility') {
         pool = exerciseDatabase.filter(ex => ex.category === 'flexibility' || ex.category === 'balance');
+      }
+      if (isCalisthenicsFocus) {
+        pool = exerciseDatabase.filter((ex) => {
+          const eq = ex.equipmentRequired || ex.equipment || [];
+          return eq.includes('bodyweight') || eq.includes('none') || eq.includes('pull-up bar');
+        });
       }
       if (resolvedSecondaryGoals.some(g => g === 'flexibility' || g === 'mobility')) {
         const flex = exerciseDatabase.filter(ex => ex.category === 'flexibility' || ex.category === 'balance');
@@ -490,14 +652,43 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         }
       }
       pool = pool.filter(ex => {
-        if (level === 'beginner') return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate';
-        if (level === 'intermediate') return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
-        return ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
+        return difficultyAllow.has(ex.difficulty as 'beginner' | 'intermediate' | 'advanced');
       });
       pool = pool.filter(ex => !excludedExercises.includes(ex.name));
       return pool;
     };
     const exercisePool = getExercisePool();
+
+    const getFilteredPlyometricPool = (): ExerciseData[] => {
+      let candidates = exerciseDatabase.filter(ex => PLYOMETRIC_EXERCISE_IDS.has(ex.id));
+      candidates = candidates.filter(ex => {
+        if (level === 'beginner') return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate';
+        if (level === 'intermediate') {
+          return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
+        }
+        return ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
+      });
+      candidates = candidates.filter(ex => !excludedExercises.includes(ex.name));
+      if (userEquipment && userEquipment !== 'full gym' && userEquipment !== 'all') {
+        const getEquipment = (ex: ExerciseData) => ex.equipmentRequired || ex.equipment || [];
+        if (userEquipment.includes('bodyweight') || userEquipment.includes('no equipment')) {
+          candidates = candidates.filter(ex => {
+            const eq = getEquipment(ex);
+            return eq.every(e => ['bodyweight', 'none', 'mat'].includes(e));
+          });
+        } else if (userEquipment.includes('dumbbell')) {
+          candidates = candidates.filter(ex => {
+            const eq = getEquipment(ex);
+            return eq.every(e =>
+              ['bodyweight', 'none', 'mat', 'dumbbells'].includes(e)
+            );
+          });
+        }
+      }
+      return candidates;
+    };
+
+    const plyometricPool = useOptimalPeakStructure ? getFilteredPlyometricPool() : [];
     
     // ─── Step 6: Set sets/reps/rest (goal + progression stage) ───
     const getExerciseDetails = (exerciseData: ExerciseData): Exercise => {
@@ -532,11 +723,42 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         sets = level === 'beginner' ? 1 : level === 'intermediate' ? 2 : 3;
         reps = level === 'beginner' ? 30 : level === 'intermediate' ? 45 : 60;
       }
-      // Compound (multiple muscle groups) ≤ 10 reps; isolation (single muscle group) ≤ 20 reps
+      // Goal-based rep caps — heavy compounds stop rep creep and progress via load
       if (exerciseCategory === 'strength') {
-        const isCompound = (exerciseData.secondaryMuscleGroups?.length ?? 0) >= 1;
-        const maxReps = isCompound ? 10 : 20;
+        const exShape = {
+          phase: undefined as string | undefined,
+          muscleGroups: exerciseData.muscleGroups
+            ? [exerciseData.primaryMuscleGroup, ...exerciseData.secondaryMuscleGroups]
+            : [exerciseData.primaryMuscleGroup],
+          secondaryMuscleGroups: exerciseData.secondaryMuscleGroups,
+          name: exerciseData.name,
+        };
+        const repCtx = {
+          progressionLever: coachingMods?.progressionLever,
+          primaryGoal: coachingMods?.primaryGoal,
+        };
+        const compound = isHeavyCompound(exShape);
+        const maxReps = maxRepCapForExercise(exShape, repCtx);
         reps = Math.min(reps, maxReps);
+        if (systemicVolumeContext.strengthRepIntensityBias > 0) {
+          reps = Math.max(isCompound ? 4 : 6, reps - systemicVolumeContext.strengthRepIntensityBias);
+        }
+        if (coachingMods) {
+          reps = Math.max(compound ? 4 : 6, reps + coachingMods.repAdjust);
+          sets = clampWorkingSets(
+            Math.max(2, Math.round(sets * coachingMods.intensityMultiplier) + coachingMods.setBonus),
+            undefined
+          );
+          if (restTime != null) {
+            restTime = Math.max(30, restTime + coachingMods.restAdjustSec);
+          }
+          reps = Math.min(reps, maxReps);
+        }
+        // Systemic tax: fewer sets per lift when older or sedentary (weekly caps still enforced later).
+        const { bracket, activityTier } = systemicVolumeContext;
+        if (bracket === 'senior' || (activityTier === 'sedentary' && bracket === 'mid')) {
+          sets = Math.max(2, sets - 1);
+        }
       }
       return {
         id: exerciseData.name.toLowerCase().replace(/\s+/g, '-'),
@@ -554,19 +776,165 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         alternatives: exerciseData.alternatives
       };
     };
+
+    /** Legacy / non–Optimal-Peak warm-up (flexibility, endurance, etc.) */
+    const FULL_BODY_WARMUP_NAMES = ['World\'s Greatest Stretch', 'Arm Circles', 'Leg Swings', 'Jumping Jacks'];
+    /** Phase 1 dynamic warm-up: movement over static stretching */
+    const DYNAMIC_WARMUP_MOVEMENT_NAMES = ['Leg Swings', 'Cat-Cow', 'Bird Dog', 'World\'s Greatest Stretch', 'Inchworms'];
+    const DYNAMIC_WARMUP_SEC_PER_MOVE = 90;
+    const FOCUS_DYNAMIC_WARMUP_SEC = 75;
+    const FOCUS_SPECIFIC_WARMUPS: Record<string, string[]> = {
+      'Push': ['Scapular Push-ups', 'Band Pull-Aparts', 'Doorway Chest Stretch', 'Shoulder External Rotations'],
+      'Pull': ['Scapular Pull-ups', 'Thoracic Rotations', 'Cat-Cow'],
+      'Legs': ['Glute Bridge (Bodyweight)', 'Walking Lunges with a Twist', 'Lateral Lunges', 'Ankle Rolls / Bottom Squat Transfer'],
+      'Lower Body': ['Glute Bridge (Bodyweight)', 'Walking Lunges with a Twist', 'Lateral Lunges', 'Good Mornings (Bodyweight)', 'Bird Dog'],
+      'Upper Body': ['Scapular Push-ups', 'Band Pull-Aparts', 'Scapular Pull-ups', 'Thoracic Rotations', 'Cat-Cow'],
+      'Full Body': ['Cat-Cow', 'Glute Bridge (Bodyweight)', 'Thoracic Rotations', 'Bird Dog'],
+    };
+    const WARMUP_TOTAL_SECONDS = 600;
+    const FULL_BODY_WARMUP_SECONDS = 75;
+    const FOCUS_WARMUP_SECONDS = 100;
+    /** Phase timing estimates (minutes) for day duration when using the 6-block template */
+    const OPTIMAL_PEAK_PHASE_MINUTES =
+      Math.ceil((DYNAMIC_WARMUP_MOVEMENT_NAMES.length * DYNAMIC_WARMUP_SEC_PER_MOVE + 2 * FOCUS_DYNAMIC_WARMUP_SEC) / 60) +
+      8 +
+      4 +
+      5;
+    const buildWarmupExercise = (data: ExerciseData, durationSeconds: number): Exercise => {
+      const cat: 'strength' | 'cardio' | 'flexibility' | 'balance' =
+        data.category === 'cardio' ? 'cardio' : data.category === 'flexibility' || data.category === 'balance' ? data.category : 'strength';
+      return {
+        id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
+        name: data.name,
+        sets: 1,
+        reps: 0,
+        weight: 0,
+        completed: false,
+        category: cat,
+        restTime: 0,
+        durationSeconds,
+        movementPattern: data.movementPattern,
+        muscleGroups: data.muscleGroups || [data.primaryMuscleGroup, ...(data.secondaryMuscleGroups || [])],
+        equipment: data.equipment || data.equipmentRequired,
+        difficulty: data.difficulty,
+        alternatives: data.alternatives
+      };
+    };
+    const getFullBodyWarmup = (): Exercise[] => {
+      const out: Exercise[] = [];
+      for (const name of FULL_BODY_WARMUP_NAMES) {
+        const data = getExerciseData(name);
+        if (data) out.push(buildWarmupExercise(data, FULL_BODY_WARMUP_SECONDS));
+      }
+      return out;
+    };
+    const getFocusSpecificWarmup = (focus: string): Exercise[] => {
+      const names = FOCUS_SPECIFIC_WARMUPS[focus]
+        || (focus.includes('Push') ? FOCUS_SPECIFIC_WARMUPS['Push']
+          : focus.includes('Pull') ? FOCUS_SPECIFIC_WARMUPS['Pull']
+          : (focus.includes('Chest') || focus.includes('Arms') || focus.includes('Shoulders')) ? FOCUS_SPECIFIC_WARMUPS['Upper Body']
+          : (focus.includes('Quads') || focus.includes('Glutes') || focus.includes('Hamstrings') || focus.includes('Calves')) ? FOCUS_SPECIFIC_WARMUPS['Lower Body']
+          : focus.includes('Leg') ? FOCUS_SPECIFIC_WARMUPS['Legs']
+          : focus.includes('Upper') ? FOCUS_SPECIFIC_WARMUPS['Upper Body']
+          : focus.includes('Lower') ? FOCUS_SPECIFIC_WARMUPS['Lower Body']
+          : FOCUS_SPECIFIC_WARMUPS['Full Body']);
+      const fullBodyCount = FULL_BODY_WARMUP_NAMES.length;
+      const focusCount = Math.min(3, names.length);
+      const focusTotalSec = WARMUP_TOTAL_SECONDS - fullBodyCount * FULL_BODY_WARMUP_SECONDS;
+      const secPerFocus = focusCount > 0 ? Math.round(focusTotalSec / focusCount) : 0;
+      const out: Exercise[] = [];
+      for (let i = 0; i < focusCount; i++) {
+        const data = getExerciseData(names[i]);
+        if (data) out.push(buildWarmupExercise(data, secPerFocus));
+      }
+      return out;
+    };
+    const getWarmupRoutine = (focus: string): Exercise[] => [...getFullBodyWarmup(), ...getFocusSpecificWarmup(focus)];
+
+    const getDynamicWarmupPhase = (focus: string): Exercise[] => {
+      const out: Exercise[] = [];
+      for (const name of DYNAMIC_WARMUP_MOVEMENT_NAMES) {
+        const d = getExerciseData(name);
+        if (d) out.push(buildWarmupExercise(d, DYNAMIC_WARMUP_SEC_PER_MOVE));
+      }
+      const focusNames =
+        FOCUS_SPECIFIC_WARMUPS[focus] ||
+        (focus.includes('Push')
+          ? FOCUS_SPECIFIC_WARMUPS['Push']
+          : focus.includes('Pull')
+            ? FOCUS_SPECIFIC_WARMUPS['Pull']
+            : (focus.includes('Chest') || focus.includes('Arms') || focus.includes('Shoulders'))
+              ? FOCUS_SPECIFIC_WARMUPS['Upper Body']
+              : (focus.includes('Quads') || focus.includes('Glutes') || focus.includes('Hamstrings') || focus.includes('Calves'))
+                ? FOCUS_SPECIFIC_WARMUPS['Lower Body']
+            : focus.includes('Leg')
+              ? FOCUS_SPECIFIC_WARMUPS['Legs']
+              : focus.includes('Upper')
+                ? FOCUS_SPECIFIC_WARMUPS['Upper Body']
+                : focus.includes('Lower')
+                  ? FOCUS_SPECIFIC_WARMUPS['Lower Body']
+                  : FOCUS_SPECIFIC_WARMUPS['Full Body']);
+      for (let fi = 0; fi < Math.min(2, focusNames.length); fi++) {
+        const d = getExerciseData(focusNames[fi]);
+        if (d) out.push(buildWarmupExercise(d, FOCUS_DYNAMIC_WARMUP_SEC));
+      }
+      return out;
+    };
+
+    const getCnsActivationPhase = (): Exercise[] => {
+      const out: Exercise[] = [];
+      const hk = getExerciseData('High Knees');
+      const pogos = getExerciseData('Lateral Pogos');
+      if (hk) out.push(buildWarmupExercise(hk, 80));
+      if (pogos) out.push(buildWarmupExercise(pogos, 80));
+      return out;
+    };
+
+    const getPlyometricPhaseDetails = (data: ExerciseData): Exercise => {
+      const reps = level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5;
+      const sets = 4;
+      const restTime = level === 'beginner' ? 120 : level === 'intermediate' ? 150 : 180;
+      return {
+        id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
+        name: data.name,
+        sets,
+        reps,
+        weight: 0,
+        completed: false,
+        category: 'cardio',
+        restTime,
+        movementPattern: data.movementPattern,
+        muscleGroups: data.muscleGroups || [data.primaryMuscleGroup, ...data.secondaryMuscleGroups],
+        equipment: data.equipment || data.equipmentRequired,
+        difficulty: data.difficulty,
+        alternatives: data.alternatives
+      };
+    };
+
+    const getCooldownPhase = (): Exercise[] => {
+      const names = ['Hamstring Stretch', 'Child\'s Pose', 'Shoulder Stretch', 'Hip Flexor Stretch'];
+      const sec = 75;
+      const out: Exercise[] = [];
+      for (const name of names) {
+        const d = getExerciseData(name);
+        if (d) out.push(buildWarmupExercise(d, sec));
+      }
+      return out;
+    };
     
     if (exercisePool.length === 0) {
       console.error('No exercises available after filtering exclusions');
       const pushUpData = getExerciseData('Push-ups');
       if (!pushUpData) throw new Error('Unable to generate workout plan - no exercises available');
       const defaultExercise = getExerciseDetails(pushUpData);
+      const warmupRoutine = getWarmupRoutine('Full Body');
       return {
         id: Date.now().toString(),
         name: `${level.charAt(0).toUpperCase() + level.slice(1)} ${resolvedGoal.replace('_', ' ')} Program`,
         level: level as any,
         goal: resolvedGoal as any,
-        exercises: [defaultExercise],
-        duration: workoutLength,
+        exercises: [...warmupRoutine, defaultExercise],
+        duration: workoutLength + 5,
         daysPerWeek: days,
         weeklyPlan: {
           weekDays: [{
@@ -574,8 +942,8 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
             dayName: 'Monday',
             workoutName: 'Full Body Workout',
             focus: 'Full Body',
-            exercises: [defaultExercise],
-            duration: workoutLength
+            exercises: [...warmupRoutine, defaultExercise],
+            duration: workoutLength + 5
           }]
         }
       };
@@ -598,6 +966,87 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
       return shuffled;
+    };
+
+    const exerciseIsCompoundLift = (ex: Exercise): boolean => (ex.muscleGroups?.length ?? 0) > 1;
+
+    const splitTemplateBlocksForDay = (
+      mainList: Exercise[],
+      dayIndex: number
+    ): { mainLift: Exercise[]; secondary: Exercise[]; accessory: Exercise[]; finisher: Exercise[] } => {
+      if (mainList.length === 0) return { mainLift: [], secondary: [], accessory: [], finisher: [] };
+      const sorted = [...mainList].sort(
+        (a, b) => (exerciseIsCompoundLift(b) ? 1 : 0) - (exerciseIsCompoundLift(a) ? 1 : 0)
+      );
+      const compounds = sorted.filter(exerciseIsCompoundLift);
+      const isolations = sorted.filter(ex => !exerciseIsCompoundLift(ex));
+
+      const mainLiftSource = compounds.length > 0 ? compounds[0] : sorted[0];
+      const mainLift = mainLiftSource ? [{ ...mainLiftSource }] : [];
+      const secondaryPool = compounds.filter(ex => ex.name !== mainLiftSource?.name);
+      const secondaryTarget = Math.min(2, Math.max(1, Math.round(mainList.length * 0.35)));
+      const secondary = secondaryPool.slice(0, secondaryTarget).map(ex => ({ ...ex }));
+
+      let accessory = isolations
+        .filter(ex => ex.name !== mainLiftSource?.name && !secondary.some(s => s.name === ex.name))
+        .map(ex => ({ ...ex }));
+      const targetAccessoryCount = level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5;
+      const used = new Set([...mainLift, ...secondary, ...accessory].map(e => e.name));
+      const accessoryCandidates = exercisePool.filter(ex => {
+        if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (ex.category === 'balance') return true;
+        if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
+        return false;
+      });
+      const shuffledAcc = shuffleArray(accessoryCandidates);
+      let ai = 0;
+      while (accessory.length < targetAccessoryCount && ai < shuffledAcc.length) {
+        const ex = shuffledAcc[ai++];
+        if (!accessory.some(a => a.name === ex.name)) {
+          accessory.push(getExerciseDetails(ex));
+          used.add(ex.name);
+        }
+      }
+      if (accessory.length > targetAccessoryCount) {
+        accessory = accessory.slice(0, targetAccessoryCount);
+      }
+
+      const finisherCandidates = exercisePool.filter(ex => {
+        if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (ex.category === 'cardio' || ex.category === 'balance') return true;
+        if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
+        return false;
+      });
+      let finisher: Exercise[] = [];
+      if (finisherCandidates.length > 0) {
+        const pick = shuffleArray(finisherCandidates)[dayIndex % finisherCandidates.length];
+        if (pick) {
+          const base = getExerciseDetails(pick);
+          const finisherSets = resolvedGoal === 'muscle_gain' ? 2 : 1;
+          finisher = [{
+            ...base,
+            sets: finisherSets,
+            reps: base.category === 'strength' ? Math.max(base.reps, 12) : base.reps,
+            restTime: base.category === 'strength' ? 30 : 20,
+          }];
+        }
+      }
+
+      return {
+        mainLift: (mainLift.length > 0 ? mainLift : sorted.slice(0, 1).map(ex => ({ ...ex }))).map(ex => ({
+          ...ex,
+          sets: level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5,
+        })),
+        secondary: secondary.map(ex => ({
+          ...ex,
+          sets: level === 'beginner' ? 3 : 4,
+        })),
+        accessory: accessory.map(ex => ({
+          ...ex,
+          sets: level === 'beginner' ? 2 : level === 'intermediate' ? 3 : 4,
+        })),
+        finisher,
+      };
     };
 
     const selectExercisesWithRegionVariety = (
@@ -676,7 +1125,105 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
               dayExercises = [getExerciseDetails(pushUpData)];
             }
         } else {
-        if (focus.includes('Upper Body')) {
+        if (focus.includes('Chest') && focus.includes('Back')) {
+          const targetMuscles = ['chest', 'back'];
+          let chestBackExercises = exercisePool.filter(e => {
+            const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
+            return e.category === 'strength' &&
+              muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
+          });
+          if (level === 'advanced' && chestBackExercises.length > 0) {
+            const advancedExercises = chestBackExercises.filter(e => e.difficulty === 'advanced');
+            const intermediateExercises = chestBackExercises.filter(e => e.difficulty === 'intermediate');
+            chestBackExercises = [...advancedExercises, ...intermediateExercises];
+          }
+          if (chestBackExercises.length > 0) {
+            const selectedExercises: ExerciseData[] = [];
+            const chest = shuffleArray(chestBackExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'chest'));
+            const back = shuffleArray(chestBackExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'back'));
+            selectedExercises.push(...chest.slice(0, Math.max(1, Math.floor(exercisesPerDay / 2))));
+            selectedExercises.push(...back.slice(0, Math.max(1, Math.floor(exercisesPerDay / 2))));
+            if (selectedExercises.length < exercisesPerDay) {
+              const remaining = chestBackExercises.filter(e => !selectedExercises.includes(e));
+              selectedExercises.push(...shuffleArray(remaining).slice(0, exercisesPerDay - selectedExercises.length));
+            }
+            dayExercises = selectedExercises.slice(0, exercisesPerDay).map(ex => getExerciseDetails(ex));
+          }
+        } else if (focus.includes('Arms') || focus.includes('Shoulders')) {
+          const targetMuscles = ['shoulders', 'biceps', 'triceps', 'arms'];
+          let armShoulderExercises = exercisePool.filter(e => {
+            const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
+            return e.category === 'strength' &&
+              muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
+          });
+          if (level === 'advanced' && armShoulderExercises.length > 0) {
+            const advancedExercises = armShoulderExercises.filter(e => e.difficulty === 'advanced');
+            const intermediateExercises = armShoulderExercises.filter(e => e.difficulty === 'intermediate');
+            armShoulderExercises = [...advancedExercises, ...intermediateExercises];
+          }
+          if (armShoulderExercises.length > 0) {
+            const selectedExercises: ExerciseData[] = [];
+            const shoulders = shuffleArray(armShoulderExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'shoulders'));
+            const biceps = shuffleArray(armShoulderExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'biceps'));
+            const triceps = shuffleArray(armShoulderExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'triceps'));
+            selectedExercises.push(...shoulders.slice(0, Math.max(1, Math.floor(exercisesPerDay / 3))));
+            selectedExercises.push(...biceps.slice(0, Math.max(1, Math.floor(exercisesPerDay / 3))));
+            selectedExercises.push(...triceps.slice(0, Math.max(1, Math.floor(exercisesPerDay / 3))));
+            if (selectedExercises.length < exercisesPerDay) {
+              const remaining = armShoulderExercises.filter(e => !selectedExercises.includes(e));
+              selectedExercises.push(...shuffleArray(remaining).slice(0, exercisesPerDay - selectedExercises.length));
+            }
+            dayExercises = selectedExercises.slice(0, exercisesPerDay).map(ex => getExerciseDetails(ex));
+          }
+        } else if (focus.includes('Quads') || focus.includes('Calves')) {
+          const targetMuscles = ['quadriceps', 'legs', 'calves'];
+          let quadCalfExercises = exercisePool.filter(e => {
+            const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
+            return e.category === 'strength' &&
+              muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
+          });
+          if (level === 'advanced' && quadCalfExercises.length > 0) {
+            const advancedExercises = quadCalfExercises.filter(e => e.difficulty === 'advanced');
+            const intermediateExercises = quadCalfExercises.filter(e => e.difficulty === 'intermediate');
+            quadCalfExercises = [...advancedExercises, ...intermediateExercises];
+          }
+          if (quadCalfExercises.length > 0) {
+            const selectedExercises: ExerciseData[] = [];
+            const quads = shuffleArray(quadCalfExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'quadriceps' || e.primaryMuscleGroup.toLowerCase() === 'legs'));
+            const calves = shuffleArray(quadCalfExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'calves'));
+            selectedExercises.push(...quads.slice(0, Math.max(2, Math.floor(exercisesPerDay * 0.7))));
+            selectedExercises.push(...calves.slice(0, Math.max(1, exercisesPerDay - selectedExercises.length)));
+            if (selectedExercises.length < exercisesPerDay) {
+              const remaining = quadCalfExercises.filter(e => !selectedExercises.includes(e));
+              selectedExercises.push(...shuffleArray(remaining).slice(0, exercisesPerDay - selectedExercises.length));
+            }
+            dayExercises = selectedExercises.slice(0, exercisesPerDay).map(ex => getExerciseDetails(ex));
+          }
+        } else if (focus.includes('Glutes') || focus.includes('Hamstrings')) {
+          const targetMuscles = ['glutes', 'hamstrings'];
+          let gluteHamExercises = exercisePool.filter(e => {
+            const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
+            return e.category === 'strength' &&
+              muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
+          });
+          if (level === 'advanced' && gluteHamExercises.length > 0) {
+            const advancedExercises = gluteHamExercises.filter(e => e.difficulty === 'advanced');
+            const intermediateExercises = gluteHamExercises.filter(e => e.difficulty === 'intermediate');
+            gluteHamExercises = [...advancedExercises, ...intermediateExercises];
+          }
+          if (gluteHamExercises.length > 0) {
+            const selectedExercises: ExerciseData[] = [];
+            const glutes = shuffleArray(gluteHamExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'glutes'));
+            const hamstrings = shuffleArray(gluteHamExercises.filter(e => e.primaryMuscleGroup.toLowerCase() === 'hamstrings'));
+            selectedExercises.push(...glutes.slice(0, Math.max(2, Math.floor(exercisesPerDay * 0.6))));
+            selectedExercises.push(...hamstrings.slice(0, Math.max(1, exercisesPerDay - selectedExercises.length)));
+            if (selectedExercises.length < exercisesPerDay) {
+              const remaining = gluteHamExercises.filter(e => !selectedExercises.includes(e));
+              selectedExercises.push(...shuffleArray(remaining).slice(0, exercisesPerDay - selectedExercises.length));
+            }
+            dayExercises = selectedExercises.slice(0, exercisesPerDay).map(ex => getExerciseDetails(ex));
+          }
+        } else if (focus.includes('Upper Body')) {
           // Upper body: chest, shoulders, back, arms
           const upperBodyMuscleGroups = ['chest', 'shoulders', 'back', 'biceps', 'triceps', 'arms'];
           let upperBodyExercises = exercisePool.filter(e => {
@@ -1221,16 +1768,62 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
           duration = exercisesPerDay * (level === 'beginner' ? 5 : level === 'intermediate' ? 6 : 7);
         }
 
+        const mainExercises = dayExercises.length > 0 ? dayExercises : (() => {
+          const pushUpData = getExerciseData('Push-ups');
+          return pushUpData ? [getExerciseDetails(pushUpData)] : [];
+        })();
+
+        let orderedExercises: Exercise[];
+        let phaseExtraMinutes: number;
+
+        if (useOptimalPeakStructure) {
+          const phase1Warmup = getDynamicWarmupPhase(focus).map(ex => ({ ...ex, phase: 'Warm-Up' as const }));
+          const { mainLift, secondary, accessory, finisher } = splitTemplateBlocksForDay(mainExercises, dayIndex);
+          const phase2MainLift = mainLift.map(ex => ({ ...ex, phase: 'Main Lift' as const }));
+          const phase3Secondary = secondary.map(ex => ({ ...ex, phase: 'Secondary Lifts' as const }));
+          const phase4Accessory = accessory.map(ex => ({ ...ex, phase: 'Accessory Lifts' as const }));
+          let phase5Finisher = finisher.map(ex => ({ ...ex, phase: 'Finisher' as const }));
+          if (phase5Finisher.length === 0) {
+            const targetPlyo = plyometricPool.length >= 2 ? 2 : Math.max(1, Math.min(2, plyometricPool.length));
+            if (targetPlyo > 0 && plyometricPool.length > 0) {
+              let seed = variationIndex * 7919 + i * 997 + dayIndex * 13;
+              const pPool = [...plyometricPool];
+              for (let ki = pPool.length - 1; ki > 0; ki--) {
+                seed = (seed * 9301 + 49297) % 233280;
+                const j = Math.floor((seed / 233280) * (ki + 1));
+                [pPool[ki], pPool[j]] = [pPool[j], pPool[ki]];
+              }
+              phase5Finisher = pPool.slice(0, targetPlyo).map(p => ({
+                ...getPlyometricPhaseDetails(p),
+                phase: 'Finisher' as const,
+              }));
+            }
+          }
+          const phase6Cooldown = getCooldownPhase();
+          orderedExercises = [
+            ...phase1Warmup,
+            ...phase2MainLift,
+            ...phase3Secondary,
+            ...phase4Accessory,
+            ...phase5Finisher,
+            ...phase6Cooldown.map(ex => ({ ...ex, phase: 'Cooldown' as const })),
+          ];
+          phaseExtraMinutes = OPTIMAL_PEAK_PHASE_MINUTES;
+        } else {
+          orderedExercises = [
+            ...getWarmupRoutine(focus).map(ex => ({ ...ex, phase: 'Warm-Up' as const })),
+            ...mainExercises.map(ex => ({ ...ex, phase: 'Main Lift' as const })),
+          ];
+          phaseExtraMinutes = Math.ceil(WARMUP_TOTAL_SECONDS / 60);
+        }
+
         weekDays.push({
           day: dayIndex + 1,
           dayName: dayNames[dayIndex],
           workoutName: `${focus} Workout`,
           focus,
-          exercises: dayExercises.length > 0 ? dayExercises : (() => {
-            const pushUpData = getExerciseData('Push-ups');
-            return pushUpData ? [getExerciseDetails(pushUpData)] : [];
-          })(),
-          duration
+          exercises: orderedExercises,
+          duration: duration + phaseExtraMinutes,
         });
       }
 
@@ -1275,11 +1868,20 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
           if (!alreadyHasWeek) list.push(entry);
         });
       });
-      const WEIGHT_BUMP_THRESHOLD_LBS = 5;
+      const WEIGHT_BUMP_THRESHOLD_LBS = MIN_WEIGHT_PROGRESSION_LBS;
       const adjusted = {
         weekDays: plan.weekDays.map(dw => ({
           ...dw,
           exercises: dw.exercises.map(ex => {
+            if (ex.durationSeconds != null && ex.durationSeconds > 0) {
+              return ex;
+            }
+            if (PLYOMETRIC_EXERCISE_IDS.has(ex.id)) {
+              return ex;
+            }
+            if (ex.id === 'jumping-jacks' && ex.sets === 4) {
+              return ex;
+            }
             const key = ex.id || toKey(ex.name);
             const keyAlt = toKey(ex.name);
             const weekly = byExerciseByWeek.get(key) || byExerciseByWeek.get(keyAlt);
@@ -1291,13 +1893,22 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
             let newReps = ex.reps;
             let newSets = ex.sets;
             let newWeight = ex.weight;
-            const muscleGroupCount = ex.muscleGroups?.length ?? 0;
-            const isCompound = muscleGroupCount > 1;
+            const exShape = {
+              phase: ex.phase,
+              muscleGroups: ex.muscleGroups,
+              name: ex.name,
+            };
+            const repCtx = {
+              progressionLever: coachingMods?.progressionLever,
+              primaryGoal: coachingMods?.primaryGoal,
+            };
+            const compound = isHeavyCompound(exShape);
+            const maxReps = maxRepCapForExercise(exShape, repCtx);
+            const progressionLever = coachingMods?.progressionLever ?? 'balanced';
             if (lastWeek.weight > 0) {
-              newWeight = Math.round(lastWeek.weight / 2.5) * 2.5;
-              // If compound and consistently hitting 10+ reps, increase weight by same terms (+5 lbs)
-              if (isCompound && lastWeek.reps >= 10) {
-                newWeight = Math.round((newWeight + WEIGHT_BUMP_THRESHOLD_LBS) / 2.5) * 2.5;
+              newWeight = roundToPlateWeight(lastWeek.weight);
+              if (compound && lastWeek.reps >= maxReps) {
+                newWeight = applyWeightProgression(lastWeek.weight, WEIGHT_BUMP_THRESHOLD_LBS);
               }
             }
             if (previousWeek) {
@@ -1309,15 +1920,32 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
                 (lastWeek.weight <= oldestWeek.weight + 2) &&
                 !weightUp;
               if (weightUp) {
-                if (ex.sets < 4) {
+                if (canAddWorkingSet(ex.sets, ex.phase)) {
                   newSets = ex.sets + 1;
                   newReps = lastWeek.reps;
                 } else {
-                  newReps = Math.min(lastWeek.reps + 1, 20);
+                  const step = nextLoadOrRepProgression({
+                    reps: ex.reps,
+                    weight: newWeight,
+                    perfReps: lastWeek.reps,
+                    maxReps,
+                    weightBumpLbs: WEIGHT_BUMP_THRESHOLD_LBS,
+                    progressionLever,
+                    isCompound: compound,
+                    roundWeight: (_w) => applyWeightProgression(newWeight, WEIGHT_BUMP_THRESHOLD_LBS),
+                  });
+                  if (step.kind === 'load') {
+                    newWeight = step.weight;
+                    newReps = step.reps;
+                  } else if (step.kind === 'reps') {
+                    newReps = step.reps;
+                  } else {
+                    newReps = Math.min(lastWeek.reps, maxReps);
+                  }
                 }
               } else if (weightSameOrDown) {
                 newReps = lastWeek.reps;
-                newSets = Math.min(6, Math.max(1, lastWeek.sets || ex.sets));
+                newSets = clampWorkingSets(lastWeek.sets || ex.sets, ex.phase);
               }
               if (noImprovementOverTime) {
                 const reduction = Math.min(2, Math.max(1, Math.floor((newReps || lastWeek.reps) * 0.1)));
@@ -1325,23 +1953,163 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
               }
             } else {
               newReps = lastWeek.reps;
-              newSets = Math.min(6, Math.max(1, lastWeek.sets || ex.sets));
+              newSets = clampWorkingSets(lastWeek.sets || ex.sets, ex.phase);
             }
-            // Compound (multiple muscle groups) ≤ 10 reps; isolation (single muscle group) ≤ 20 reps
-            const maxReps = isCompound ? 10 : 20;
             newReps = Math.min(newReps, maxReps);
             return {
               ...ex,
               weight: newWeight,
               reps: newReps,
-              sets: Math.min(6, Math.max(1, newSets))
+              sets: clampWorkingSets(newSets, ex.phase),
             };
           })
         }))
       };
       return adjusted;
     };
-    const finalWeeklyPlan = applyProgressionLogic(weeklyPlan);
+    /** Age/activity weekly set bands, MRV, deload; spread each muscle ≥2 days/week when training ≥2 days. */
+    const enforceSystemicWeeklySetTargets = (plan: WeeklyWorkoutPlan): WeeklyWorkoutPlan => {
+      const appliesToGoal =
+        resolvedGoal === 'muscle_gain' ||
+        resolvedGoal === 'strength' ||
+        resolvedGoal === 'weight_loss';
+      if (!appliesToGoal) return plan;
+
+      const weeklyMin = systemicVolumeContext.weeklySetsPerMuscleMin;
+      const weeklyMax = systemicVolumeContext.weeklySetsPerMuscleMax;
+      const minWeeklySetsToRequireTwoSessions = 2;
+
+      const isMainStrengthExercise = (ex: Exercise): boolean => {
+        if (ex.durationSeconds != null && ex.durationSeconds > 0) return false;
+        if (PLYOMETRIC_EXERCISE_IDS.has(ex.id)) return false;
+        if (ex.id === 'jumping-jacks' && ex.sets === 4) return false;
+        return ex.category === 'strength';
+      };
+
+      const clone: WeeklyWorkoutPlan = {
+        weekDays: plan.weekDays.map(day => ({
+          ...day,
+          exercises: day.exercises.map(ex => ({ ...ex })),
+        })),
+      };
+
+      const weeklySetsByMuscle = new Map<string, number>();
+      const trackedMuscles = new Set(['chest', 'back', 'shoulders', 'biceps', 'triceps', 'quadriceps', 'hamstrings', 'glutes', 'calves', 'legs', 'arms']);
+
+      clone.weekDays.forEach(day => {
+        day.exercises.forEach(ex => {
+          if (!isMainStrengthExercise(ex)) return;
+          const groups = (ex.muscleGroups || []).map(m => m.toLowerCase());
+          groups.forEach(group => {
+            trackedMuscles.forEach(tracked => {
+              if (group.includes(tracked)) {
+                weeklySetsByMuscle.set(tracked, (weeklySetsByMuscle.get(tracked) || 0) + ex.sets);
+              }
+            });
+          });
+        });
+      });
+
+      const tryRaiseSetsForMuscle = (target: string) => {
+        if ((weeklySetsByMuscle.get(target) || 0) >= weeklyMin) return;
+        for (const day of clone.weekDays) {
+          for (let i = 0; i < day.exercises.length; i++) {
+            const ex = day.exercises[i];
+            if (!isMainStrengthExercise(ex)) continue;
+            const hitsTarget = (ex.muscleGroups || []).some(mg => mg.toLowerCase().includes(target));
+            if (!hitsTarget) continue;
+            const nextSets = clampWorkingSets(ex.sets + 1, ex.phase);
+            if (nextSets === ex.sets) continue;
+            const delta = nextSets - ex.sets;
+            ex.sets = nextSets;
+            weeklySetsByMuscle.set(target, (weeklySetsByMuscle.get(target) || 0) + delta);
+            if ((weeklySetsByMuscle.get(target) || 0) >= weeklyMin) return;
+          }
+        }
+      };
+
+      const tryLowerSetsForMuscle = (target: string) => {
+        if ((weeklySetsByMuscle.get(target) || 0) <= weeklyMax) return;
+        for (const day of clone.weekDays) {
+          for (let i = day.exercises.length - 1; i >= 0; i--) {
+            const ex = day.exercises[i];
+            if (!isMainStrengthExercise(ex)) continue;
+            const hitsTarget = (ex.muscleGroups || []).some(mg => mg.toLowerCase().includes(target));
+            if (!hitsTarget) continue;
+            const nextSets = Math.max(2, ex.sets - 1);
+            if (nextSets === ex.sets) continue;
+            const delta = ex.sets - nextSets;
+            ex.sets = nextSets;
+            weeklySetsByMuscle.set(target, Math.max(0, (weeklySetsByMuscle.get(target) || 0) - delta));
+            if ((weeklySetsByMuscle.get(target) || 0) <= weeklyMax) return;
+          }
+        }
+      };
+
+      const targetOrder = ['chest', 'back', 'shoulders', 'quadriceps', 'hamstrings', 'glutes', 'calves', 'biceps', 'triceps'];
+      targetOrder.forEach(muscle => tryRaiseSetsForMuscle(muscle));
+      targetOrder.forEach(muscle => tryLowerSetsForMuscle(muscle));
+
+      // ≥2 training days: each muscle with ≥2 weekly sets must appear on ≥2 days (systemic tax / recovery).
+      if (clone.weekDays.length >= 2) {
+        const hitDaysForMuscle = (muscle: string): Set<number> => {
+          const s = new Set<number>();
+          clone.weekDays.forEach((day, di) => {
+            for (const ex of day.exercises) {
+              if (!isMainStrengthExercise(ex)) continue;
+              if ((ex.muscleGroups || []).some(mg => mg.toLowerCase().includes(muscle))) {
+                s.add(di);
+                break;
+              }
+            }
+          });
+          return s;
+        };
+        for (const muscle of targetOrder) {
+          const totalWeekly = weeklySetsByMuscle.get(muscle) || 0;
+          if (totalWeekly < minWeeklySetsToRequireTwoSessions) continue;
+          const daySet = hitDaysForMuscle(muscle);
+          if (daySet.size >= 2) continue;
+          const onlyDay = [...daySet][0];
+          const recipient = clone.weekDays.findIndex((_, i) => i !== onlyDay);
+          if (recipient < 0) continue;
+          const day = clone.weekDays[onlyDay];
+          let exIdx = -1;
+          for (let i = day.exercises.length - 1; i >= 0; i--) {
+            const ex = day.exercises[i];
+            if (!isMainStrengthExercise(ex)) continue;
+            if ((ex.muscleGroups || []).some(mg => mg.toLowerCase().includes(muscle))) {
+              exIdx = i;
+              break;
+            }
+          }
+          if (exIdx < 0) continue;
+          const ex = day.exercises[exIdx];
+          if (ex.sets < 2) continue;
+          const moveSets = Math.max(1, Math.floor(ex.sets / 2));
+          if (ex.sets - moveSets < 1) continue;
+          ex.sets -= moveSets;
+          clone.weekDays[recipient].exercises.push({
+            ...ex,
+            sets: moveSets,
+          });
+        }
+      }
+
+      return clone;
+    };
+
+    const progressionAdjustedPlan = await (async () => {
+      try {
+        const { buildCoachingContextSnapshot } = await import('./src/services/CoachingEngine');
+        const ctx = await buildCoachingContextSnapshot();
+        if (!ctx.progressionAllowed) return weeklyPlan;
+      } catch {
+        /* fall through — apply progression if coaching context unavailable */
+      }
+      return applyProgressionLogic(weeklyPlan);
+    })();
+    const finalWeeklyPlan = enforceSystemicWeeklySetTargets(progressionAdjustedPlan);
 
     return {
       id: Date.now().toString(),
@@ -1355,214 +2123,82 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
     };
   };
 
-  // Helper function to parse text responses and extract structured data
-  const parseUserResponses = () => {
-    try {
-      // Extract goal from fitness goals text
-      const goalText = (fitnessGoals || '').toLowerCase();
-      let parsedGoal = 'strength'; // default
-      if (goalText.includes('lose') || goalText.includes('weight') || goalText.includes('fat') || goalText.includes('slim')) {
-        parsedGoal = 'weight_loss';
-      } else if (goalText.includes('muscle') || goalText.includes('gain') || goalText.includes('bulk') || goalText.includes('size')) {
-        parsedGoal = 'muscle_gain';
-      } else if (goalText.includes('strength') || goalText.includes('strong') || goalText.includes('lift')) {
-        parsedGoal = 'strength';
-      } else if (goalText.includes('endurance') || goalText.includes('cardio') || goalText.includes('running') || goalText.includes('stamina')) {
-        parsedGoal = 'endurance';
-      } else if (goalText.includes('flexible') || goalText.includes('mobility') || goalText.includes('stretch')) {
-        parsedGoal = 'flexibility';
-      }
-
-      // Extract level from experience text
-      const levelText = (experienceLevel || '').toLowerCase();
-      let parsedLevel = 'beginner'; // default
-      if (levelText.includes('beginner') || levelText.includes('new') || levelText.includes('never') || levelText.includes('start')) {
-        parsedLevel = 'beginner';
-      } else if (levelText.includes('intermediate') || levelText.includes('some') || levelText.includes('few') || levelText.includes('year')) {
-        parsedLevel = 'intermediate';
-      } else if (levelText.includes('advanced') || levelText.includes('expert') || levelText.includes('experienced') || levelText.includes('many')) {
-        parsedLevel = 'advanced';
-      }
-
-      // Extract days per week from frequency text
-      const frequencyText = (workoutFrequency || '').toLowerCase();
-      let parsedDays = 3; // default
-      const dayMatch = frequencyText.match(/(\d+)\s*(day|time|session)/);
-      if (dayMatch) {
-        const days = parseInt(dayMatch[1]);
-        if (days >= 3 && days <= 7) {
-          parsedDays = days;
-        }
-      } else if (frequencyText.includes('three') || frequencyText.includes('3')) {
-        parsedDays = 3;
-      } else if (frequencyText.includes('four') || frequencyText.includes('4')) {
-        parsedDays = 4;
-      } else if (frequencyText.includes('five') || frequencyText.includes('5')) {
-        parsedDays = 5;
-      } else if (frequencyText.includes('six') || frequencyText.includes('6')) {
-        parsedDays = 6;
-      } else if (frequencyText.includes('seven') || frequencyText.includes('7') || frequencyText.includes('daily') || frequencyText.includes('every day')) {
-        parsedDays = 7;
-      }
-
-    // Extract excluded exercises from injuries/limitations text
-    // (Exercise limitations question removed - now using only injuries/limitations)
-    const injuriesText = (injuriesLimitations || '').toLowerCase();
-    const combinedText = injuriesText;
-    const newExcludedExercises: string[] = [];
-    
-    // Get all exercise names from the exercise library for matching
-    const allExerciseNames = getAllExercises().map(e => e.name);
-    
-    // Check for common injury-related exercises from both fields
-    if (combinedText.includes('knee') || combinedText.includes('squat')) {
-      newExcludedExercises.push('Squat', 'Squats', 'Lunges', 'Leg Press', 'Bulgarian Split Squats', 'Goblet Squats', 'Pistol Squats');
-    }
-    if (combinedText.includes('back') || combinedText.includes('spine') || combinedText.includes('lower back')) {
-      newExcludedExercises.push('Deadlift', 'Deadlifts', 'Romanian Deadlift', 'Good Mornings', 'Back Extensions', 'Single Leg Deadlift');
-    }
-    if (combinedText.includes('shoulder') || combinedText.includes('rotator')) {
-      newExcludedExercises.push('Overhead Press', 'Shoulder Press', 'Lateral Raises', 'Front Raises', 'Arnold Press');
-    }
-    if (combinedText.includes('wrist') || combinedText.includes('carpal')) {
-      newExcludedExercises.push('Push-ups', 'Dips', 'Plank', 'Handstand');
-    }
-    if (combinedText.includes('ankle') || combinedText.includes('foot')) {
-      newExcludedExercises.push('Calf Raises', 'Jumping Jacks', 'Box Jumps', 'Plyometric');
-    }
-    
-    // Try to match exercise names mentioned in the injuries/limitations text
-    allExerciseNames.forEach(exerciseName => {
-      const exerciseLower = exerciseName.toLowerCase();
-      // Check if the exercise name is mentioned in the limitations text
-      if (injuriesText.includes(exerciseLower) || injuriesText.includes(exerciseLower.replace(/\s+/g, '-'))) {
-        if (!newExcludedExercises.includes(exerciseName)) {
-          newExcludedExercises.push(exerciseName);
-        }
-      }
-    });
-    
-    // Also check for common variations and synonyms
-    const exerciseSynonyms: { [key: string]: string[] } = {
-      'squat': ['Squat', 'Squats', 'Goblet Squats', 'Bulgarian Split Squats'],
-      'pull-up': ['Pull-ups', 'Pull-up', 'Chin-ups'],
-      'push-up': ['Push-ups', 'Push-up'],
-      'deadlift': ['Deadlift', 'Deadlifts', 'Romanian Deadlift'],
-      'overhead': ['Overhead Press', 'Shoulder Press'],
-      'bench': ['Bench Press', 'Incline Press', 'Decline Press'],
-      'row': ['Barbell Row', 'Dumbbell Row', 'Cable Rows'],
+  const persistSavedPlan = async (workout: WorkoutPlan, { activate = true } = {}) => {
+    const cleanName = workout.name.replace(/\s*-\s*Option\s*\d+$/, '');
+    const savedPlan: SavedWorkoutPlan = {
+      ...workout,
+      name: cleanName,
+      savedAt: new Date().toISOString(),
     };
-    
-    Object.entries(exerciseSynonyms).forEach(([keyword, exercises]) => {
-      if (injuriesText.includes(keyword)) {
-        exercises.forEach(ex => {
-          if (!newExcludedExercises.includes(ex)) {
-            newExcludedExercises.push(ex);
-          }
-        });
-      }
-    });
 
-      // Parse preferred workout length
-      let parsedWorkoutLength: number | undefined = undefined;
-      if (preferredWorkoutLength) {
-        const lengthMatch = preferredWorkoutLength.match(/(\d+)/);
-        if (lengthMatch) {
-          const length = parseInt(lengthMatch[1]);
-          if (length >= 15 && length <= 180) {
-            parsedWorkoutLength = length;
-          }
-        }
-      }
+    const existingPlans = (await loadUserData<SavedWorkoutPlan[]>('savedWorkoutPlans')) || [];
+    const withoutDup = existingPlans.filter((p) => p.id !== savedPlan.id);
+    const updatedPlans = [...withoutDup, savedPlan];
+    await saveUserData('savedWorkoutPlans', updatedPlans);
+    setSavedPlans(updatedPlans);
 
-      // Parse secondary goals
-      const parsedSecondaryGoals: string[] = [];
-      if (secondaryGoals) {
-        const secondaryGoalsText = secondaryGoals.toLowerCase();
-        if (secondaryGoalsText.includes('flexibility') || secondaryGoalsText.includes('flexible')) {
-          parsedSecondaryGoals.push('flexibility');
-        }
-        if (secondaryGoalsText.includes('mobility')) {
-          parsedSecondaryGoals.push('mobility');
-        }
-        if (secondaryGoalsText.includes('core') || secondaryGoalsText.includes('abs')) {
-          parsedSecondaryGoals.push('core_strength');
-        }
-        if (secondaryGoalsText.includes('posture')) {
-          parsedSecondaryGoals.push('posture');
-        }
-        if (secondaryGoalsText.includes('endurance') || secondaryGoalsText.includes('stamina')) {
-          parsedSecondaryGoals.push('endurance');
-        }
-        if (secondaryGoalsText.includes('balance')) {
-          parsedSecondaryGoals.push('balance');
-        }
+    if (activate) {
+      const active = (await loadUserData<string[]>('activeWorkoutPlans')) || [];
+      const updatedActive = active.includes(savedPlan.id) ? active : [...active, savedPlan.id];
+      await saveUserData('activeWorkoutPlans', updatedActive);
+    }
+
+    return savedPlan;
+  };
+
+  const handleSavePlanFromOptions = async (workout: WorkoutPlan) => {
+    if (!workout?.weeklyPlan || workout.weeklyPlan.weekDays.length === 0) {
+      Alert.alert('Error', 'Invalid workout plan selected.');
+      return;
+    }
+
+    const wasInitialSetup = await isPendingFirstWorkoutPlan();
+    setShowWorkoutOptions(false);
+
+    try {
+      const savedPlan = await persistSavedPlan(workout, { activate: true });
+      if (wasInitialSetup) {
+        await clearPendingFirstWorkoutPlan();
+        onPlanSetupComplete?.();
       }
 
-      return {
-        goal: parsedGoal,
-        level: parsedLevel,
-        days: parsedDays,
-        excludedExercises: [...(excludedExercises || []), ...newExcludedExercises],
-        gender: gender || undefined,
-        secondaryGoals: parsedSecondaryGoals.length > 0 ? parsedSecondaryGoals : undefined,
-        preferredWorkoutLength: parsedWorkoutLength,
-        userContext: {
-          fitnessGoals: fitnessGoals || '',
-          secondaryGoals: secondaryGoals || '',
-          gender: gender || '',
-          experienceLevel: experienceLevel || '',
-          workoutFrequency: workoutFrequency || '',
-          preferredWorkoutLength: preferredWorkoutLength || '',
-          injuriesLimitations: injuriesLimitations || '',
-          currentActivityLevel: currentActivityLevel || '',
-          availableEquipment: availableEquipment || '',
-          additionalInfo: additionalInfo || ''
-        }
-      };
+      Alert.alert(
+        'Plan saved',
+        `"${savedPlan.name}" is in My Plans under Workouts. Open the Workouts tab anytime to start training.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (wasInitialSetup) {
+                onBack();
+              }
+            },
+          },
+        ]
+      );
     } catch (error) {
-      console.error('Error parsing user responses:', error);
-      // Return safe defaults
-      return {
-        goal: 'strength',
-        level: 'beginner',
-        days: 3,
-        excludedExercises: excludedExercises || [],
-        userContext: {}
-      };
+      console.error('Error saving workout plan:', error);
+      Alert.alert('Error', 'Failed to save workout plan');
     }
   };
 
   const handleSelectWorkout = async (workout: WorkoutPlan) => {
-    // Remove the "Option X" suffix from the name
     const cleanName = workout.name.replace(/\s*-\s*Option\s*\d+$/, '');
     workout.name = cleanName;
-    
+
     if (!workout || !workout.weeklyPlan || workout.weeklyPlan.weekDays.length === 0) {
       Alert.alert('Error', 'Invalid workout plan selected.');
       return;
     }
 
-    // Close options screen
     setShowWorkoutOptions(false);
 
-    // Save the workout to saved plans
     try {
-      const savedPlan: SavedWorkoutPlan = {
-        ...workout,
-        name: cleanName,
-        savedAt: new Date().toISOString(),
-      };
-      
-      const existingPlans = await loadUserData<SavedWorkoutPlan[]>('savedWorkoutPlans') || [];
-      const updatedPlans = [...existingPlans, savedPlan];
-      await saveUserData('savedWorkoutPlans', updatedPlans);
-      setSavedPlans(updatedPlans);
-      
-      Alert.alert('Success', 'Workout plan saved!');
+      await persistSavedPlan(workout, { activate: true });
     } catch (error) {
       console.error('Error saving workout plan:', error);
       Alert.alert('Error', 'Failed to save workout plan');
+      return;
     }
 
     // Set the selected workout
@@ -1575,32 +2211,9 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         exercises: workout.weeklyPlan.weekDays[0].exercises,
         duration: workout.weeklyPlan.weekDays[0].duration
       });
-      // Initialize exercise logs with sets
-      const initialLogs: ExerciseLog[] = workout.weeklyPlan.weekDays[0].exercises.map((ex: Exercise) => ({
-        exerciseId: ex.id,
-        exerciseName: ex.name,
-        totalSets: ex.sets,
-        sets: Array.from({ length: ex.sets }, (_, i) => ({
-          setNumber: i + 1,
-          reps: ex.reps,
-          weight: 0,
-          completed: false
-        }))
-      }));
-      setExerciseLogs(initialLogs);
+      setExerciseLogs(initExerciseLogs(workout.weeklyPlan.weekDays[0].exercises));
     } else {
-      const initialLogs: ExerciseLog[] = workout.exercises.map((ex: Exercise) => ({
-        exerciseId: ex.id,
-        exerciseName: ex.name,
-        totalSets: ex.sets,
-        sets: Array.from({ length: ex.sets }, (_, i) => ({
-          setNumber: i + 1,
-          reps: ex.reps,
-          weight: 0,
-          completed: false
-        }))
-      }));
-      setExerciseLogs(initialLogs);
+      setExerciseLogs(initExerciseLogs(workout.exercises));
     }
     
     // Wait a moment to ensure state is set before opening modal
@@ -1622,50 +2235,18 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
   };
 
   const handleGenerateWorkout = async () => {
-    // Validate that user has filled in the essential questions
-    if (!fitnessGoals.trim() || !experienceLevel.trim() || !workoutFrequency.trim()) {
-      Alert.alert('Please Complete', 'Please answer at least the first three questions about your fitness goals, experience level, and workout frequency.');
+    const complete = await isOnboardingComplete();
+    if (!complete) {
+      Alert.alert(
+        'Complete onboarding first',
+        'Your coaching profile powers plan generation. Finish the onboarding wizard from the home screen after sign-in.'
+      );
       return;
     }
 
     try {
-      const parsed = parseUserResponses();
-      
-      // Save user profile data if available
-      if (gender || secondaryGoals || preferredWorkoutLength) {
-        try {
-          const currentProfile = await loadUserData<any>('userProfile') || {};
-          await saveUserData('userProfile', {
-            ...currentProfile,
-            sex: gender || currentProfile.sex || '',
-            secondaryGoals: secondaryGoals ? (typeof secondaryGoals === 'string' ? secondaryGoals.split(',').map((g: string) => g.trim()) : secondaryGoals) : currentProfile.secondaryGoals || [],
-            preferredWorkoutLength: preferredWorkoutLength ? parseInt(preferredWorkoutLength) || currentProfile.preferredWorkoutLength : currentProfile.preferredWorkoutLength,
-          });
-        } catch (error) {
-          console.error('Error saving user profile:', error);
-        }
-      }
-
-      // Generate multiple workout options (3 variations)
-      const options = await generateMultipleWorkoutPlans(
-        parsed.goal, 
-        parsed.level, 
-        parsed.days, 
-        parsed.excludedExercises,
-        parsed.gender,
-        parsed.secondaryGoals,
-        parsed.preferredWorkoutLength,
-        3 // Generate 3 workout options
-      );
-      
-      if (!options || options.length === 0) {
-        Alert.alert('Error', 'Failed to generate workout plans. Please try again.');
-        return;
-      }
-
-      // Show workout options screen
-      setWorkoutOptions(options);
-      setShowWorkoutOptions(true);
+      const cp = await loadCoachingProfile();
+      await runGenerateFromProfile(cp);
     } catch (error) {
       console.error('Error generating workout:', error);
       Alert.alert('Error', `Failed to generate workout: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1681,29 +2262,62 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         exercises: dayWorkout.exercises,
         duration: dayWorkout.duration
       } : null);
-      const initialLogs: ExerciseLog[] = dayWorkout.exercises.map(ex => ({
-        exerciseId: ex.id,
-        exerciseName: ex.name,
-        totalSets: ex.sets,
-        sets: Array.from({ length: ex.sets }, (_, i) => ({
-          setNumber: i + 1,
-          reps: ex.reps,
-          weight: 0,
-          completed: false
-        }))
-      }));
-      setExerciseLogs(initialLogs);
+      setExerciseLogs(initExerciseLogs(dayWorkout.exercises));
       setCurrentExerciseIndex(0);
       setCurrentSetIndex(0);
     }
   };
 
+  const advanceToNextExercise = () => {
+    if (currentExerciseIndex < trackingExercises.length - 1) {
+      setCurrentExerciseIndex(currentExerciseIndex + 1);
+      setCurrentSetIndex(0);
+    }
+  };
+
+  const applyWarmupLogUpdate = (logIndex: number, nextLog: ExerciseLog, autoAdvance: boolean) => {
+    const updatedLogs = [...exerciseLogs];
+    updatedLogs[logIndex] = syncWarmupSetCompletion(nextLog);
+    setExerciseLogs(updatedLogs);
+    if (autoAdvance && updatedLogs[logIndex].sets[0]?.completed) {
+      advanceToNextExercise();
+    }
+  };
+
+  const handleWarmupItemToggle = (itemId: string) => {
+    const log = exerciseLogs[currentExerciseIndex];
+    if (!log?.isWarmupBlock || !log.warmupItems) return;
+    const warmupItems = log.warmupItems.map((item) =>
+      item.id === itemId ? { ...item, completed: !item.completed } : item
+    );
+    const allDone = warmupItems.every((w) => w.completed);
+    applyWarmupLogUpdate(
+      currentExerciseIndex,
+      { ...log, warmupItems },
+      allDone
+    );
+  };
+
+  const handleWarmupCompleteAll = () => {
+    const log = exerciseLogs[currentExerciseIndex];
+    if (!log?.isWarmupBlock || !log.warmupItems) return;
+    const warmupItems = log.warmupItems.map((item) => ({ ...item, completed: true }));
+    applyWarmupLogUpdate(
+      currentExerciseIndex,
+      { ...log, warmupItems },
+      true
+    );
+  };
+
   const handleSetComplete = () => {
-    if (!currentWorkout || currentExerciseIndex >= currentWorkout.exercises.length) return;
+    if (!currentWorkout || currentExerciseIndex >= trackingExercises.length) return false;
+
+    const currentEx = trackingExercises[currentExerciseIndex];
+    if (currentEx?.isWarmupBlock) return false;
     
     const currentLog = exerciseLogs[currentExerciseIndex];
     
-    if (!currentLog || currentSetIndex >= currentLog.sets.length) return;
+    if (!currentLog || currentSetIndex >= currentLog.sets.length) return false;
     
     // Get weight and reps from the current set
     const currentSet = currentLog.sets[currentSetIndex];
@@ -1712,28 +2326,55 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
     
     if (weight === 0 && reps === 0) {
       Alert.alert('Error', 'Please enter weight and reps');
-      return;
+      return false;
     }
-    
-    // Mark this set as completed
+
     const updatedLogs = [...exerciseLogs];
+    let sets = updatedLogs[currentExerciseIndex].sets.map((set, idx) =>
+      idx === currentSetIndex ? { ...set, completed: true, weight, reps } : set
+    );
+    if (currentSetIndex < sets.length - 1) {
+      const nextIdx = currentSetIndex + 1;
+      const next = sets[nextIdx];
+      if (!next.completed) {
+        sets = sets.map((set, idx) =>
+          idx === nextIdx ? { ...set, weight, reps } : set
+        );
+      }
+    }
     updatedLogs[currentExerciseIndex] = {
       ...updatedLogs[currentExerciseIndex],
-      sets: updatedLogs[currentExerciseIndex].sets.map((set, idx) =>
-        idx === currentSetIndex
-          ? { ...set, completed: true, weight, reps }
-          : set
-      )
+      sets,
     };
     setExerciseLogs(updatedLogs);
-    
+
     // Move to next set or next exercise
     if (currentSetIndex < currentLog.sets.length - 1) {
       setCurrentSetIndex(currentSetIndex + 1);
-    } else if (currentExerciseIndex < currentWorkout.exercises.length - 1) {
+    } else if (currentExerciseIndex < trackingExercises.length - 1) {
       setCurrentExerciseIndex(currentExerciseIndex + 1);
       setCurrentSetIndex(0);
     }
+
+    return true;
+  };
+
+  const updateCurrentSetWeight = (nextWeight: number) => {
+    if (!exerciseLogs[currentExerciseIndex]) return;
+    const newLogs = [...exerciseLogs];
+    const updatedSets = [...newLogs[currentExerciseIndex].sets];
+    updatedSets[currentSetIndex] = { ...updatedSets[currentSetIndex], weight: Math.max(0, Math.round(nextWeight)) };
+    newLogs[currentExerciseIndex] = { ...newLogs[currentExerciseIndex], sets: updatedSets };
+    setExerciseLogs(newLogs);
+  };
+
+  const updateCurrentSetReps = (nextReps: number) => {
+    if (!exerciseLogs[currentExerciseIndex]) return;
+    const newLogs = [...exerciseLogs];
+    const updatedSets = [...newLogs[currentExerciseIndex].sets];
+    updatedSets[currentSetIndex] = { ...updatedSets[currentSetIndex], reps: Math.max(0, Math.round(nextReps)) };
+    newLogs[currentExerciseIndex] = { ...newLogs[currentExerciseIndex], sets: updatedSets };
+    setExerciseLogs(newLogs);
   };
 
   const handleSaveWorkout = async () => {
@@ -1753,21 +2394,10 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
         return;
       }
 
-      // Convert exercise logs back to exercise format for history
-      const completedExercises: Exercise[] = exerciseLogs
-        .filter(log => log.sets.some(set => set.completed))
-        .map(log => {
-          const exercise = currentWorkout.exercises.find(ex => ex.id === log.exerciseId);
-          return {
-            id: log.exerciseId,
-            name: log.exerciseName,
-            sets: log.totalSets,
-            reps: log.sets[0]?.reps || exercise?.reps || 0,
-            weight: log.sets[0]?.weight || 0,
-            completed: true,
-            category: exercise?.category || 'strength'
-          };
-        });
+      const completedExercises: Exercise[] = expandCompletedExercisesForHistory(
+        trackingExercises,
+        exerciseLogs.filter((log) => log.sets.some((set) => set.completed))
+      );
 
       const workoutLog: WorkoutLog = {
         id: Date.now().toString(),
@@ -1800,21 +2430,10 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       return;
     }
 
-    // Convert exercise logs back to exercise format for history
-    const completedExercises: Exercise[] = exerciseLogs
-      .filter(log => log.sets.some(set => set.completed))
-      .map(log => {
-        const exercise = currentWorkout.exercises.find(ex => ex.id === log.exerciseId);
-        return {
-          id: log.exerciseId,
-          name: log.exerciseName,
-          sets: log.totalSets,
-          reps: log.sets[0]?.reps || exercise?.reps || 0,
-          weight: log.sets[0]?.weight || 0,
-          completed: true,
-          category: exercise?.category || 'strength'
-        };
-      });
+    const completedExercises: Exercise[] = expandCompletedExercisesForHistory(
+      trackingExercises,
+      exerciseLogs.filter((log) => log.sets.some((set) => set.completed))
+    );
 
     const workoutLog: WorkoutLog = {
       id: Date.now().toString(),
@@ -1943,11 +2562,27 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
   if (showWorkoutOptions && workoutOptions.length > 0) {
     return (
       <WorkoutOptionsScreen
-        workoutOptions={workoutOptions}
+        workoutOptions={workoutOptions as unknown as GeneratedWorkoutPlan[]}
         generatedGoal={workoutOptions[0]?.goal}
-        onSelect={handleSelectWorkout}
+        onSave={(w) => void handleSavePlanFromOptions(w as unknown as WorkoutPlan)}
+        onStartWorkout={(w) => void handleSelectWorkout(w as unknown as WorkoutPlan)}
         onBack={() => setShowWorkoutOptions(false)}
       />
+    );
+  }
+
+  if (generatingPlan) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <View style={styles.generatingPlanOverlay}>
+          <ActivityIndicator size="large" color={AppTheme.accent} />
+          <Text style={styles.generatingPlanTitle}>Building your plan…</Text>
+          <Text style={styles.generatingPlanSubtitle}>
+            Using your onboarding answers to create workout options.
+          </Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -1957,8 +2592,13 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Workout Planner</Text>
         <TouchableOpacity style={styles.savedPlansButton} onPress={() => setShowSavedPlans(!showSavedPlans)}>
@@ -2008,218 +2648,54 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
           </View>
         ) : (
           <>
-        {/* AI Q&A Section for Personalized Workout Plan */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Let's Get to Know You</Text>
+        {/* Coaching profile summary — data from onboarding wizard */}
+        <View style={[styles.section, styles.questionCard]}>
+          <Text style={styles.sectionTitle}>Your coaching profile</Text>
           <Text style={styles.sectionSubtitle}>
-            Answer these questions so our AI can create a personalized workout and nutrition plan just for you.
+            Plans are built from your onboarding answers. Update preferences or challenge level in Settings.
           </Text>
-          <View style={styles.questionnaireNote}>
+          {coachingProfile && onboardingReady ? (
+            <View style={styles.profileSummaryBox}>
+              <Text style={styles.profileSummaryLine}>
+                Goal:{' '}
+                {coachingProfile.goalProfile.primaryGoal
+                  ? PRIMARY_GOAL_LABELS[coachingProfile.goalProfile.primaryGoal]
+                  : '—'}
+              </Text>
+              <Text style={styles.profileSummaryLine}>
+                Schedule: {coachingProfile.scheduleProfile.daysPerWeek} days ×{' '}
+                {coachingProfile.scheduleProfile.sessionLengthMinutes} min
+              </Text>
+              <Text style={styles.profileSummaryLine}>
+                Experience: {coachingProfile.experienceProfile.level}
+              </Text>
+              <Text style={styles.profileSummaryLine}>
+                Challenge: {coachingProfile.adherenceProfile.challengeDial}
+                {' '}
+                (intensity dial — not fewer training days)
+              </Text>
+              <Text style={styles.profileSummaryLine}>
+                Coach focus:{' '}
+                {buildWorkoutGenerationModifiers(coachingProfile).coachingNote}
+              </Text>
+            </View>
+          ) : (
             <Text style={styles.questionnaireNoteText}>
-              The more detail you add in your responses, the better your workout plan will be.
+              Complete the onboarding wizard after sign-in to generate your first personalized plan.
             </Text>
-          </View>
-        </View>
-
-        {/* Fitness Goals */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>What are your fitness goals?</Text>
-          <Text style={styles.questionHint}>
-            Tell us what you want to achieve (e.g., "I want to lose 20 pounds", "Build muscle and get stronger", "Improve my running endurance", "Get more flexible")
-          </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Describe your fitness goals..."
-            placeholderTextColor="#666"
-            value={fitnessGoals}
-            onChangeText={setFitnessGoals}
-            multiline
-            numberOfLines={3}
-            autoCapitalize="words"
-          />
-        </View>
-
-        {/* Gender */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>What is your gender?</Text>
-          <Text style={styles.questionHint}>
-            This helps us tailor the workout plan to your body type and physiology
-          </Text>
-          <View style={styles.genderContainer}>
-              <TouchableOpacity
-              style={[styles.genderButton, gender === 'male' && styles.genderButtonActive]}
-              onPress={() => setGender('male')}
-            >
-              <Text style={[styles.genderButtonText, gender === 'male' && styles.genderButtonTextActive]}>
-                Male
-              </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-              style={[styles.genderButton, gender === 'female' && styles.genderButtonActive]}
-              onPress={() => setGender('female')}
-            >
-              <Text style={[styles.genderButtonText, gender === 'female' && styles.genderButtonTextActive]}>
-                Female
-                </Text>
-              </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.genderButton, gender === 'other' && styles.genderButtonActive]}
-              onPress={() => setGender('other')}
-            >
-              <Text style={[styles.genderButtonText, gender === 'other' && styles.genderButtonTextActive]}>
-                Other
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Experience Level */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>What's your current fitness level and experience?</Text>
-          <Text style={styles.questionHint}>
-            Describe your experience with exercise (e.g., "I'm a complete beginner", "I've been working out for 2 years", "I used to be active but haven't in a while")
-            </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Tell us about your fitness experience..."
-            placeholderTextColor="#666"
-            value={experienceLevel}
-            onChangeText={setExperienceLevel}
-            multiline
-            numberOfLines={3}
-            autoCapitalize="words"
-          />
-          </View>
-
-        {/* Workout Frequency */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>How often can you work out?</Text>
-          <Text style={styles.questionHint}>
-            Be realistic about your schedule (e.g., "3 days per week", "Every morning before work", "Weekends only", "5-6 days per week")
-            </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="How many days per week and when?"
-            placeholderTextColor="#666"
-            value={workoutFrequency}
-            onChangeText={setWorkoutFrequency}
-            multiline
-            numberOfLines={2}
-            autoCapitalize="words"
-          />
-        </View>
-
-        {/* Preferred Workout Length */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>How long do you want each workout to be?</Text>
-          <Text style={styles.questionHint}>
-            Enter your preferred workout duration in minutes (e.g., "30", "45", "60", "90")
-                </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Workout length in minutes (e.g., 45)"
-            placeholderTextColor="#666"
-            value={preferredWorkoutLength}
-            onChangeText={setPreferredWorkoutLength}
-            keyboardType="numeric"
-          />
-                  </View>
-
-        {/* Secondary Goals */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>Do you have any secondary fitness goals?</Text>
-          <Text style={styles.questionHint}>
-            Additional goals beyond your primary one (e.g., "Improve flexibility", "Build core strength", "Increase mobility", "Better posture", "None")
-          </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="List any secondary goals or leave blank if none..."
-            placeholderTextColor="#666"
-            value={secondaryGoals}
-            onChangeText={setSecondaryGoals}
-            multiline
-            numberOfLines={2}
-            autoCapitalize="words"
-          />
-                </View>
-
-        {/* Injuries & Limitations */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>Do you have any injuries, limitations, or health concerns?</Text>
-          <Text style={styles.questionHint}>
-            Describe any health issues that might affect your workouts (e.g., "Lower back pain", "Asthma", "High blood pressure", "Recovering from surgery", "None")
-                    </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Describe any injuries, limitations, or health concerns..."
-            placeholderTextColor="#666"
-            value={injuriesLimitations}
-            onChangeText={setInjuriesLimitations}
-            multiline
-            numberOfLines={3}
-            autoCapitalize="words"
-          />
-          </View>
-
-        {/* Current Activity Level */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>What's your current activity level?</Text>
-          <Text style={styles.questionHint}>
-            Describe your daily activity (e.g., "I have a desk job and sit most of the day", "I'm on my feet all day at work", "I walk my dog daily")
-                            </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Describe your current daily activity..."
-            placeholderTextColor="#666"
-            value={currentActivityLevel}
-            onChangeText={setCurrentActivityLevel}
-            multiline
-            numberOfLines={2}
-            autoCapitalize="words"
-          />
-                    </View>
-
-        {/* Available Equipment */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>What equipment do you have access to?</Text>
-          <Text style={styles.questionHint}>
-            Tell us what's available (e.g., "Full gym with weights and machines", "Just dumbbells at home", "No equipment, bodyweight only", "Resistance bands")
-          </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="What equipment or facilities do you have?"
-            placeholderTextColor="#666"
-            value={availableEquipment}
-            onChangeText={setAvailableEquipment}
-            multiline
-            numberOfLines={2}
-            autoCapitalize="words"
-          />
-                  </View>
-
-        {/* Additional Info */}
-        <View style={styles.section}>
-          <Text style={styles.questionTitle}>Anything else we should know?</Text>
-          <Text style={styles.questionHint}>
-            Share any other information that might help us create the perfect plan for you
-                            </Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Any additional information..."
-            placeholderTextColor="#666"
-            value={additionalInfo}
-            onChangeText={setAdditionalInfo}
-            multiline
-            numberOfLines={3}
-            autoCapitalize="words"
-          />
+          )}
         </View>
 
         {/* Generate Workout Button */}
         <TouchableOpacity
-          style={[styles.generateButton, (!fitnessGoals.trim() || !experienceLevel.trim() || !workoutFrequency.trim()) && styles.generateButtonDisabled]}
+          style={[
+            styles.generateButton,
+            !onboardingReady && styles.generateButtonDisabled,
+          ]}
+          ref={fitnessAiGenerateRef}
+          nativeID={TOUR_TARGET_IDS.fitnessAiGenerate}
           onPress={handleGenerateWorkout}
-          disabled={!fitnessGoals.trim() || !experienceLevel.trim() || !workoutFrequency.trim()}
+          disabled={!onboardingReady}
         >
           <Text style={styles.generateButtonText}>Generate My Personalized Plan</Text>
         </TouchableOpacity>
@@ -2247,7 +2723,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       {/* Workout Modal */}
       <Modal
         visible={showWorkoutModal}
-        animationType="slide"
+        animationType="none"
         presentationStyle="pageSheet"
         onRequestClose={() => setShowWorkoutModal(false)}
       >
@@ -2377,72 +2853,48 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
             )}
 
             {/* Current Exercise */}
-            {currentWorkout && currentWorkout.exercises && currentWorkout.exercises.length > 0 && exerciseLogs && exerciseLogs.length > 0 && currentExerciseIndex < currentWorkout.exercises.length && currentExerciseIndex < exerciseLogs.length && (
+            {currentWorkout && trackingExercises.length > 0 && exerciseLogs && exerciseLogs.length > 0 && currentExerciseIndex < trackingExercises.length && currentExerciseIndex < exerciseLogs.length && (
               <View style={styles.currentExercise}>
                 <Text style={styles.exerciseTitle}>
-                  {currentWorkout.exercises[currentExerciseIndex]?.name || 'Exercise'}
+                  {trackingExercises[currentExerciseIndex]?.name || 'Exercise'}
                 </Text>
+                {trackingExercises[currentExerciseIndex]?.isWarmupBlock ? (
+                  <>
+                    <Text style={styles.exerciseDetails}>
+                      {trackingExercises[currentExerciseIndex].warmupItems?.length ?? 0} movements · check each off as you go
+                    </Text>
+                    {exerciseLogs[currentExerciseIndex]?.warmupItems && (
+                      <WarmupBlockSession
+                        items={exerciseLogs[currentExerciseIndex].warmupItems!}
+                        blockComplete={exerciseLogs[currentExerciseIndex].sets[0]?.completed === true}
+                        onToggleItem={handleWarmupItemToggle}
+                        onCompleteAll={handleWarmupCompleteAll}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
                 <Text style={styles.exerciseDetails}>
-                  Set {Math.min(currentSetIndex + 1, currentWorkout.exercises[currentExerciseIndex]?.sets || 1)} of {currentWorkout.exercises[currentExerciseIndex]?.sets || 0} • Target: {currentWorkout.exercises[currentExerciseIndex]?.reps || 0} reps
+                  Set {Math.min(currentSetIndex + 1, trackingExercises[currentExerciseIndex]?.sets || 1)} of {trackingExercises[currentExerciseIndex]?.sets || 0} • Target: {trackingExercises[currentExerciseIndex]?.reps || 0} reps
                 </Text>
                 
                 {exerciseLogs[currentExerciseIndex] && exerciseLogs[currentExerciseIndex].sets && exerciseLogs[currentExerciseIndex].sets.length > 0 && currentSetIndex < exerciseLogs[currentExerciseIndex].sets.length && (
-                  <>
-                    <View style={styles.inputRow}>
-                      <View style={styles.inputContainer}>
-                        <Text style={styles.inputLabel}>Weight (lbs)</Text>
-                        <TextInput
-                          style={styles.input}
-                          keyboardType="numeric"
-                          placeholder="0"
-                          value={exerciseLogs[currentExerciseIndex].sets[currentSetIndex]?.weight?.toString() || ''}
-                          onChangeText={(text) => {
-                            const newLogs = [...exerciseLogs];
-                            const updatedSets = [...newLogs[currentExerciseIndex].sets];
-                            updatedSets[currentSetIndex] = {
-                              ...updatedSets[currentSetIndex],
-                              weight: parseInt(text) || 0
-                            };
-                            newLogs[currentExerciseIndex] = {
-                              ...newLogs[currentExerciseIndex],
-                              sets: updatedSets
-                            };
-                            setExerciseLogs(newLogs);
-                          }}
-                        />
-                      </View>
-                      <View style={styles.inputContainer}>
-                        <Text style={styles.inputLabel}>Reps</Text>
-                        <TextInput
-                          style={styles.input}
-                          keyboardType="numeric"
-                          placeholder={currentWorkout.exercises[currentExerciseIndex]?.reps?.toString() || '0'}
-                          value={exerciseLogs[currentExerciseIndex]?.sets[currentSetIndex]?.reps?.toString() || ''}
-                          onChangeText={(text) => {
-                            if (!exerciseLogs[currentExerciseIndex] || !currentWorkout.exercises[currentExerciseIndex]) return;
-                            const newLogs = [...exerciseLogs];
-                            const updatedSets = [...newLogs[currentExerciseIndex].sets];
-                            const defaultReps = currentWorkout.exercises[currentExerciseIndex]?.reps || 0;
-                            updatedSets[currentSetIndex] = {
-                              ...updatedSets[currentSetIndex],
-                              reps: parseInt(text) || defaultReps
-                            };
-                            newLogs[currentExerciseIndex] = {
-                              ...newLogs[currentExerciseIndex],
-                              sets: updatedSets
-                            };
-                            setExerciseLogs(newLogs);
-                          }}
-                        />
-                      </View>
-                    </View>
-
-                    <TouchableOpacity
-                      style={styles.completeButton}
-                      onPress={handleSetComplete}
-                    >
-                      <Text style={styles.completeButtonText}>Complete Set</Text>
-                    </TouchableOpacity>
+                  <WorkoutSession
+                    sessionKey={`${currentExerciseIndex}-${currentSetIndex}`}
+                    exerciseName={trackingExercises[currentExerciseIndex]?.name || 'Exercise'}
+                    currentWeight={exerciseLogs[currentExerciseIndex].sets[currentSetIndex]?.weight || 0}
+                    currentReps={exerciseLogs[currentExerciseIndex].sets[currentSetIndex]?.reps || 0}
+                    targetWeight={trackingExercises[currentExerciseIndex]?.weight || 0}
+                    targetReps={trackingExercises[currentExerciseIndex]?.reps || 0}
+                    priorWeight={exerciseLogs[currentExerciseIndex].sets[currentSetIndex - 1]?.weight || trackingExercises[currentExerciseIndex]?.weight || 0}
+                    priorReps={exerciseLogs[currentExerciseIndex].sets[currentSetIndex - 1]?.reps || trackingExercises[currentExerciseIndex]?.reps || 0}
+                    showPredictiveWeight={showPredictiveWeight}
+                    autoRestTimer={autoRestTimer}
+                    onWeightChange={updateCurrentSetWeight}
+                    onRepsChange={updateCurrentSetReps}
+                    onLogSet={handleSetComplete}
+                  />
+                )}
                   </>
                 )}
               </View>
@@ -2450,49 +2902,113 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
 
             {/* Exercise List */}
             <View style={styles.exerciseList}>
-              <Text style={styles.exerciseListTitle}>All Exercises (Tap to select)</Text>
-              {currentWorkout?.exercises?.map((exercise, index) => {
-                const log = exerciseLogs[index];
-                const completedSets = log?.sets?.filter(set => set.completed).length || 0;
-                const totalSets = exercise?.sets || 0;
-                const isCurrentExercise = currentExerciseIndex === index;
-                return (
-                  <TouchableOpacity
-                    key={exercise?.id || `ex-${index}-${exercise?.name || 'unknown'}`}
-                    style={[
-                      styles.exerciseItem,
-                      isCurrentExercise && styles.exerciseItemActive
-                    ]}
-                    onPress={() => {
-                      setCurrentExerciseIndex(index);
-                      // Find the first incomplete set for this exercise
-                      const firstIncompleteSet = log?.sets?.findIndex(set => !set.completed);
-                      setCurrentSetIndex(firstIncompleteSet !== undefined && firstIncompleteSet >= 0 ? firstIncompleteSet : 0);
-                    }}
-                  >
-                    <View style={styles.exerciseInfo}>
-                      <Text style={[
-                        styles.exerciseName,
-                        isCurrentExercise && styles.exerciseNameActive
-                      ]}>
-                        {exercise.name}
-                      </Text>
-                      <Text style={styles.exerciseSets}>
-                        {completedSets}/{totalSets} sets completed
-                      </Text>
-                    </View>
-                    <View style={[
-                      styles.exerciseStatus,
-                      completedSets === totalSets && styles.exerciseCompleted,
-                      isCurrentExercise && styles.exerciseStatusActive
-                    ]}>
-                      <Text style={styles.exerciseStatusText}>
-                        {completedSets === totalSets ? 'DONE' : `${completedSets}/${totalSets}`}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+              <Text style={styles.exerciseListTitle}>Workout Structure (Tap to select)</Text>
+              {(() => {
+                const exercises = trackingExercises;
+                const cooldownNames = new Set([
+                  'Hamstring Stretch',
+                  "Child's Pose",
+                  'Shoulder Stretch',
+                  'Hip Flexor Stretch',
+                ]);
+                const cnsNames = new Set(['High Knees', 'Lateral Pogos']);
+                const isCompound = (ex: Exercise) => (ex.muscleGroups?.length ?? 0) > 1;
+                const getPhase = (ex: Exercise): string => {
+                  if (ex.isWarmupBlock) return 'Warm-Up';
+                  if (ex.phase) return ex.phase;
+                  if (ex.durationSeconds != null && ex.durationSeconds > 0) {
+                    if (cooldownNames.has(ex.name)) return 'Cooldown';
+                    if (cnsNames.has(ex.name)) return 'Finisher';
+                    return 'Warm-Up';
+                  }
+                  if (PLYOMETRIC_EXERCISE_IDS.has(ex.id) || (ex.category === 'cardio' && ex.sets === 4 && ex.reps >= 3 && ex.reps <= 5)) {
+                    return 'Finisher';
+                  }
+                  if (ex.category === 'strength' && isCompound(ex)) return 'Secondary Lifts';
+                  return 'Accessory Lifts';
+                };
+
+                const grouped: Array<{ title: string; items: Array<{ exercise: Exercise; index: number }> }> = [];
+                exercises.forEach((exercise, index) => {
+                  const title = getPhase(exercise);
+                  const existing = grouped.find(g => g.title === title);
+                  if (existing) existing.items.push({ exercise, index });
+                  else grouped.push({ title, items: [{ exercise, index }] });
+                });
+
+                const phaseOrder = [
+                  'Warm-Up',
+                  'Main Lift',
+                  'Secondary Lifts',
+                  'Accessory Lifts',
+                  'Finisher',
+                  'Cooldown',
+                ];
+                grouped.sort((a, b) => phaseOrder.indexOf(a.title) - phaseOrder.indexOf(b.title));
+
+                return grouped.map(group => (
+                  <View key={group.title} style={styles.exerciseGroupSection}>
+                    <Text style={styles.exerciseGroupTitle}>{group.title}</Text>
+                    {group.items.map(({ exercise, index }) => {
+                      const log = exerciseLogs[index];
+                      const completedSets = log?.sets?.filter(set => set.completed).length || 0;
+                      const totalSets = exercise?.sets || 0;
+                      const warmupProgress = log?.isWarmupBlock ? getWarmupProgress(log) : null;
+                      const isCurrentExercise = currentExerciseIndex === index;
+                      return (
+                        <TouchableOpacity
+                          key={exercise?.id || `ex-${index}-${exercise?.name || 'unknown'}`}
+                          style={[
+                            styles.exerciseItem,
+                            isCurrentExercise && styles.exerciseItemActive
+                          ]}
+                          onPress={() => {
+                            setCurrentExerciseIndex(index);
+                            const firstIncompleteSet = log?.sets?.findIndex(set => !set.completed);
+                            setCurrentSetIndex(firstIncompleteSet !== undefined && firstIncompleteSet >= 0 ? firstIncompleteSet : 0);
+                          }}
+                        >
+                          <View style={styles.exerciseInfo}>
+                            <Text style={[
+                              styles.exerciseName,
+                              isCurrentExercise && styles.exerciseNameActive
+                            ]}>
+                              {exercise.name}
+                            </Text>
+                            <Text style={styles.exerciseSets}>
+                              {warmupProgress
+                                ? `${warmupProgress.done}/${warmupProgress.total} movements`
+                                : `${completedSets}/${totalSets} sets completed`}
+                            </Text>
+                            {exercise.isWarmupBlock && exercise.warmupItems && isCurrentExercise && (
+                              <Text style={styles.warmupSublistHint} numberOfLines={2}>
+                                {exercise.warmupItems.map((w) => w.name).join(' · ')}
+                              </Text>
+                            )}
+                          </View>
+                          <View style={[
+                            styles.exerciseStatus,
+                            (warmupProgress
+                              ? warmupProgress.done === warmupProgress.total && warmupProgress.total > 0
+                              : completedSets === totalSets) && styles.exerciseCompleted,
+                            isCurrentExercise && styles.exerciseStatusActive
+                          ]}>
+                            <Text style={styles.exerciseStatusText}>
+                              {warmupProgress
+                                ? warmupProgress.done === warmupProgress.total && warmupProgress.total > 0
+                                  ? 'DONE'
+                                  : `${warmupProgress.done}/${warmupProgress.total}`
+                                : completedSets === totalSets
+                                  ? 'DONE'
+                                  : `${completedSets}/${totalSets}`}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ));
+              })()}
             </View>
 
             {/* Notes */}
@@ -2543,7 +3059,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       <Modal
         visible={showSaveModal}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setShowSaveModal(false)}
       >
         <View style={styles.saveModalOverlay}>
@@ -2582,7 +3098,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
       {/* AI Adaptations Modal */}
       <Modal
         visible={showAdaptationsModal}
-        animationType="slide"
+        animationType="none"
         presentationStyle="pageSheet"
         transparent={false}
       >
@@ -2649,7 +3165,7 @@ export default function WorkoutScreen({ onBack }: { onBack: () => void }): JSX.E
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   header: {
     flexDirection: 'row',
@@ -2665,7 +3181,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#00ff88',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '600',
   },
   headerTitle: {
@@ -2683,6 +3199,13 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 30,
   },
+  questionCard: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    padding: 16,
+  },
   sectionTitle: {
     fontSize: 24,
     fontWeight: 'bold',
@@ -2691,23 +3214,36 @@ const styles = StyleSheet.create({
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: '#aaa',
+    color: AppTheme.textMuted,
     marginBottom: 12,
     lineHeight: 20,
   },
   questionnaireNote: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: 'rgba(0, 255, 136, 0.08)',
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#00ff88',
+    backgroundColor: '#121212',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   questionnaireNoteText: {
     fontSize: 13,
-    color: '#bbb',
+    color: AppTheme.textMuted,
     lineHeight: 19,
-    fontStyle: 'italic',
+  },
+  profileSummaryBox: {
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: '#121212',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    gap: 6,
+  },
+  profileSummaryLine: {
+    fontSize: 14,
+    color: AppTheme.textSecondary,
+    lineHeight: 20,
   },
   questionTitle: {
     fontSize: 18,
@@ -2717,7 +3253,7 @@ const styles = StyleSheet.create({
   },
   questionHint: {
     fontSize: 13,
-    color: '#888',
+    color: AppTheme.textMuted,
     marginBottom: 12,
     lineHeight: 18,
   },
@@ -2731,32 +3267,32 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 12,
-    backgroundColor: '#2a2a2a',
-    borderWidth: 2,
-    borderColor: '#333',
+    backgroundColor: '#121212',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   genderButtonActive: {
-    backgroundColor: '#00ff88',
-    borderColor: '#00ff88',
+    backgroundColor: 'rgba(74, 222, 128, 0.14)',
+    borderColor: '#4ADE80',
   },
   genderButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#aaa',
+    color: AppTheme.textMuted,
   },
   genderButtonTextActive: {
-    color: '#1a1a1a',
+    color: '#4ADE80',
     fontWeight: 'bold',
   },
   textInput: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#121212',
     borderWidth: 1,
-    borderColor: '#444',
-    borderRadius: 8,
-    padding: 12,
-    color: '#fff',
+    borderColor: AppTheme.border,
+    borderRadius: 12,
+    padding: 14,
+    color: AppTheme.textPrimary,
     fontSize: 16,
     minHeight: 80,
     textAlignVertical: 'top',
@@ -2769,17 +3305,17 @@ const styles = StyleSheet.create({
   },
   goalCard: {
     width: '48%',
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: '#121212',
+    borderRadius: 12,
     padding: 20,
     marginBottom: 15,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   goalCardSelected: {
-    borderColor: '#00ff88',
-    backgroundColor: '#2a2a2a',
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.12)',
   },
   goalName: {
     fontSize: 14,
@@ -2791,14 +3327,15 @@ const styles = StyleSheet.create({
     // gap replaced with marginBottom on children
   },
   levelCard: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: '#121212',
+    borderRadius: 12,
     padding: 20,
-    borderWidth: 2,
-    borderColor: 'transparent',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   levelCardSelected: {
-    borderColor: '#00ff88',
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
   },
   levelName: {
     fontSize: 18,
@@ -2808,22 +3345,24 @@ const styles = StyleSheet.create({
   },
   levelDescription: {
     fontSize: 14,
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   generateButton: {
-    backgroundColor: '#00ff88',
-    borderRadius: 15,
+    backgroundColor: '#4ADE80',
+    borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     marginBottom: 30,
   },
   generateButtonDisabled: {
-    backgroundColor: '#333',
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   generateButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#1a1a1a',
+    color: '#0f2517',
   },
   workoutLog: {
     backgroundColor: '#2a2a2a',
@@ -2887,8 +3426,10 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   currentExercise: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     padding: 20,
     marginBottom: 30,
   },
@@ -2900,8 +3441,26 @@ const styles = StyleSheet.create({
   },
   exerciseDetails: {
     fontSize: 16,
-    color: '#888',
-    marginBottom: 20,
+    color: AppTheme.textMuted,
+    marginBottom: 12,
+  },
+  restTimerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#333',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  restTimerLabel: {
+    color: '#ccc',
+    fontSize: 14,
+    flex: 1,
+    marginRight: 8,
   },
   inputRow: {
     flexDirection: 'row',
@@ -2943,19 +3502,30 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 15,
   },
+  exerciseGroupSection: {
+    marginBottom: 12,
+  },
+  exerciseGroupTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#00ff88',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    letterSpacing: 0.7,
+  },
   exerciseItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#1E1E1E',
     borderRadius: 12,
     padding: 15,
     marginBottom: 10,
-    borderWidth: 2,
-    borderColor: 'transparent',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   exerciseItemActive: {
-    borderColor: '#00ff88',
-    backgroundColor: '#2a3a2a',
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.08)',
   },
   exerciseInfo: {
     flex: 1,
@@ -2966,13 +3536,19 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   exerciseNameActive: {
-    color: '#00ff88',
+    color: '#4ADE80',
     fontWeight: 'bold',
   },
   exerciseSets: {
     fontSize: 14,
     color: '#888',
     marginTop: 2,
+  },
+  warmupSublistHint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 6,
+    lineHeight: 16,
   },
   exerciseStatus: {
     width: 30,
@@ -2983,11 +3559,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   exerciseStatusActive: {
-    borderWidth: 2,
-    borderColor: '#00ff88',
+    borderWidth: 1,
+    borderColor: '#4ADE80',
   },
   exerciseCompleted: {
-    backgroundColor: '#00ff88',
+    backgroundColor: '#4ADE80',
   },
   exerciseStatusText: {
     fontSize: 16,
@@ -3004,7 +3580,9 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   notesInput: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#121212',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     borderRadius: 12,
     padding: 15,
     fontSize: 16,
@@ -3015,30 +3593,35 @@ const styles = StyleSheet.create({
   workoutActions: {
     flexDirection: 'row',
     marginBottom: 30,
+    gap: 10,
   },
   saveWorkoutButton: {
     flex: 1,
-    backgroundColor: '#00ff88',
-    borderRadius: 15,
-    padding: 18,
+    backgroundColor: '#4ADE80',
+    borderRadius: 12,
+    minHeight: 52,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   saveWorkoutButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f2517',
   },
   finishButton: {
     flex: 1,
-    backgroundColor: '#4CAF50',
-    borderRadius: 15,
-    padding: 18,
+    backgroundColor: '#121212',
+    borderRadius: 12,
+    minHeight: 52,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   finishButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
   },
   daysGrid: {
     flexDirection: 'row',
@@ -3465,6 +4048,26 @@ const styles = StyleSheet.create({
   emptyStateSubtext: {
     fontSize: 14,
     color: '#888',
+    textAlign: 'center',
+  },
+  generatingPlanOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  generatingPlanTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 20,
+    textAlign: 'center',
+  },
+  generatingPlanSubtitle: {
+    color: '#9ca3af',
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 10,
     textAlign: 'center',
   },
 });

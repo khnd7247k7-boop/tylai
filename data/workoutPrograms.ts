@@ -7,6 +7,8 @@ export interface Exercise {
   restTime: number; // in seconds
   category: 'strength' | 'cardio' | 'flexibility' | 'balance';
   instructions?: string;
+  /** Warm-up exercises: suggested duration in seconds (slow, controlled). */
+  durationSeconds?: number;
 }
 
 export interface WorkoutProgram {
@@ -20,6 +22,31 @@ export interface WorkoutProgram {
   exercises: Exercise[];
   focus: string;
   equipment: string[];
+}
+
+/** Generated / carousel workout option (e.g. AI builder), not a static `WorkoutProgram` template. */
+export interface GeneratedWorkoutPlanDayExercise {
+  /** Present when generator supplies stable ids; otherwise use `name` as fallback */
+  id?: string;
+  name: string;
+  sets: number;
+  reps: number;
+}
+
+export interface GeneratedWorkoutPlanDay {
+  dayName: string;
+  focus: string;
+  duration: number;
+  exercises: GeneratedWorkoutPlanDayExercise[];
+}
+
+export interface GeneratedWorkoutPlan {
+  id: string;
+  name: string;
+  level: 'beginner' | 'intermediate' | 'advanced';
+  goal: string;
+  daysPerWeek?: number;
+  weeklyPlan?: { weekDays: GeneratedWorkoutPlanDay[] };
 }
 
 export interface WorkoutSession {
@@ -37,6 +64,10 @@ export interface WorkoutSession {
       weight: number;
       restTime: number;
       completed: boolean;
+      /** Rate of perceived exertion 1–10; used for realized e1RM on Trends */
+      rpe?: number;
+      /** Reps in reserve (0–4 typical); optional subjective load check */
+      rir?: number;
     }>;
   }>;
   notes: string;

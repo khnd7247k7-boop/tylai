@@ -3,6 +3,7 @@
 
 import { ExtendedUserWellnessData } from './src/services/WellnessDataAggregator';
 import CrossCategoryPatternDetector from './src/services/CrossCategoryPatternDetector';
+import { MAX_WORKING_SETS, canAddWorkingSet, applyWeightProgression, roundToPlateWeight, MIN_WEIGHT_PROGRESSION_LBS } from './src/utils/progressionLimits';
 
 export interface UserWellnessData {
   moodEntries: Array<{
@@ -1008,11 +1009,17 @@ class AIService {
    * Analyze strength-specific adaptations
    */
   private analyzeStrengthAdaptations(performance: WorkoutPerformance, plan: any) {
+    // Progression is earned — require adequate adherence before increasing load
+    if (performance.consistency < 70 || performance.completionRate < 75) {
+      return;
+    }
+
     performance.exercisePerformances.forEach(exPerf => {
       // Progressive overload: increase weight if consistently hitting reps
       if (exPerf.timesPerformed >= 3 && exPerf.progression < 5 && exPerf.completionRate >= 90 && exPerf.averageWeight > 0) {
         const currentWeight = exPerf.averageWeight;
-        const suggestedWeight = Math.ceil(currentWeight * 1.05); // 5% increase
+        const pctBump = Math.ceil(currentWeight * 0.05);
+        const suggestedWeight = applyWeightProgression(currentWeight, pctBump);
         
         this.adaptations.push({
           id: `prog-overload-${exPerf.exerciseName}-${Date.now()}`,
@@ -1035,8 +1042,12 @@ class AIService {
         });
       }
 
-      // Volume adjustment: increase sets if too easy
-      if (exPerf.completionRate >= 95 && exPerf.averageSets < 4) {
+      // Volume: add a set only below the 4 working-set cap — never suggest 5 working sets
+      if (
+        exPerf.completionRate >= 95 &&
+        canAddWorkingSet(Math.round(exPerf.averageSets))
+      ) {
+        const nextSets = Math.min(MAX_WORKING_SETS, Math.round(exPerf.averageSets) + 1);
         this.adaptations.push({
           id: `volume-increase-${exPerf.exerciseName}-${Date.now()}`,
           planId: performance.programId,
@@ -1044,14 +1055,36 @@ class AIService {
           priority: 'low',
           confidence: 75,
           title: `Add Set: ${exPerf.exerciseName}`,
-          description: `You're completing all sets easily. Consider adding one more set for better volume.`,
-          reason: `Completion rate is ${exPerf.completionRate.toFixed(0)}% with ${exPerf.averageSets} sets.`,
+          description: `You're completing all sets easily. One more working set (max ${MAX_WORKING_SETS}) can help — beyond that we progress load or reps.`,
+          reason: `Completion rate is ${exPerf.completionRate.toFixed(0)}% with ${exPerf.averageSets.toFixed(0)} sets.`,
           changes: [{
             exerciseName: exPerf.exerciseName,
             exerciseId: exPerf.exerciseId,
             oldValue: exPerf.averageSets,
-            newValue: exPerf.averageSets + 1,
+            newValue: nextSets,
             field: 'sets'
+          }],
+          estimatedImpact: 'positive',
+          createdAt: new Date().toISOString()
+        });
+      } else if (exPerf.completionRate >= 95 && exPerf.averageSets >= MAX_WORKING_SETS && exPerf.averageWeight > 0) {
+        const pctBump = Math.ceil(exPerf.averageWeight * 0.025);
+        const suggestedWeight = applyWeightProgression(exPerf.averageWeight, pctBump);
+        this.adaptations.push({
+          id: `rep-load-progress-${exPerf.exerciseName}-${Date.now()}`,
+          planId: performance.programId,
+          type: 'progressive_overload',
+          priority: 'medium',
+          confidence: 80,
+          title: `Progress load: ${exPerf.exerciseName}`,
+          description: `You're at ${MAX_WORKING_SETS} working sets — the smart next step is more weight or reps, not a 5th set.`,
+          reason: `High completion at the working-set cap (${MAX_WORKING_SETS} sets).`,
+          changes: [{
+            exerciseName: exPerf.exerciseName,
+            exerciseId: exPerf.exerciseId,
+            oldValue: exPerf.averageWeight,
+            newValue: suggestedWeight,
+            field: 'weight'
           }],
           estimatedImpact: 'positive',
           createdAt: new Date().toISOString()
@@ -1135,8 +1168,12 @@ class AIService {
       });
     }
 
-    // High completion rate - increase difficulty
-    if (performance.completionRate >= 95 && performance.totalWorkouts >= 5) {
+    // High completion rate - increase difficulty only when adherence supports it
+    if (
+      performance.completionRate >= 95 &&
+      performance.totalWorkouts >= 5 &&
+      performance.consistency >= 70
+    ) {
       this.adaptations.push({
         id: `increase-difficulty-${Date.now()}`,
         planId: performance.programId,

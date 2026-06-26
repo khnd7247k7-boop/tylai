@@ -1,0 +1,16 @@
+# Smoke: app launches to login shell (no credentials).
+# Run: maestro test .maestro/flows/smoke.yaml
+# Requires: iOS Simulator or device with TYLAI installed (bundle com.travispixton.tylai).
+
+appId: com.travispixton.tylai
+tags:
+  - smoke
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      text: "TYLAI"
+    timeout: 30000
+- assertVisible: "Welcome Back"
+- assertVisible: "Sign In"

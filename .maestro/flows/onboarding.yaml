@@ -1,0 +1,47 @@
+# Full onboarding smoke: signup → disclaimer → app guide → profile → workout Q&A
+# Run: maestro test .maestro/flows/onboarding.yaml
+# Set env: MAESTRO_TEST_EMAIL, MAESTRO_TEST_PASSWORD (unique email per run recommended)
+
+appId: com.travispixton.tylai
+tags:
+  - onboarding
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      text: "TYLAI"
+    timeout: 30000
+- tapOn: "Don't have an account? Sign Up"
+- tapOn: "Full Name"
+- inputText: "Test User"
+- tapOn: "Email"
+- inputText: "${MAESTRO_TEST_EMAIL}"
+- tapOn: "Password"
+- inputText: "${MAESTRO_TEST_PASSWORD}"
+- tapOn: "Confirm Password"
+- inputText: "${MAESTRO_TEST_PASSWORD}"
+- tapOn: "Create Account"
+- extendedWaitUntil:
+    visible:
+      text: "Stay logged in"
+    timeout: 15000
+- tapOn: "Stay logged in"
+- extendedWaitUntil:
+    visible:
+      text: "I understand — continue"
+    timeout: 20000
+- tapOn: "I understand — continue"
+- extendedWaitUntil:
+    visible:
+      text: "Skip tour"
+    timeout: 15000
+- tapOn:
+    text: "Next"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true
+- tapOn:
+    text: "Skip tour"
+    optional: true

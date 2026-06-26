@@ -6,14 +6,15 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  TextInput,
   Alert,
   Modal,
 } from 'react-native';
+import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabSwipeNavigation from './TabSwipeNavigation';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { AppTheme } from './src/theme/appVisualTheme';
 
 interface GratitudeEntry {
   id: string;
@@ -495,8 +496,13 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>Back</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Spiritual Wellness</Text>
         <View style={styles.placeholder} />
@@ -548,7 +554,7 @@ export default function SpiritualScreen({ onBack, onCompleteTask }: SpiritualScr
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: AppTheme.bgScreen,
   },
   header: {
     flexDirection: 'row',
@@ -557,14 +563,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: AppTheme.border,
   },
   backButton: {
     padding: 5,
   },
   backButtonText: {
-    color: '#4ECDC4',
-    fontSize: 16,
+    color: AppTheme.accent,
+    fontSize: 22,
     fontWeight: 'bold',
   },
   headerTitle: {
@@ -577,11 +583,13 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: AppTheme.card,
     marginHorizontal: 20,
     marginVertical: 15,
     borderRadius: 12,
     padding: 4,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   tabButton: {
     flex: 1,
@@ -590,15 +598,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tabButtonActive: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
   },
   tabButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#888',
+    color: AppTheme.textMuted,
   },
   tabButtonTextActive: {
-    color: '#1a1a1a',
+    color: AppTheme.accentDark,
   },
   tabContent: {
     flex: 1,
@@ -615,20 +623,22 @@ const styles = StyleSheet.create({
   },
   sectionDescription: {
     fontSize: 16,
-    color: '#ccc',
+    color: AppTheme.textMuted,
     marginBottom: 20,
     lineHeight: 22,
   },
   gratitudeContainer: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 15,
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusRow,
     padding: 20,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
   },
   gratitudeLabel: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 15,
   },
   gratitudeInput: {
@@ -642,7 +652,7 @@ const styles = StyleSheet.create({
     borderColor: '#555',
   },
   addGratitudeButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
     borderRadius: 8,
     padding: 10,
     alignItems: 'center',
@@ -660,7 +670,7 @@ const styles = StyleSheet.create({
   reflectionLabel: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 15,
   },
   reflectionInput: {
@@ -691,7 +701,7 @@ const styles = StyleSheet.create({
   categoryTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 15,
     textTransform: 'capitalize',
   },
@@ -704,7 +714,7 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   selectedAffirmation: {
-    borderColor: '#4ECDC4',
+    borderColor: AppTheme.accent,
     backgroundColor: '#2a3a3a',
   },
   affirmationText: {
@@ -722,7 +732,7 @@ const styles = StyleSheet.create({
   selectedLabel: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 10,
   },
   selectedAffirmationText: {
@@ -733,7 +743,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   completeButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
     borderRadius: 10,
     padding: 15,
     alignItems: 'center',
@@ -752,7 +762,7 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   selectedPrompt: {
-    borderColor: '#4ECDC4',
+    borderColor: AppTheme.accent,
     backgroundColor: '#2a3a3a',
   },
   promptText: {
@@ -762,7 +772,7 @@ const styles = StyleSheet.create({
   },
   selectedPromptText: {
     fontSize: 16,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     fontStyle: 'italic',
     marginBottom: 15,
     lineHeight: 22,
@@ -784,7 +794,7 @@ const styles = StyleSheet.create({
   practiceTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 10,
   },
   practiceDescription: {
@@ -799,7 +809,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   checkInButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: AppTheme.accent,
     borderRadius: 10,
     padding: 15,
     alignItems: 'center',
@@ -838,7 +848,7 @@ const styles = StyleSheet.create({
   },
   promptItem: {
     fontSize: 14,
-    color: '#4ECDC4',
+    color: AppTheme.accent,
     marginBottom: 10,
   },
   responseText: {

@@ -1,9 +1,9 @@
 {
-  "name": "tyl-ai-app",
-  "slug": "tyl-ai-app",
   "expo": {
     "name": "TYLAI",
     "slug": "tylai",
+    "owner": "tyl_ai",
+    "scheme": "tylai",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,19 +17,38 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tyl-ai.tylai",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "We read heart rate, sleep, active energy, weight, and cardio fitness from Apple Health to personalize recovery-oriented coaching, suggest training intensity, and show your trends in the app.",
+        "NSHealthUpdateUsageDescription": "If you choose to save activity, we can write selected workouts or metrics to Apple Health so your Activity rings and history stay up to date. We only write data you explicitly allow.",
+        "NSCameraUsageDescription": "TYLAI uses the camera to scan barcodes for meal tracking.",
+        "NSMicrophoneUsageDescription": "TYLAI uses the microphone when recording video with the camera.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-barcode-scanner"
-    ]
+      "expo-asset",
+      "expo-notifications"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "edf2b082-212d-46bb-854f-008369c8f042"
+      }
+    }
   }
 }

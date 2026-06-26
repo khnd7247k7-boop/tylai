@@ -29,10 +29,23 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files (never commit real API keys)
+.env
 .env*.local
+.env.local
 
 # typescript
 *.tsbuildinfo
 
+# SQLite files (local/runtime DBs)
+*.db
+*.db-shm
+*.db-wal
+
 app-example
+
+# Maestro
+maestro.log
+maestro-report.xml
+.maestro/**/report-*
+.maestro/**/screenshots/

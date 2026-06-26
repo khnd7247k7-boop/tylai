@@ -1,11 +1,12 @@
 /**
- * Network Connectivity Utilities
- * 
- * Provides network status checking and offline handling
+ * Network connectivity — loads NetInfo only when the native module exists (avoids
+ * NativeEventEmitter crashes when RNCNetInfo is missing or the web shim is bundled).
  */
 
-import NetInfo from '@react-native-community/netinfo';
+import { NativeModules, Platform } from 'react-native';
 import { useState, useEffect } from 'react';
+
+type NetInfoModule = typeof import('@react-native-community/netinfo');
 
 export interface NetworkState {
   isConnected: boolean;
@@ -13,31 +14,61 @@ export interface NetworkState {
   type: string;
 }
 
-/**
- * Check if device is currently connected to the internet
- */
+const DEFAULT_ONLINE: NetworkState = {
+  isConnected: true,
+  isInternetReachable: true,
+  type: 'unknown',
+};
+
+function isNetInfoNativeLinked(): boolean {
+  return Platform.OS !== 'web' && NativeModules.RNCNetInfo != null;
+}
+
+let netInfoLoadPromise: Promise<NetInfoModule | null> | null = null;
+
+async function loadNetInfo(): Promise<NetInfoModule | null> {
+  if (!isNetInfoNativeLinked()) {
+    return null;
+  }
+  if (!netInfoLoadPromise) {
+    netInfoLoadPromise = import('@react-native-community/netinfo').catch((error) => {
+      console.warn('[Network] NetInfo module failed to load:', error);
+      return null;
+    });
+  }
+  return netInfoLoadPromise;
+}
+
+function stateFromNetInfo(state: {
+  isConnected: boolean | null;
+  isInternetReachable: boolean | null;
+  type: string;
+}): NetworkState {
+  return {
+    isConnected: state.isConnected ?? false,
+    isInternetReachable: state.isInternetReachable,
+    type: state.type,
+  };
+}
+
 export const checkNetworkConnection = async (): Promise<boolean> => {
   try {
+    const NetInfo = await loadNetInfo();
+    if (!NetInfo) return true;
     const state = await NetInfo.fetch();
     return state.isConnected === true && state.isInternetReachable === true;
   } catch (error) {
     console.error('[Network] Error checking connection:', error);
-    // Assume connected if check fails (graceful degradation)
     return true;
   }
 };
 
-/**
- * Get detailed network state
- */
 export const getNetworkState = async (): Promise<NetworkState> => {
   try {
+    const NetInfo = await loadNetInfo();
+    if (!NetInfo) return DEFAULT_ONLINE;
     const state = await NetInfo.fetch();
-    return {
-      isConnected: state.isConnected ?? false,
-      isInternetReachable: state.isInternetReachable,
-      type: state.type,
-    };
+    return stateFromNetInfo(state);
   } catch (error) {
     console.error('[Network] Error getting network state:', error);
     return {
@@ -48,44 +79,48 @@ export const getNetworkState = async (): Promise<NetworkState> => {
   }
 };
 
-/**
- * React hook to monitor network connectivity
- * Returns current network state and connection status
- */
 export const useNetworkStatus = () => {
-  const [networkState, setNetworkState] = useState<NetworkState>({
-    isConnected: true,
-    isInternetReachable: true,
-    type: 'unknown',
-  });
+  const [networkState, setNetworkState] = useState<NetworkState>(DEFAULT_ONLINE);
 
   useEffect(() => {
-    // Get initial state
-    NetInfo.fetch().then((state) => {
-      setNetworkState({
-        isConnected: state.isConnected ?? false,
-        isInternetReachable: state.isInternetReachable,
-        type: state.type,
-      });
-    });
+    let unsubscribe: (() => void) | undefined;
+    let cancelled = false;
 
-    // Subscribe to network state changes
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      setNetworkState({
-        isConnected: state.isConnected ?? false,
-        isInternetReachable: state.isInternetReachable,
-        type: state.type,
-      });
-      
-      console.log('[Network] Connection state changed:', {
-        isConnected: state.isConnected,
-        isInternetReachable: state.isInternetReachable,
-        type: state.type,
-      });
-    });
+    (async () => {
+      const NetInfo = await loadNetInfo();
+      if (cancelled) return;
+
+      if (!NetInfo) {
+        setNetworkState(DEFAULT_ONLINE);
+        return;
+      }
+
+      try {
+        const initial = await NetInfo.fetch();
+        if (!cancelled) {
+          setNetworkState(stateFromNetInfo(initial));
+        }
+      } catch (error) {
+        console.warn('[Network] Initial fetch failed:', error);
+      }
+
+      try {
+        unsubscribe = NetInfo.addEventListener((state) => {
+          setNetworkState(stateFromNetInfo(state));
+          console.log('[Network] Connection state changed:', {
+            isConnected: state.isConnected,
+            isInternetReachable: state.isInternetReachable,
+            type: state.type,
+          });
+        });
+      } catch (error) {
+        console.warn('[Network] Could not subscribe to NetInfo events:', error);
+      }
+    })();
 
     return () => {
-      unsubscribe();
+      cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 
@@ -95,29 +130,16 @@ export const useNetworkStatus = () => {
   };
 };
 
-/**
- * Wait for internet connection with timeout
- * Useful for operations that require internet (like Firebase Auth)
- */
-export const waitForConnection = async (
-  timeout: number = 10000
-): Promise<boolean> => {
+export const waitForConnection = async (timeout: number = 10000): Promise<boolean> => {
   const startTime = Date.now();
-  
+
   while (Date.now() - startTime < timeout) {
     const isConnected = await checkNetworkConnection();
     if (isConnected) {
       return true;
     }
-    // Wait 500ms before checking again
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  
+
   return false;
 };
-
-
-
-
-
-

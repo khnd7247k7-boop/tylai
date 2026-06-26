@@ -10,7 +10,8 @@ import {
   SafeAreaView,
   Platform,
 } from 'react-native';
-import { lookupFoodByBarcode, ScannedFood } from './src/utils/foodDatabase';
+// UPC lookup: Nutritionix /v2/search/item when EXPO_PUBLIC_NUTRITIONIX_* are set, else Open Food Facts + USDA FDC gap fill (see src/services/NutritionService.ts).
+import { lookupFoodByBarcode, isScannedFoodUsable, ScannedFood } from './src/utils/foodDatabase';
 import { useToast } from './src/components/ToastProvider';
 
 // ScannedFood type imported from foodDatabase
@@ -24,8 +25,9 @@ if (Platform.OS !== 'web') {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ExpoCamera = require('expo-camera');
-    CameraView = ExpoCamera.CameraView || ExpoCamera.Camera;
-    CameraModule = ExpoCamera.Camera;
+    // expo-camera v17+: CameraView is the preview component; `Camera` is permissions API only (not a component).
+    CameraView = ExpoCamera.CameraView ?? null;
+    CameraModule = ExpoCamera.Camera ?? null;
   } catch (error) {
     console.warn('Camera module not available:', error);
     CameraView = null;
@@ -35,15 +37,64 @@ if (Platform.OS !== 'web') {
 
 interface BarcodeScannerProps {
   visible: boolean;
+  /** Close scanner only (e.g. cancel). */
   onClose: () => void;
+  /** Open manual / label entry flow (e.g. Log Food). Optional — if omitted, “Add Manually” calls onClose. */
+  onManualEntry?: () => void;
   onFoodScanned: (food: ScannedFood) => void;
+  /** Barcode was read but no usable nutrition data exists in our databases. */
+  onScanNotFound?: (barcode: string) => void;
+  /** Network or lookup error. */
+  onScanError?: (barcode: string) => void;
 }
 
-export default function BarcodeScanner({ visible, onClose, onFoodScanned }: BarcodeScannerProps) {
+export default function BarcodeScanner({
+  visible,
+  onClose,
+  onManualEntry,
+  onFoodScanned,
+  onScanNotFound,
+  onScanError,
+}: BarcodeScannerProps) {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { showToast } = useToast();
+  const { showNotification } = useToast();
+
+  const notifyScanNotFound = (barcode: string) => {
+    if (onScanNotFound) {
+      onScanNotFound(barcode);
+      return;
+    }
+    onClose();
+    showNotification({
+      title: 'Product not in database',
+      lines: [
+        `No nutrition data was found for barcode ${barcode}.`,
+        'Search by food name or enter macros manually from the package label.',
+      ],
+      type: 'warning',
+      durationMs: 7000,
+      actions: [{ label: 'OK' }],
+    });
+  };
+
+  const notifyScanError = (barcode: string) => {
+    if (onScanError) {
+      onScanError(barcode);
+      return;
+    }
+    onClose();
+    showNotification({
+      title: 'Barcode lookup failed',
+      lines: [
+        'Could not look up this barcode. Check your connection and try again, or add the food manually.',
+      ],
+      type: 'error',
+      durationMs: 6000,
+      actions: [{ label: 'OK' }],
+    });
+  };
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -56,6 +107,8 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
     };
 
     if (visible) {
+      setScanned(false);
+      setIsLoading(false);
       getCameraPermissions();
     }
   }, [visible]);
@@ -63,21 +116,21 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (scanned) return;
     setScanned(true);
-
-    // Close scanner immediately to prevent multiple reads
-    onClose();
-
     setIsLoading(true);
+    const barcode = String(data).replace(/\s/g, '').trim();
     try {
-      const foodData = await lookupFoodByBarcode(data);
-      if (foodData) {
+      const foodData = await lookupFoodByBarcode(barcode);
+      if (foodData && isScannedFoodUsable(foodData)) {
+        onClose();
         onFoodScanned(foodData);
-      } else {
-        // no notification
+        return;
       }
+      setScanned(false);
+      notifyScanNotFound(barcode);
     } catch (error) {
       console.error('Error looking up food:', error);
-      // no notification
+      setScanned(false);
+      notifyScanError(barcode);
     } finally {
       setIsLoading(false);
     }
@@ -92,16 +145,24 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
   if (!visible) return null;
 
   // Web fallback: barcode scanning not supported yet, show friendly message
+  const modalPresentation =
+    Platform.OS === 'ios' ? ('fullScreen' as const) : undefined;
+
   if (Platform.OS === 'web') {
     return (
-      <Modal visible={visible} animationType="slide">
+      <Modal visible={visible} animationType="none">
         <SafeAreaView style={styles.container}>
           <View style={styles.permissionContainer}>
             <Text style={styles.permissionText}>
               Barcode scanning isn&apos;t supported in the web version yet. Please use the mobile app to scan barcodes, or add foods manually.
             </Text>
-            <TouchableOpacity style={styles.permissionButton} onPress={onClose}>
-              <Text style={styles.permissionButtonText}>Go Back</Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Text style={styles.permissionButtonText}>←</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -111,7 +172,7 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
 
   if (hasPermission === null) {
     return (
-      <Modal visible={visible} animationType="slide">
+      <Modal visible={visible} animationType="none" presentationStyle={modalPresentation}>
         <SafeAreaView style={styles.container}>
           <View style={styles.permissionContainer}>
             <Text style={styles.permissionText}>Requesting camera permission...</Text>
@@ -124,12 +185,40 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
 
   if (hasPermission === false) {
     return (
-      <Modal visible={visible} animationType="slide">
+      <Modal visible={visible} animationType="none" presentationStyle={modalPresentation}>
         <SafeAreaView style={styles.container}>
           <View style={styles.permissionContainer}>
             <Text style={styles.permissionText}>Camera permission is required to scan barcodes</Text>
-            <TouchableOpacity style={styles.permissionButton} onPress={onClose}>
-              <Text style={styles.permissionButtonText}>Go Back</Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Text style={styles.permissionButtonText}>←</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    );
+  }
+
+  if (!CameraView) {
+    return (
+      <Modal visible={visible} animationType="none" presentationStyle={modalPresentation}>
+        <SafeAreaView style={styles.container}>
+          <View style={styles.permissionContainer}>
+            <Text style={styles.permissionText}>
+              Barcode scanning is not available in this build (camera module missing). Add foods manually or use a dev
+              client build with expo-camera installed.
+            </Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Text style={styles.permissionButtonText}>←</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -138,7 +227,12 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
   }
 
   return (
-    <Modal visible={visible} animationType="slide">
+    <Modal
+      visible={visible}
+      animationType="none"
+      presentationStyle={modalPresentation}
+      onRequestClose={onClose}
+    >
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
@@ -150,16 +244,17 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
 
         <View style={styles.scannerContainer}>
           <CameraView
+            facing="back"
             onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
             style={styles.scanner}
             barcodeScannerSettings={{
-              barcodeTypes: ["ean13", "ean8"],
+              barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128'],
             }}
           />
-          
-          {/* Scanner overlay */}
-          <View style={styles.overlay}>
-            <View style={styles.scanArea}>
+
+          {/* Scanner overlay — do not intercept touches (camera must keep receiving frames). */}
+          <View style={styles.overlay} pointerEvents="box-none">
+            <View style={styles.scanArea} pointerEvents="none">
               <View style={[styles.corner, styles.topLeft]} />
               <View style={[styles.corner, styles.topRight]} />
               <View style={[styles.corner, styles.bottomLeft]} />
@@ -188,7 +283,13 @@ export default function BarcodeScanner({ visible, onClose, onFoodScanned }: Barc
           <TouchableOpacity style={styles.resetButton} onPress={resetScanner}>
             <Text style={styles.resetButtonText}>Scan Again</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.manualButton} onPress={onClose}>
+          <TouchableOpacity
+            style={styles.manualButton}
+            onPress={() => {
+              if (onManualEntry) onManualEntry();
+              else onClose();
+            }}
+          >
             <Text style={styles.manualButtonText}>Add Manually</Text>
           </TouchableOpacity>
         </View>
@@ -372,7 +473,7 @@ const styles = StyleSheet.create({
   },
   permissionButtonText: {
     color: '#1a1a1a',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: 'bold',
   },
 });
