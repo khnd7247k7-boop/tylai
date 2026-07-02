@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useDeferredValue } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useDeferredValue, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -76,9 +76,11 @@ const MACRO_COLORS = {
 
 interface HealthScreenProps {
   onBack: () => void;
+  /** When set, opens Trends with this chart expanded (e.g. from Nutrition → Calorie history menu). */
+  initialTrendGraph?: TrendGraphId;
 }
 
-type TrendGraphId =
+export type TrendGraphId =
   | 'e1rm'
   | 'liftVolume'
   | 'nutrition'
@@ -261,8 +263,10 @@ function macroByDay(
   });
 }
 
-export default function HealthScreen({ onBack }: HealthScreenProps) {
+export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreenProps) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const nutritionGraphY = useRef(0);
   const chartLayout = useMemo(() => {
     const chartW = Math.max(200, windowWidth - SCROLL_H_PAD - CARD_H_PAD);
     const left = 46;
@@ -369,6 +373,16 @@ export default function HealthScreen({ onBack }: HealthScreenProps) {
       setWeightDateInput(new Date().toISOString().split('T')[0]);
     }
   }, [showWeightModal]);
+
+  useEffect(() => {
+    if (!initialTrendGraph || loading) return;
+    setActiveGraphs(new Set([initialTrendGraph]));
+    if (initialTrendGraph !== 'nutrition') return;
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, nutritionGraphY.current - 12), animated: true });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [initialTrendGraph, loading]);
 
   const toggleTrendGraph = (id: TrendGraphId) => {
     setActiveGraphs((prev) => {
@@ -785,7 +799,7 @@ export default function HealthScreen({ onBack }: HealthScreenProps) {
         <View style={styles.headerRight} />
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <Text style={styles.graphPickerTitle}>Charts</Text>
         <Text style={styles.graphPickerHint}>Tap a chart to expand it below that row.</Text>
 
@@ -794,7 +808,17 @@ export default function HealthScreen({ onBack }: HealthScreenProps) {
           const isWeekly =
             item.id === 'e1rm' || item.id === 'liftVolume' || item.id === 'nutrition';
           return (
-            <View key={item.id} style={styles.graphToggleGroup}>
+            <View
+              key={item.id}
+              style={styles.graphToggleGroup}
+              onLayout={
+                item.id === 'nutrition'
+                  ? (e) => {
+                      nutritionGraphY.current = e.nativeEvent.layout.y;
+                    }
+                  : undefined
+              }
+            >
               <TouchableOpacity
                 style={[styles.graphToggleBtn, active && styles.graphToggleBtnActive]}
                 onPress={() => toggleTrendGraph(item.id)}

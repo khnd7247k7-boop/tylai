@@ -12,6 +12,8 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import type { GeneratedWorkoutPlan, GeneratedWorkoutPlanDay } from './data/workoutPrograms';
 import { AppTheme } from './src/theme/appVisualTheme';
+import WorkoutPhaseStructure from './src/components/WorkoutPhaseStructure';
+import { buildPlanPhaseBlocks } from './src/utils/workoutPhaseDisplay';
 
 interface WorkoutOptionsScreenProps {
   workoutOptions: GeneratedWorkoutPlan[];
@@ -88,13 +90,13 @@ export default function WorkoutOptionsScreen({
                   </Text>
 
                   <View style={styles.exercisesContainer}>
-                    <Text style={styles.exercisesTitle}>Exercises</Text>
-                    {day.exercises.map((ex, idx) => (
-                      <Text key={`${ex.name}-${idx}`} style={styles.exerciseLine}>
-                        <Text style={styles.exerciseName}>{ex.name}</Text>
-                        <Text style={styles.exerciseSets}> — {ex.sets}×{ex.reps}</Text>
-                      </Text>
-                    ))}
+                    <Text style={styles.exercisesTitle}>Workout structure</Text>
+                    <WorkoutPhaseStructure
+                      blocks={buildPlanPhaseBlocks(day.exercises)}
+                      selectable={false}
+                      resolveExerciseIndex={() => undefined}
+                      onSelectExercise={() => {}}
+                    />
                   </View>
                 </View>
               ))}

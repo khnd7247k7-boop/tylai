@@ -6,6 +6,7 @@ import type { WarmupLogItem } from '../utils/workoutWarmupLogging';
 type WarmupBlockSessionProps = {
   items: WarmupLogItem[];
   blockComplete: boolean;
+  blockLabel?: 'Warm-up' | 'Cool-down';
   onToggleItem: (itemId: string) => void;
   onCompleteAll: () => void;
 };
@@ -13,6 +14,7 @@ type WarmupBlockSessionProps = {
 export default function WarmupBlockSession({
   items,
   blockComplete,
+  blockLabel = 'Warm-up',
   onToggleItem,
   onCompleteAll,
 }: WarmupBlockSessionProps) {
@@ -21,7 +23,7 @@ export default function WarmupBlockSession({
   return (
     <View style={styles.wrap}>
       <Text style={styles.lead}>
-        Go through each movement at an easy pace. Tap to check off — no weight or reps needed.
+        Go through each movement at an easy pace. Tap to check off when done.
       </Text>
       <Text style={styles.progress}>
         {doneCount} of {items.length} movements
@@ -44,7 +46,9 @@ export default function WarmupBlockSession({
           </View>
           <View style={styles.rowText}>
             <Text style={[styles.itemName, item.completed && styles.itemNameDone]}>{item.name}</Text>
-            {item.durationSeconds != null && item.durationSeconds > 0 ? (
+            {item.repNote ? (
+              <Text style={styles.itemHint}>{item.repNote}</Text>
+            ) : item.durationSeconds != null && item.durationSeconds > 0 ? (
               <Text style={styles.itemHint}>
                 ~{Math.round(item.durationSeconds / 60) || 1} min · slow and controlled
               </Text>
@@ -61,7 +65,7 @@ export default function WarmupBlockSession({
             onCompleteAll();
           }}
         >
-          <Text style={styles.completeAllText}>Mark warm-up complete</Text>
+          <Text style={styles.completeAllText}>Mark {blockLabel.toLowerCase()} complete</Text>
         </Pressable>
       )}
     </View>

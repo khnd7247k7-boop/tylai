@@ -75,6 +75,7 @@ import {
   type LogFoodServingUnit,
 } from './src/utils/logFoodPortionScale';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { getProgramWeeksFromSavedPlan, inferScheduleMode, getSuggestedFlexibleRotation, getFlexibleRotationSlots, getLastCompletedFlexibleDayIndex, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
 import {
   DEFAULT_NUTRITION_GOALS,
   type NutritionGoals,
@@ -236,60 +237,6 @@ interface Meal {
   servingUnit?: string;
 }
 
-type NutritionHistBucket = { start: Date; end: Date; label: string };
-
-/** Monday 00:00 local for the week containing `d` (matches Dashboard week logic). */
-function mondayStartLocal(d: Date): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const day = x.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  x.setDate(x.getDate() + diff);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function sumMealCaloriesInRange(meals: Meal[], start: Date, end: Date): number {
-  const t0 = start.getTime();
-  const t1 = end.getTime();
-  return meals.reduce((sum, m) => {
-    const t = new Date(m.date).getTime();
-    if (!Number.isFinite(t)) return sum;
-    if (t >= t0 && t < t1) return sum + (Number(m.calories) || 0);
-    return sum;
-  }, 0);
-}
-
-/** Oldest → newest; each bucket is [start, end) with end the following Monday. */
-function buildNutritionWeekBuckets(today: Date, count: 4 | 8 | 12): NutritionHistBucket[] {
-  const thisMonday = mondayStartLocal(today);
-  const buckets: NutritionHistBucket[] = [];
-  for (let i = count - 1; i >= 0; i--) {
-    const start = new Date(thisMonday);
-    start.setDate(start.getDate() - 7 * i);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    const label = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    buckets.push({ start, end, label });
-  }
-  return buckets;
-}
-
-/** Oldest → newest calendar months. */
-function buildNutritionMonthBuckets(today: Date, count: 3 | 6 | 12): NutritionHistBucket[] {
-  const buckets: NutritionHistBucket[] = [];
-  for (let i = count - 1; i >= 0; i--) {
-    const year = today.getFullYear();
-    const month = today.getMonth() - i;
-    const start = new Date(year, month, 1);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
-    const label = start.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
-    buckets.push({ start, end, label });
-  }
-  return buckets;
-}
-
 interface SavedMeal {
   id: string;
   name: string;
@@ -405,6 +352,7 @@ export default function FitnessScreen({
   tourLogFoodIntent,
   tourFitnessIntent,
   onFitnessTabChange,
+  onNavigateToNutritionTrends,
 }: {
   onBack: () => void;
   onCompleteTask: (taskTitle: string) => void;
@@ -416,10 +364,13 @@ export default function FitnessScreen({
   /** Guided tour: open workout panels / nested workout flows. */
   tourFitnessIntent?: TourFitnessIntent | null;
   onFitnessTabChange?: (tab: FitnessMainTab) => void;
+  /** Opens Health → Trends with Nutrition consistency chart expanded. */
+  onNavigateToNutritionTrends?: () => void;
 }) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { isPremium, presentUpgrade } = useSubscription();
-  const { showToast, showNotification } = useToast();
+  const { showToast, showNotification, dismissNotification } = useToast();
+  const copyMealNoticeIdRef = useRef<string | null>(null);
   const fitnessStartRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessStart);
   const fitnessTodayCardRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessTodayCard);
   const fitnessAiWorkoutRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessAiWorkout);
@@ -556,10 +507,7 @@ export default function FitnessScreen({
     fireTourTargetIfNeeded(TOUR_TARGET_IDS.fitnessAiWorkout);
   }, [isPremium, presentUpgrade]);
 
-  const [nutritionHistMode, setNutritionHistMode] = useState<'weeks' | 'months'>('weeks');
-  const [nutritionHistWeeks, setNutritionHistWeeks] = useState<4 | 8 | 12>(8);
-  const [nutritionHistMonths, setNutritionHistMonths] = useState<3 | 6 | 12>(6);
-  const [nutritionHistExpanded, setNutritionHistExpanded] = useState(false);
+  const [historyNutritionFocus, setHistoryNutritionFocus] = useState(false);
   const [nutritionGoals, setNutritionGoals] = useState<NutritionGoals>(DEFAULT_NUTRITION_GOALS);
   const [editGoals, setEditGoals] = useState({
     protein: String(DEFAULT_NUTRITION_GOALS.protein),
@@ -573,6 +521,7 @@ export default function FitnessScreen({
   const [planToEdit, setPlanToEdit] = useState<any | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
   const [selectedSavedPlan, setSelectedSavedPlan] = useState<any | null>(null);
+  const [savedPlanAutoStartSuggested, setSavedPlanAutoStartSuggested] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'strength' | 'muscle_building' | 'cardio' | 'bodyweight' | null>(null);
   const [workoutQuickPanel, setWorkoutQuickPanel] = useState<WorkoutQuickPanel>(null);
   const tourPlanPreviewPendingRef = useRef(false);
@@ -586,6 +535,16 @@ export default function FitnessScreen({
   const [expandedDayItems, setExpandedDayItems] = useState<Set<string>>(new Set());
   const [mealCopyPending, setMealCopyPending] = useState<Meal | null>(null);
   const [dayCopyPending, setDayCopyPending] = useState<string | null>(null);
+
+  const endCopyMode = useCallback(() => {
+    setMealCopyPending(null);
+    setDayCopyPending(null);
+    if (copyMealNoticeIdRef.current) {
+      dismissNotification(copyMealNoticeIdRef.current, { invokeOnDismiss: false });
+      copyMealNoticeIdRef.current = null;
+    }
+  }, [dismissNotification]);
+
   const [showLogPastWorkout, setShowLogPastWorkout] = useState(false);
 
   React.useEffect(() => {
@@ -615,6 +574,12 @@ export default function FitnessScreen({
     { id: '6', title: 'HIIT workout (20 minutes)', category: 'fitness', completedAt: new Date().toISOString(), completed: false },
   ]);
   // Notifications removed per request
+
+  useEffect(() => {
+    if (activeTab !== 'history') {
+      setHistoryNutritionFocus(false);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1281,34 +1246,76 @@ export default function FitnessScreen({
     if (list) setMeals(list as Meal[]);
   };
 
+  const openMealCalendar = () => {
+    setHistoryNutritionFocus(true);
+    updateFitnessTab('history');
+    setHistoryCalendarMonth(new Date());
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayMeals = meals.filter((m) => {
+      const d = new Date(m.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return key === todayKey;
+    });
+    if (todayMeals.length > 0) {
+      setSelectedCalendarDate(todayKey);
+      setExpandedDayItems(new Set([`nutrition-${todayKey}`]));
+    } else {
+      setSelectedCalendarDate(null);
+      setExpandedDayItems(new Set());
+    }
+  };
+
+  const showCalorieHistoryMenu = () => {
+    Alert.alert('Calorie history', 'Choose a view', [
+      { text: 'Meal calendar', onPress: openMealCalendar },
+      {
+        text: 'Nutrition trends chart',
+        onPress: () => onNavigateToNutritionTrends?.(),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const startCopyMealToDay = (meal: Meal) => {
     setDayCopyPending(null);
     setMealCopyPending(meal);
+    setHistoryNutritionFocus(true);
     if (activeTab !== 'history') {
-      setActiveTab('history');
+      updateFitnessTab('history');
     }
-    showNotification({
+    if (copyMealNoticeIdRef.current) {
+      dismissNotification(copyMealNoticeIdRef.current, { invokeOnDismiss: false });
+    }
+    copyMealNoticeIdRef.current = showNotification({
       title: 'Copy meal',
       lines: [`Tap any day on the calendar to copy “${meal.name}”.`],
       type: 'info',
       persistent: true,
-      onDismiss: () => setMealCopyPending(null),
-      actions: [{ label: 'Cancel', style: 'cancel', onPress: () => setMealCopyPending(null) }],
+      onDismiss: endCopyMode,
+      actions: [{ label: 'Cancel', style: 'cancel', onPress: endCopyMode }],
     });
   };
 
   const startCopyAllMealsFromDay = (sourceDateKey: string, mealCount: number) => {
     setMealCopyPending(null);
     setDayCopyPending(sourceDateKey);
-    showNotification({
+    setHistoryNutritionFocus(true);
+    if (activeTab !== 'history') {
+      updateFitnessTab('history');
+    }
+    if (copyMealNoticeIdRef.current) {
+      dismissNotification(copyMealNoticeIdRef.current, { invokeOnDismiss: false });
+    }
+    copyMealNoticeIdRef.current = showNotification({
       title: 'Copy all meals',
       lines: [
         `Tap a day on the calendar to copy all ${mealCount} meal${mealCount === 1 ? '' : 's'} from this day.`,
       ],
       type: 'info',
       persistent: true,
-      onDismiss: () => setDayCopyPending(null),
-      actions: [{ label: 'Cancel', style: 'cancel', onPress: () => setDayCopyPending(null) }],
+      onDismiss: endCopyMode,
+      actions: [{ label: 'Cancel', style: 'cancel', onPress: endCopyMode }],
     });
   };
 
@@ -1316,11 +1323,12 @@ export default function FitnessScreen({
     if (mealCopyPending) {
       const name = mealCopyPending.name;
       const result = await duplicateLoggedMealToDate(mealCopyPending.id, targetDateKey);
-      setMealCopyPending(null);
       if (!result) {
         showToast('That meal was not found.', 'error');
+        endCopyMode();
         return;
       }
+      endCopyMode();
       setMeals(result.meals as Meal[]);
       setSelectedCalendarDate(targetDateKey);
       setExpandedDayItems(new Set([`nutrition-${targetDateKey}`]));
@@ -1334,11 +1342,12 @@ export default function FitnessScreen({
         return;
       }
       const result = await duplicateMealsFromDayToDate(dayCopyPending, targetDateKey);
-      setDayCopyPending(null);
       if (!result) {
         showToast('No meals found to copy from that day.', 'error');
+        endCopyMode();
         return;
       }
+      endCopyMode();
       setMeals(result.meals as Meal[]);
       setSelectedCalendarDate(targetDateKey);
       setExpandedDayItems(new Set([`nutrition-${targetDateKey}`]));
@@ -2363,8 +2372,20 @@ export default function FitnessScreen({
     const todayName = weekdayNames[new Date().getDay()];
 
     const getTodayWeekDay = (plan: any) => {
-      const days = plan?.weeklyPlan?.weekDays;
+      const weeks = getProgramWeeksFromSavedPlan(plan);
+      const weekIndex = Math.max(
+        0,
+        Math.min(weeks.length - 1, (plan.activeProgramWeek ?? 1) - 1)
+      );
+      const days = weeks[weekIndex]?.weekDays ?? plan?.weeklyPlan?.weekDays;
       if (!days?.length) return null;
+
+      if (inferScheduleMode(plan) === 'flexible_days') {
+        const suggested = getSuggestedFlexibleRotation(plan, workoutHistory);
+        if (suggested) return suggested.dayWorkout;
+        return [...days].sort((a: any, b: any) => Number(a.day) - Number(b.day))[0];
+      }
+
       const match = days.find(
         (d: any) => d.dayName && String(d.dayName).toLowerCase() === todayName.toLowerCase()
       );
@@ -2406,15 +2427,32 @@ export default function FitnessScreen({
       primaryPlan?.name ||
       (savedWorkoutPlans.length ? 'Your saved plans' : 'Add a plan');
     const heroSubtitle = primaryPlan
-      ? `${preview?.dayName || 'Workout'} · ${goalLabel} · ${splitLabel}`
+      ? inferScheduleMode(primaryPlan) === 'flexible_days'
+        ? `Up next: ${flexibleRotationLabel(getSuggestedFlexibleRotation(primaryPlan, workoutHistory))} · ${goalLabel}`
+        : `${preview?.dayName || 'Workout'} · ${goalLabel} · ${splitLabel}`
       : 'Set an active plan or pick a template below';
     const durationMin = preview?.duration ?? 0;
     const exCount = preview?.exerciseCount ?? 0;
     const kcalEst = durationMin > 0 ? Math.round(durationMin * 7) : 0;
 
     const getNextDayLabel = (plan: any) => {
-      const days = plan?.weeklyPlan?.weekDays;
+      const weeks = getProgramWeeksFromSavedPlan(plan);
+      const weekIndex = Math.max(
+        0,
+        Math.min(weeks.length - 1, (plan.activeProgramWeek ?? 1) - 1)
+      );
+      const days = weeks[weekIndex]?.weekDays ?? plan?.weeklyPlan?.weekDays;
       if (!days?.length) return null;
+
+      if (inferScheduleMode(plan) === 'flexible_days') {
+        const rotationSlots = getFlexibleRotationSlots(plan, weekIndex);
+        const lastIdx = getLastCompletedFlexibleDayIndex(plan, rotationSlots, workoutHistory);
+        const nextIdx = lastIdx == null ? 0 : (lastIdx + 1) % rotationSlots.length;
+        const thenIdx = (nextIdx + 1) % rotationSlots.length;
+        const thenSlot = rotationSlots[thenIdx];
+        return thenSlot?.dayWorkout.dayName ? `Then: ${thenSlot.dayWorkout.dayName}` : null;
+      }
+
       const idx = days.findIndex(
         (d: any) => d.dayName && String(d.dayName).toLowerCase() === todayName.toLowerCase()
       );
@@ -2468,6 +2506,7 @@ export default function FitnessScreen({
     const onStartWorkout = () => {
       fireTourTargetIfNeeded(TOUR_TARGET_IDS.fitnessStart);
       if (primaryPlan) {
+        setSavedPlanAutoStartSuggested(true);
         setSelectedSavedPlan(primaryPlan);
         return;
       }
@@ -3021,7 +3060,14 @@ export default function FitnessScreen({
 
     return (
       <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionTitle}>Workout History</Text>
+        <Text style={styles.sectionTitle}>
+          {historyNutritionFocus ? 'Meal history' : 'Workout & meal history'}
+        </Text>
+        {historyNutritionFocus ? (
+          <Text style={styles.historySectionHint}>
+            Tap a day to see logged meals. Use copy on any meal to paste it to another day.
+          </Text>
+        ) : null}
 
         {isCopyMode ? (
           <View style={styles.copyModeBanner}>
@@ -3031,10 +3077,7 @@ export default function FitnessScreen({
             <Text style={styles.copyModeBannerSub}>Tap a calendar day below to paste.</Text>
             <TouchableOpacity
               style={styles.copyModeCancelBtn}
-              onPress={() => {
-                setMealCopyPending(null);
-                setDayCopyPending(null);
-              }}
+              onPress={endCopyMode}
             >
               <Text style={styles.copyModeCancelText}>Cancel</Text>
             </TouchableOpacity>
@@ -3907,18 +3950,6 @@ export default function FitnessScreen({
       setShowAdjustGoalsModal(true);
     };
 
-    let nutritionHistBuckets: NutritionHistBucket[] = [];
-    let nutritionHistTotals: number[] = [];
-    let nutritionHistMaxCal = 1;
-    if (nutritionHistExpanded) {
-      nutritionHistBuckets =
-        nutritionHistMode === 'weeks'
-          ? buildNutritionWeekBuckets(new Date(), nutritionHistWeeks)
-          : buildNutritionMonthBuckets(new Date(), nutritionHistMonths);
-      nutritionHistTotals = nutritionHistBuckets.map((b) => sumMealCaloriesInRange(meals, b.start, b.end));
-      nutritionHistMaxCal = Math.max(1, ...nutritionHistTotals);
-    }
-
     return (
       <>
         <View style={[styles.tabContent, styles.nuRoot]}>
@@ -4008,23 +4039,20 @@ export default function FitnessScreen({
                 <Text style={[styles.nuQuickIcon, styles.nuLogFoodCtaIcon]}>+</Text>
                 <Text style={[styles.nuQuickLabel, styles.nuLogFoodCtaLabel]}>Log Food</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.nuQuickTile,
-                  styles.nuQuickPurple,
-                  nutritionHistExpanded && styles.nuQuickTileActiveHist,
-                ]}
-                onPress={() => setNutritionHistExpanded((v) => !v)}
-                activeOpacity={0.85}
+              <Pressable
+                style={[styles.nuQuickTile, styles.nuQuickPurple]}
+                onPress={openMealCalendar}
+                onLongPress={showCalorieHistoryMenu}
+                delayLongPress={400}
                 accessibilityRole="button"
-                accessibilityState={{ expanded: nutritionHistExpanded }}
-                accessibilityLabel="Calorie history chart"
+                accessibilityLabel="Calorie history, meal calendar"
+                accessibilityHint="Long press for nutrition trends chart"
               >
-                <Text style={styles.nuQuickIcon}>📊</Text>
+                <Text style={styles.nuQuickIcon}>📅</Text>
                 <Text style={styles.nuQuickLabel}>
                   Calorie{'\n'}history
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
               <TouchableOpacity
                 style={[
                   styles.nuQuickTile,
@@ -4043,70 +4071,6 @@ export default function FitnessScreen({
                 ) : null}
               </TouchableOpacity>
             </View>
-
-            {nutritionHistExpanded ? (
-              <View style={styles.nuCard}>
-                <Text style={[styles.nuDetailsTextMuted, { marginBottom: 8 }]}>
-                  Logged meals only · weeks Mon–Sun · swipe chart if crowded
-                </Text>
-                <View style={styles.nuHistModeRow}>
-                  {(['weeks', 'months'] as const).map((m) => (
-                    <TouchableOpacity
-                      key={m}
-                      style={[styles.nuHistChip, nutritionHistMode === m && styles.nuHistChipOn]}
-                      onPress={() => setNutritionHistMode(m)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.nuHistChipText, nutritionHistMode === m && styles.nuHistChipTextOn]}>
-                        {m === 'weeks' ? 'Weeks' : 'Months'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.nuHistSpanRow}>
-                  {nutritionHistMode === 'weeks'
-                    ? ([4, 8, 12] as const).map((n) => (
-                        <TouchableOpacity
-                          key={n}
-                          style={[styles.nuHistSpanChip, nutritionHistWeeks === n && styles.nuHistSpanChipOn]}
-                          onPress={() => setNutritionHistWeeks(n)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={[styles.nuHistSpanText, nutritionHistWeeks === n && styles.nuHistSpanTextOn]}>{n} wk</Text>
-                        </TouchableOpacity>
-                      ))
-                    : ([3, 6, 12] as const).map((n) => (
-                        <TouchableOpacity
-                          key={n}
-                          style={[styles.nuHistSpanChip, nutritionHistMonths === n && styles.nuHistSpanChipOn]}
-                          onPress={() => setNutritionHistMonths(n)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={[styles.nuHistSpanText, nutritionHistMonths === n && styles.nuHistSpanTextOn]}>{n} mo</Text>
-                        </TouchableOpacity>
-                      ))}
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nuHistChartScroll}>
-                  {nutritionHistBuckets.map((b, idx) => {
-                    const v = nutritionHistTotals[idx] ?? 0;
-                    const pct = Math.min(100, Math.round((v / nutritionHistMaxCal) * 100));
-                    return (
-                      <View key={`${b.start.getTime()}-${b.end.getTime()}`} style={styles.nuHistBarCol}>
-                        <Text style={styles.nuHistBarValue} numberOfLines={1}>
-                          {v > 0 ? Math.round(v).toLocaleString() : '—'}
-                        </Text>
-                        <View style={styles.nuHistBarTrack}>
-                          <View style={[styles.nuHistBarFill, { height: `${Math.max(pct, v > 0 ? 6 : 2)}%` }]} />
-                        </View>
-                        <Text style={styles.nuHistBarLabel} numberOfLines={2}>
-                          {b.label}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            ) : null}
 
             {eatingOutCoachHistory.length > 0 ? (
               <TouchableOpacity
@@ -5537,12 +5501,15 @@ export default function FitnessScreen({
     return (
       <SavedPlanViewScreen
         plan={selectedSavedPlan}
+        autoStartSuggested={savedPlanAutoStartSuggested}
         onBack={() => {
+          setSavedPlanAutoStartSuggested(false);
           setSelectedSavedPlan(null);
           loadSavedWorkoutPlans();
           loadWorkoutHistory();
         }}
         onEditPlan={(plan) => {
+          setSavedPlanAutoStartSuggested(false);
           setSelectedSavedPlan(null);
           setPlanToEdit(plan);
           setShowBuildYourOwnScreen(true);
@@ -7467,6 +7434,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 20,
+  },
+  historySectionHint: {
+    fontSize: 13,
+    color: '#9ca3af',
+    lineHeight: 18,
+    marginTop: -12,
+    marginBottom: 16,
   },
   healthHeader: {
     flexDirection: 'row',

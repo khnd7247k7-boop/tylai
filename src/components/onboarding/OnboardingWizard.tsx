@@ -463,7 +463,7 @@ export default function OnboardingWizard({
                 [
                   ['machines', 'Machines'],
                   ['free_weights', 'Free weights'],
-                  ['mix', 'Mix of both'],
+                  ['mix', 'Mix of styles'],
                   ['bodyweight', 'Bodyweight'],
                 ] as const
               ).map(([val, label]) => (

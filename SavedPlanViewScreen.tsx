@@ -16,7 +16,7 @@ import { loadUserData, saveUserData } from './src/utils/userStorage';
 import AIService, { ProgramAdaptation } from './AIService';
 import { useSmallWins } from './src/context/SmallWinsContext';
 import { useToast } from './src/components/ToastProvider';
-import { getProgramWeeksFromSavedPlan } from './src/utils/customWorkoutPlan';
+import { getProgramWeeksFromSavedPlan, inferScheduleMode, scheduleModeDescription, getSuggestedFlexibleRotation, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
 import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
@@ -26,9 +26,11 @@ interface SavedPlanViewScreenProps {
   onBack: () => void;
   onWorkoutComplete?: () => void;
   onEditPlan?: (plan: any) => void;
+  /** When true, flexible plans launch the suggested next workout immediately. */
+  autoStartSuggested?: boolean;
 }
 
-export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, onEditPlan }: SavedPlanViewScreenProps) {
+export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, onEditPlan, autoStartSuggested = false }: SavedPlanViewScreenProps) {
   const fitnessSavedPlanStartRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessSavedPlanStart);
   const { onWorkoutSessionSaved } = useSmallWins();
   const { showToast } = useToast();
@@ -42,6 +44,8 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
   const [aiSuggestions, setAiSuggestions] = useState<ProgramAdaptation[]>([]);
   const [implementedSuggestions, setImplementedSuggestions] = useState<ProgramAdaptation[]>([]);
   const [showImplemented, setShowImplemented] = useState(false);
+  const [autoStartHandled, setAutoStartHandled] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   useEffect(() => {
     loadWorkoutHistory();
@@ -151,14 +155,40 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
     try {
       const history = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
       // Filter history for this plan
-      const planHistory = history.filter(session => session.programId === currentPlan.id);
+      const planHistory = history.filter((session) =>
+        session.programId === currentPlan.id || session.programId.startsWith(`${currentPlan.id}-`)
+      );
       setWorkoutHistory(planHistory);
     } catch (error) {
       console.error('Error loading workout history:', error);
+    } finally {
+      setHistoryLoaded(true);
     }
   };
 
   const planWeeks = getProgramWeeksFromSavedPlan(currentPlan);
+  const isFlexiblePlan = inferScheduleMode(currentPlan) === 'flexible_days';
+  const suggestedRotation = isFlexiblePlan
+    ? getSuggestedFlexibleRotation(currentPlan, workoutHistory)
+    : null;
+
+  const persistFlexibleRotationIndex = async (dayIndex: number) => {
+    if (!isFlexiblePlan) return;
+    try {
+      const savedPlans = await loadUserData<any[]>('savedWorkoutPlans') || [];
+      const planIndex = savedPlans.findIndex((p) => p.id === currentPlan.id);
+      if (planIndex === -1) return;
+      savedPlans[planIndex] = {
+        ...savedPlans[planIndex],
+        flexibleRotationIndex: dayIndex,
+        updatedAt: new Date().toISOString(),
+      };
+      await saveUserData('savedWorkoutPlans', savedPlans);
+      setCurrentPlan(savedPlans[planIndex]);
+    } catch (error) {
+      console.warn('[SavedPlanView] failed to save rotation index', error);
+    }
+  };
 
   const launchWorkoutForDay = (weekIndex: number, dayIndex: number) => {
     const week = planWeeks[weekIndex];
@@ -181,10 +211,27 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
     setSelectedDayIndex(dayIndex);
   };
 
+  useEffect(() => {
+    if (!autoStartSuggested || autoStartHandled || !isFlexiblePlan || !suggestedRotation || !historyLoaded) return;
+    setAutoStartHandled(true);
+    launchWorkoutForDay(suggestedRotation.weekIndex, suggestedRotation.dayIndex);
+  }, [
+    autoStartSuggested,
+    autoStartHandled,
+    isFlexiblePlan,
+    historyLoaded,
+    suggestedRotation?.weekIndex,
+    suggestedRotation?.dayIndex,
+  ]);
+
   const handleStartWorkout = (weekIndex?: number, dayIndex?: number) => {
     if (planWeeks.length > 0 && planWeeks.some((w) => w.weekDays?.length > 0)) {
       if (weekIndex !== undefined && dayIndex !== undefined) {
         launchWorkoutForDay(weekIndex, dayIndex);
+        return;
+      }
+      if (isFlexiblePlan && suggestedRotation) {
+        launchWorkoutForDay(suggestedRotation.weekIndex, suggestedRotation.dayIndex);
         return;
       }
       const flatDays = planWeeks.reduce((n, w) => n + (w.weekDays?.length || 0), 0);
@@ -226,6 +273,10 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
       await onWorkoutSessionSaved(session);
     } catch {
       /* ignore */
+    }
+
+    if (isFlexiblePlan && selectedDayIndex != null && selectedDayIndex >= 0) {
+      await persistFlexibleRotationIndex(selectedDayIndex);
     }
 
     try {
@@ -711,19 +762,28 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
                 {planWeeks.length > 1 && (
                   <Text style={[styles.label, { marginBottom: 8 }]}>{week.name}</Text>
                 )}
-                {week.weekDays.map((dayWorkout: any, dayIndex: number) => (
+                {week.weekDays.map((dayWorkout: any, dayIndex: number) => {
+                  const isSuggestedNext =
+                    isFlexiblePlan &&
+                    suggestedRotation?.weekIndex === weekIndex &&
+                    suggestedRotation?.dayIndex === dayIndex;
+                  return (
                   <TouchableOpacity
                     key={`day-select-${weekIndex}-${dayWorkout.dayName}`}
-                    style={styles.dayCard}
+                    style={[styles.dayCard, isSuggestedNext && styles.dayCardSuggested]}
                     onPress={() => handleStartWorkout(weekIndex, dayIndex)}
                   >
-                    <Text style={styles.dayCardTitle}>{dayWorkout.workoutName}</Text>
+                    <Text style={styles.dayCardTitle}>
+                      {dayWorkout.workoutName}
+                      {isSuggestedNext ? ' · Up next' : ''}
+                    </Text>
                     <Text style={styles.dayCardSubtitle}>{dayWorkout.dayName}</Text>
                     <Text style={styles.dayCardDetails}>
                       {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
                     </Text>
                   </TouchableOpacity>
-                ))}
+                  );
+                })}
               </View>
             ))}
           </View>
@@ -769,13 +829,19 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
           </View>
           <Text style={styles.planDetails}>
             {currentPlan.level || 'Custom'} • {(currentPlan.goal || 'strength').replace('_', ' ')} •{' '}
-            {currentPlan.daysPerWeek || (currentPlan.trainingDays && currentPlan.trainingDays.length) || 1}{' '}
-            days/week
+            {scheduleModeDescription(
+              inferScheduleMode(currentPlan),
+              currentPlan.daysPerWeek ||
+                (currentPlan.trainingDays && currentPlan.trainingDays.length) ||
+                1
+            )}
             {planWeeks.length > 1 ? ` • ${planWeeks.length} weeks` : ''}
           </Text>
           {currentPlan.trainingDays && currentPlan.trainingDays.length > 0 && (
             <Text style={styles.trainingDays}>
-              Training Days: {currentPlan.trainingDays.join(', ')}
+              {inferScheduleMode(currentPlan) === 'flexible_days'
+                ? `Rotation: ${currentPlan.trainingDays.join(', ')}`
+                : `Training Days: ${currentPlan.trainingDays.join(', ')}`}
             </Text>
           )}
           {currentPlan.savedAt && (
@@ -788,7 +854,28 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
         {/* Multi-week / multi-day plan view */}
         {planWeeks.length > 0 && planWeeks.some((w) => w.weekDays?.length > 0) ? (
           <View style={styles.section} ref={fitnessSavedPlanStartRef} nativeID={TOUR_TARGET_IDS.fitnessSavedPlanStart}>
-            <Text style={styles.label}>Program Schedule</Text>
+            {isFlexiblePlan && suggestedRotation && (
+              <View style={styles.flexibleUpNextBanner}>
+                <Text style={styles.flexibleUpNextTitle}>Up next in rotation</Text>
+                <Text style={styles.flexibleUpNextWorkout}>
+                  {flexibleRotationLabel(suggestedRotation)}
+                </Text>
+                <Text style={styles.flexibleUpNextHint}>
+                  {suggestedRotation.dayWorkout.dayName} · rest whenever you need
+                </Text>
+                <TouchableOpacity
+                  style={styles.flexibleStartNextBtn}
+                  onPress={() =>
+                    handleStartWorkout(suggestedRotation.weekIndex, suggestedRotation.dayIndex)
+                  }
+                >
+                  <Text style={styles.flexibleStartNextBtnText}>Start next workout</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={styles.label}>
+              {isFlexiblePlan ? 'Workout Rotation' : 'Program Schedule'}
+            </Text>
             {planWeeks.map((week, weekIndex) => (
               <View key={`plan-week-${week.weekNumber}`} style={{ marginBottom: 20 }}>
                 {planWeeks.length > 1 && (
@@ -797,8 +884,18 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
                 {week.weekDays.map((dayWorkout: any, dayIndex: number) => {
                   const expandKey = weekIndex * 100 + dayIndex;
                   const isExpanded = expandedDays.has(expandKey);
+                  const isSuggestedNext =
+                    isFlexiblePlan &&
+                    suggestedRotation?.weekIndex === weekIndex &&
+                    suggestedRotation?.dayIndex === dayIndex;
                   return (
-                    <View key={`day-${weekIndex}-${dayIndex}-${dayWorkout.dayName}`} style={styles.dayWorkoutCard}>
+                    <View
+                      key={`day-${weekIndex}-${dayIndex}-${dayWorkout.dayName}`}
+                      style={[
+                        styles.dayWorkoutCard,
+                        isSuggestedNext && styles.dayWorkoutCardSuggested,
+                      ]}
+                    >
                       <View style={styles.dayWorkoutHeader}>
                         <TouchableOpacity
                           style={styles.dayWorkoutHeaderLeft}
@@ -812,7 +909,10 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
                           </View>
                           <View style={styles.dayWorkoutInfo}>
                             <Text style={styles.dayWorkoutName}>{dayWorkout.workoutName}</Text>
-                            <Text style={styles.dayWorkoutDay}>{dayWorkout.dayName}</Text>
+                            <Text style={styles.dayWorkoutDay}>
+                              {dayWorkout.dayName}
+                              {isSuggestedNext ? ' · Up next' : ''}
+                            </Text>
                             <Text style={styles.dayWorkoutStats}>
                               {dayWorkout.exercises.length} exercises • ~{dayWorkout.duration} min
                             </Text>
@@ -1247,6 +1347,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888',
   },
+  dayCardSuggested: {
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.08)',
+  },
+  flexibleUpNextBanner: {
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4ADE80',
+    padding: 16,
+    marginBottom: 16,
+  },
+  flexibleUpNextTitle: {
+    color: '#4ADE80',
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  flexibleUpNextWorkout: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  flexibleUpNextHint: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  flexibleStartNextBtn: {
+    backgroundColor: '#4ADE80',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  flexibleStartNextBtnText: {
+    color: '#0a0a0a',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   dayWorkoutCard: {
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
@@ -1254,6 +1396,10 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     borderWidth: 1,
     borderColor: '#333',
+  },
+  dayWorkoutCardSuggested: {
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.08)',
   },
   dayWorkoutHeader: {
     flexDirection: 'row',

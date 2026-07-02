@@ -23,6 +23,7 @@ import {
   type AppNotificationPayload,
   type NotificationAction,
 } from '../utils/appNotificationBridge';
+import { recordNotificationCenterEntry } from '../utils/notificationCenterStore';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -33,7 +34,7 @@ type ActiveNotification = AppNotificationPayload & {
 interface ToastContextValue {
   showToast: (message: string, type?: ToastType, durationMs?: number) => void;
   showNotification: (payload: AppNotificationPayload) => string;
-  dismissNotification: (id?: string) => void;
+  dismissNotification: (id?: string, options?: { invokeOnDismiss?: boolean }) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
@@ -94,6 +95,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     (payload: AppNotificationPayload): string => {
       const id = `notice-${Date.now()}-${idCounter.current++}`;
       const entry: ActiveNotification = { ...payload, id };
+      void recordNotificationCenterEntry(id, payload);
       setQueue((prev) => [...prev, entry]);
       return id;
     },

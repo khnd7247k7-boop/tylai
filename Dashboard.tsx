@@ -8,9 +8,7 @@ import {
   AppState,
   Alert,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
-  Keyboard,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { loadUserData, saveUserData } from './src/utils/userStorage';
@@ -24,13 +22,21 @@ import {
   type CoachMockHealthSettings,
 } from './src/constants/coachMockHealth';
 import { type LoggedMeal, filterMealsLoggedToday } from './src/utils/loggedMeals';
-import { getProgramWeeksFromSavedPlan } from './src/utils/customWorkoutPlan';
+import { getProgramWeeksFromSavedPlan, inferScheduleMode, getSuggestedFlexibleRotation, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { fireTourTargetIfNeeded } from './src/tour/fireTourTarget';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
 import { loadPersistedNutritionGoals } from './src/utils/nutritionGoalsStorage';
 import { subscribeUserDataReady } from './src/utils/userDataEvents';
 import { isMindsetCheckInDoneToday } from './src/utils/mindsetCheckIn';
+import { NotificationCenterModal } from './src/components/NotificationCenterModal';
+import {
+  countUnreadNotifications,
+  fetchTodayNotificationCenterEntries,
+  markNotificationCenterRead,
+  subscribeNotificationCenter,
+  type NotificationCenterEntry,
+} from './src/utils/notificationCenterStore';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -100,19 +106,30 @@ function countWeeklyCompletedSets(sessions: WorkoutSession[]): number {
   return n;
 }
 
-function getTodayWorkoutLabel(savedPlans: any[], activeIds: string[]): string {
+function getTodayWorkoutLabel(
+  savedPlans: any[],
+  activeIds: string[],
+  workoutHistory: WorkoutSession[] = []
+): string {
   const active = savedPlans.filter((p) => activeIds.includes(p.id));
   const plan = active[0];
   if (!plan) return 'Workout';
 
-  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const todayName = names[new Date().getDay()];
   const weeks = getProgramWeeksFromSavedPlan(plan);
   const weekIndex = Math.max(
     0,
     Math.min(weeks.length - 1, (plan.activeProgramWeek ?? 1) - 1)
   );
   const days = weeks[weekIndex]?.weekDays ?? plan.weeklyPlan?.weekDays;
+
+  if (inferScheduleMode(plan) === 'flexible_days' && days?.length) {
+    const suggested = getSuggestedFlexibleRotation(plan, workoutHistory);
+    if (suggested) return flexibleRotationLabel(suggested);
+    return `${plan.name || 'Workout'} · ${days.length} workouts`;
+  }
+
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayName = names[new Date().getDay()];
 
   if (days?.length) {
     const wd =
@@ -144,7 +161,6 @@ export default function Dashboard({
   const { isPremium } = useSubscription();
   const startTodayRef = useTourTargetRef(TOUR_TARGET_IDS.startToday);
   const logFoodRef = useTourTargetRef(TOUR_TARGET_IDS.logFood);
-  const bodyScrollRef = React.useRef<ScrollView>(null);
   const [focusWorkoutLabel, setFocusWorkoutLabel] = useState('Workout');
   const [caloriesToday, setCaloriesToday] = useState(0);
   const [calorieGoal, setCalorieGoal] = useState(2200);
@@ -155,6 +171,28 @@ export default function Dashboard({
   const [coachHealthData, setCoachHealthData] = useState<Record<string, unknown>>({});
   const [dailyMindsetPrompt, setDailyMindsetPrompt] = useState<string | null>(null);
   const weeklySetTarget = 60;
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [notificationEntries, setNotificationEntries] = useState<NotificationCenterEntry[]>([]);
+
+  const refreshNotificationCenter = useCallback(async () => {
+    const entries = await fetchTodayNotificationCenterEntries();
+    setNotificationEntries(entries);
+  }, []);
+
+  useEffect(() => {
+    void refreshNotificationCenter();
+    return subscribeNotificationCenter(() => {
+      void refreshNotificationCenter();
+    });
+  }, [refreshNotificationCenter]);
+
+  const unreadNotificationCount = countUnreadNotifications(notificationEntries);
+
+  const openNotificationCenter = useCallback(async () => {
+    setNotificationCenterOpen(true);
+    await markNotificationCenterRead();
+    await refreshNotificationCenter();
+  }, [refreshNotificationCenter]);
 
   const loadHomeSnapshot = useCallback(async () => {
     try {
@@ -183,7 +221,7 @@ export default function Dashboard({
       setCalorieGoal(Math.max(1, g.calories));
       setCalPct(Math.min(100, Math.round((calSum / Math.max(1, g.calories)) * 100)));
 
-      setFocusWorkoutLabel(getTodayWorkoutLabel(plans, active));
+      setFocusWorkoutLabel(getTodayWorkoutLabel(plans, active, hist));
       const mindset = await isMindsetCheckInDoneToday();
       setMindsetDone(mindset);
 
@@ -282,7 +320,7 @@ export default function Dashboard({
           weeklyCompletedSets: wSets,
           weeklySetTarget,
           mindsetCheckInDone: mindset,
-          todayFocusPlanLabel: getTodayWorkoutLabel(plans, active),
+          todayFocusPlanLabel: getTodayWorkoutLabel(plans, active, hist),
         },
         wearableLast7Days: wearableLast7,
         mindful: mindfulBlock,
@@ -364,30 +402,16 @@ export default function Dashboard({
   };
 
   const todayNum = new Date().getDate();
-  const handleCoachInputFocus = useCallback(() => {
-    requestAnimationFrame(() => {
-      bodyScrollRef.current?.scrollToEnd({ animated: false });
-    });
-    setTimeout(() => {
-      bodyScrollRef.current?.scrollToEnd({ animated: false });
-    }, 220);
-  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.keyboardAvoid}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 24}
-      >
+      <View style={styles.keyboardAvoid}>
         <ScrollView
-          ref={bodyScrollRef}
           style={styles.bodyScroll}
           contentContainerStyle={styles.bodyContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          automaticallyAdjustKeyboardInsets={true}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.headerRow}>
@@ -399,8 +423,27 @@ export default function Dashboard({
                 Dashboard <Text style={styles.headerPillDate}>{todayNum}</Text>
               </Text>
             </View>
-            <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7}>
-              <Text style={styles.iconBtnText}>🔔</Text>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              activeOpacity={0.7}
+              onPress={() => void openNotificationCenter()}
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadNotificationCount > 0
+                  ? `Notifications, ${unreadNotificationCount} unread`
+                  : 'Notifications'
+              }
+            >
+              <View style={styles.bellWrap}>
+                <Text style={styles.iconBtnText}>🔔</Text>
+                {unreadNotificationCount > 0 ? (
+                  <View style={styles.bellBadge}>
+                    <Text style={styles.bellBadgeText}>
+                      {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </TouchableOpacity>
           </View>
         </View>
@@ -442,27 +485,18 @@ export default function Dashboard({
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={styles.startTodayBtn}
-          ref={startTodayRef}
-          onPress={() => {
-            onNavigateToFitness();
-            fireTourTargetIfNeeded(TOUR_TARGET_IDS.startToday);
-          }}
-          activeOpacity={0.88}
-          nativeID={TOUR_TARGET_IDS.startToday}
-        >
-          <Text style={styles.startTodayIcon}>▶</Text>
-          <Text style={styles.startTodayText}>START TODAY</Text>
-        </TouchableOpacity>
-
         <View style={styles.rule} />
 
         <View style={styles.gridRow}>
           <TouchableOpacity
             style={[styles.gridTile, styles.tileGreen]}
-            onPress={onNavigateToFitness}
+            ref={startTodayRef}
+            onPress={() => {
+              onNavigateToFitness();
+              fireTourTargetIfNeeded(TOUR_TARGET_IDS.startToday);
+            }}
             activeOpacity={0.85}
+            nativeID={TOUR_TARGET_IDS.startToday}
           >
             <Text style={styles.gridIcon}>🏋</Text>
             <Text style={styles.gridLabel}>Start Workout</Text>
@@ -503,6 +537,19 @@ export default function Dashboard({
           </TouchableOpacity>
         </View>
 
+        <Text style={styles.sectionLabel}>AI Coach</Text>
+        <View style={styles.coachChatWrap}>
+          <PremiumFeatureGate
+            featureName="AI Coach"
+            description="Chat with your AI wellness coach and daily mindset prompts — powered by Gemini. Included with TYL Premium."
+          >
+            <AICoachChat
+              healthData={coachHealthData}
+              dailyMindsetPrompt={dailyMindsetPrompt}
+            />
+          </PremiumFeatureGate>
+        </View>
+
         <Text style={styles.sectionTitle}>Weekly snapshot</Text>
         <View style={styles.bentoRow}>
           <View style={[styles.bentoCard, styles.bentoCardDark]}>
@@ -536,19 +583,6 @@ export default function Dashboard({
 
         <View style={styles.rule} />
 
-        <Text style={styles.sectionTitle}>AI Coach</Text>
-        <View style={styles.coachChatWrap}>
-          <PremiumFeatureGate
-            featureName="AI Coach"
-            description="Chat with your AI wellness coach and daily mindset prompts — powered by Gemini. Included with TYL Premium."
-          >
-            <AICoachChat
-              healthData={coachHealthData}
-              dailyMindsetPrompt={dailyMindsetPrompt}
-              onInputFocus={handleCoachInputFocus}
-            />
-          </PremiumFeatureGate>
-        </View>
         <TouchableOpacity style={styles.optimizeBtn} onPress={runOptimizeDay} activeOpacity={0.85}>
           <Text style={styles.optimizeBtnText}>Optimize My Day</Text>
         </TouchableOpacity>
@@ -557,7 +591,16 @@ export default function Dashboard({
           <Text style={styles.mentalLinkText}>Open Mental performance tab</Text>
         </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </View>
+
+      <NotificationCenterModal
+        visible={notificationCenterOpen}
+        entries={notificationEntries}
+        onClose={() => setNotificationCenterOpen(false)}
+        onMarkAllRead={() => {
+          void markNotificationCenterRead().then(refreshNotificationCenter);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -579,7 +622,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   coachChatWrap: {
-    marginBottom: 10,
+    marginBottom: 14,
   },
   headerRow: {
     flexDirection: 'row',
@@ -625,10 +668,37 @@ const styles = StyleSheet.create({
   },
   iconBtn: {
     padding: 4,
-    marginLeft: 0,
+    marginLeft: 4,
+  },
+  bellWrap: {
+    position: 'relative',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#ff3b30',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: AppTheme.bgScreen,
+  },
+  bellBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 12,
   },
   iconBtnText: {
-    fontSize: 16,
+    fontSize: 18,
   },
   sectionLabel: {
     fontSize: 10,
@@ -682,27 +752,6 @@ const styles = StyleSheet.create({
   },
   focusPending: {
     color: '#fbbf24',
-  },
-  startTodayBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: AppTheme.accent,
-    borderRadius: 20,
-    paddingVertical: 10,
-    marginBottom: 4,
-  },
-  startTodayIcon: {
-    fontSize: 12,
-    color: AppTheme.accentDark,
-    fontWeight: '900',
-    marginRight: 8,
-  },
-  startTodayText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: AppTheme.accentDark,
-    letterSpacing: 0.6,
   },
   rule: {
     height: 1,

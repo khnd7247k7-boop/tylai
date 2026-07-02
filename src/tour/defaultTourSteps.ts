@@ -25,14 +25,14 @@ export function createAppTourSteps(nav: TourNavHandlers): TourStep[] {
     {
       id: 'start-today',
       targetSelector: tourSelector(TOUR_TARGET_IDS.startToday),
-      title: 'Start Today',
+      title: 'Start Workout',
       content:
-        'Your home base — jump into today\'s workout overview and quick actions from here.',
+        'Jump into your workout overview and today\'s training from here.',
       placement: 'bottom',
       requireActualClick: true,
       spotlightPadding: 12,
-      emoji: '▶️',
-      tapPrompt: 'Tap START TODAY to continue.',
+      emoji: '🏋',
+      tapPrompt: 'Tap Start Workout to continue.',
       prepare: async () => {
         await nav.ensureDashboard();
         await tourPause();

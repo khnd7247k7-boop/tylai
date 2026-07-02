@@ -66,6 +66,8 @@ import type { GeneratedWorkoutPlan } from './data/workoutPrograms';
 import { useSmallWins } from './src/context/SmallWinsContext';
 import WorkoutSession from './WorkoutSession';
 import WarmupBlockSession from './src/components/WarmupBlockSession';
+import WorkoutPhaseStructure from './src/components/WorkoutPhaseStructure';
+import { buildPlanPhaseBlocks, getOptimalWarmupReps } from './src/utils/workoutPhaseDisplay';
 import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
@@ -75,6 +77,7 @@ import {
   buildTrackingExercises,
   expandCompletedExercisesForHistory,
   getWarmupProgress,
+  isPhaseBlock,
   syncWarmupSetCompletion,
   type ExerciseLogEntry,
 } from './src/utils/workoutWarmupLogging';
@@ -98,9 +101,10 @@ interface Exercise {
   alternatives?: string[];
   /** Display grouping block inside a generated workout day. */
   phase?: 'Warm-Up' | 'Main Lift' | 'Secondary Lifts' | 'Accessory Lifts' | 'Finisher' | 'Cooldown';
-  /** Collapsed warm-up block for workout tracking (multiple stretches → one log entry). */
+  /** Collapsed warm-up / cool-down block for workout tracking. */
   isWarmupBlock?: boolean;
-  warmupItems?: Array<{ id: string; name: string; durationSeconds?: number }>;
+  isCooldownBlock?: boolean;
+  warmupItems?: Array<{ id: string; name: string; durationSeconds?: number; reps?: number; repNote?: string }>;
 }
 
 interface ExerciseSet {
@@ -803,11 +807,12 @@ export default function WorkoutScreen({
     const buildWarmupExercise = (data: ExerciseData, durationSeconds: number): Exercise => {
       const cat: 'strength' | 'cardio' | 'flexibility' | 'balance' =
         data.category === 'cardio' ? 'cardio' : data.category === 'flexibility' || data.category === 'balance' ? data.category : 'strength';
+      const warmupReps = getOptimalWarmupReps(data.name);
       return {
         id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
         name: data.name,
         sets: 1,
-        reps: 0,
+        reps: warmupReps ?? 0,
         weight: 0,
         completed: false,
         category: cat,
@@ -2286,7 +2291,7 @@ export default function WorkoutScreen({
 
   const handleWarmupItemToggle = (itemId: string) => {
     const log = exerciseLogs[currentExerciseIndex];
-    if (!log?.isWarmupBlock || !log.warmupItems) return;
+    if (!log?.warmupItems || (!log.isWarmupBlock && !log.isCooldownBlock)) return;
     const warmupItems = log.warmupItems.map((item) =>
       item.id === itemId ? { ...item, completed: !item.completed } : item
     );
@@ -2300,7 +2305,7 @@ export default function WorkoutScreen({
 
   const handleWarmupCompleteAll = () => {
     const log = exerciseLogs[currentExerciseIndex];
-    if (!log?.isWarmupBlock || !log.warmupItems) return;
+    if (!log?.warmupItems || (!log.isWarmupBlock && !log.isCooldownBlock)) return;
     const warmupItems = log.warmupItems.map((item) => ({ ...item, completed: true }));
     applyWarmupLogUpdate(
       currentExerciseIndex,
@@ -2313,7 +2318,7 @@ export default function WorkoutScreen({
     if (!currentWorkout || currentExerciseIndex >= trackingExercises.length) return false;
 
     const currentEx = trackingExercises[currentExerciseIndex];
-    if (currentEx?.isWarmupBlock) return false;
+    if (currentEx && isPhaseBlock(currentEx)) return false;
     
     const currentLog = exerciseLogs[currentExerciseIndex];
     
@@ -2858,7 +2863,7 @@ export default function WorkoutScreen({
                 <Text style={styles.exerciseTitle}>
                   {trackingExercises[currentExerciseIndex]?.name || 'Exercise'}
                 </Text>
-                {trackingExercises[currentExerciseIndex]?.isWarmupBlock ? (
+                {trackingExercises[currentExerciseIndex] && isPhaseBlock(trackingExercises[currentExerciseIndex]) ? (
                   <>
                     <Text style={styles.exerciseDetails}>
                       {trackingExercises[currentExerciseIndex].warmupItems?.length ?? 0} movements · check each off as you go
@@ -2867,6 +2872,7 @@ export default function WorkoutScreen({
                       <WarmupBlockSession
                         items={exerciseLogs[currentExerciseIndex].warmupItems!}
                         blockComplete={exerciseLogs[currentExerciseIndex].sets[0]?.completed === true}
+                        blockLabel={trackingExercises[currentExerciseIndex].isCooldownBlock ? 'Cool-down' : 'Warm-up'}
                         onToggleItem={handleWarmupItemToggle}
                         onCompleteAll={handleWarmupCompleteAll}
                       />
@@ -2903,112 +2909,45 @@ export default function WorkoutScreen({
             {/* Exercise List */}
             <View style={styles.exerciseList}>
               <Text style={styles.exerciseListTitle}>Workout Structure (Tap to select)</Text>
-              {(() => {
-                const exercises = trackingExercises;
-                const cooldownNames = new Set([
-                  'Hamstring Stretch',
-                  "Child's Pose",
-                  'Shoulder Stretch',
-                  'Hip Flexor Stretch',
-                ]);
-                const cnsNames = new Set(['High Knees', 'Lateral Pogos']);
-                const isCompound = (ex: Exercise) => (ex.muscleGroups?.length ?? 0) > 1;
-                const getPhase = (ex: Exercise): string => {
-                  if (ex.isWarmupBlock) return 'Warm-Up';
-                  if (ex.phase) return ex.phase;
-                  if (ex.durationSeconds != null && ex.durationSeconds > 0) {
-                    if (cooldownNames.has(ex.name)) return 'Cooldown';
-                    if (cnsNames.has(ex.name)) return 'Finisher';
-                    return 'Warm-Up';
+              <WorkoutPhaseStructure
+                blocks={buildPlanPhaseBlocks(trackingExercises)}
+                currentExerciseIndex={currentExerciseIndex}
+                resolveExerciseIndex={(blockTitle, itemIndex) => {
+                  if (blockTitle === 'Warm-Up') {
+                    return trackingExercises.findIndex((ex) => ex.isWarmupBlock);
                   }
-                  if (PLYOMETRIC_EXERCISE_IDS.has(ex.id) || (ex.category === 'cardio' && ex.sets === 4 && ex.reps >= 3 && ex.reps <= 5)) {
-                    return 'Finisher';
+                  if (blockTitle === 'Cooldown') {
+                    return trackingExercises.findIndex((ex) => ex.isCooldownBlock);
                   }
-                  if (ex.category === 'strength' && isCompound(ex)) return 'Secondary Lifts';
-                  return 'Accessory Lifts';
-                };
-
-                const grouped: Array<{ title: string; items: Array<{ exercise: Exercise; index: number }> }> = [];
-                exercises.forEach((exercise, index) => {
-                  const title = getPhase(exercise);
-                  const existing = grouped.find(g => g.title === title);
-                  if (existing) existing.items.push({ exercise, index });
-                  else grouped.push({ title, items: [{ exercise, index }] });
-                });
-
-                const phaseOrder = [
-                  'Warm-Up',
-                  'Main Lift',
-                  'Secondary Lifts',
-                  'Accessory Lifts',
-                  'Finisher',
-                  'Cooldown',
-                ];
-                grouped.sort((a, b) => phaseOrder.indexOf(a.title) - phaseOrder.indexOf(b.title));
-
-                return grouped.map(group => (
-                  <View key={group.title} style={styles.exerciseGroupSection}>
-                    <Text style={styles.exerciseGroupTitle}>{group.title}</Text>
-                    {group.items.map(({ exercise, index }) => {
-                      const log = exerciseLogs[index];
-                      const completedSets = log?.sets?.filter(set => set.completed).length || 0;
-                      const totalSets = exercise?.sets || 0;
-                      const warmupProgress = log?.isWarmupBlock ? getWarmupProgress(log) : null;
-                      const isCurrentExercise = currentExerciseIndex === index;
-                      return (
-                        <TouchableOpacity
-                          key={exercise?.id || `ex-${index}-${exercise?.name || 'unknown'}`}
-                          style={[
-                            styles.exerciseItem,
-                            isCurrentExercise && styles.exerciseItemActive
-                          ]}
-                          onPress={() => {
-                            setCurrentExerciseIndex(index);
-                            const firstIncompleteSet = log?.sets?.findIndex(set => !set.completed);
-                            setCurrentSetIndex(firstIncompleteSet !== undefined && firstIncompleteSet >= 0 ? firstIncompleteSet : 0);
-                          }}
-                        >
-                          <View style={styles.exerciseInfo}>
-                            <Text style={[
-                              styles.exerciseName,
-                              isCurrentExercise && styles.exerciseNameActive
-                            ]}>
-                              {exercise.name}
-                            </Text>
-                            <Text style={styles.exerciseSets}>
-                              {warmupProgress
-                                ? `${warmupProgress.done}/${warmupProgress.total} movements`
-                                : `${completedSets}/${totalSets} sets completed`}
-                            </Text>
-                            {exercise.isWarmupBlock && exercise.warmupItems && isCurrentExercise && (
-                              <Text style={styles.warmupSublistHint} numberOfLines={2}>
-                                {exercise.warmupItems.map((w) => w.name).join(' · ')}
-                              </Text>
-                            )}
-                          </View>
-                          <View style={[
-                            styles.exerciseStatus,
-                            (warmupProgress
-                              ? warmupProgress.done === warmupProgress.total && warmupProgress.total > 0
-                              : completedSets === totalSets) && styles.exerciseCompleted,
-                            isCurrentExercise && styles.exerciseStatusActive
-                          ]}>
-                            <Text style={styles.exerciseStatusText}>
-                              {warmupProgress
-                                ? warmupProgress.done === warmupProgress.total && warmupProgress.total > 0
-                                  ? 'DONE'
-                                  : `${warmupProgress.done}/${warmupProgress.total}`
-                                : completedSets === totalSets
-                                  ? 'DONE'
-                                  : `${completedSets}/${totalSets}`}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ));
-              })()}
+                  let mainIdx = 0;
+                  for (let i = 0; i < trackingExercises.length; i += 1) {
+                    const ex = trackingExercises[i];
+                    if (ex.isWarmupBlock || ex.isCooldownBlock) continue;
+                    if (mainIdx === itemIndex) return i;
+                    mainIdx += 1;
+                  }
+                  return undefined;
+                }}
+                getProgressLabel={(exerciseIndex) => {
+                  const log = exerciseLogs[exerciseIndex];
+                  const ex = trackingExercises[exerciseIndex];
+                  if (!log || !ex) return undefined;
+                  if (ex.isWarmupBlock || ex.isCooldownBlock) {
+                    const progress = getWarmupProgress(log);
+                    return `${progress.done}/${progress.total} movements`;
+                  }
+                  const completedSets = log.sets?.filter((set) => set.completed).length ?? 0;
+                  return `${completedSets}/${ex.sets ?? 0} sets`;
+                }}
+                onSelectExercise={(exerciseIndex) => {
+                  setCurrentExerciseIndex(exerciseIndex);
+                  const log = exerciseLogs[exerciseIndex];
+                  const firstIncompleteSet = log?.sets?.findIndex((set) => !set.completed);
+                  setCurrentSetIndex(
+                    firstIncompleteSet !== undefined && firstIncompleteSet >= 0 ? firstIncompleteSet : 0
+                  );
+                }}
+              />
             </View>
 
             {/* Notes */}

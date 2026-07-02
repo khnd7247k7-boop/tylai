@@ -22,7 +22,7 @@ import EmotionalScreen from './EmotionalScreen';
 import AIComponent from './AIComponent';
 import SettingsScreen from './SettingsScreen';
 import SpiritualScreen from './SpiritualScreen';
-import HealthScreen from './HealthScreen';
+import HealthScreen, { type TrendGraphId } from './HealthScreen';
 import AppleHealthDataScreen from './AppleHealthDataScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
@@ -116,6 +116,7 @@ function AppInner() {
   const [currentScreen, setCurrentScreen] = useState<'login' | LoggedInScreen>('login');
   const [navigationHistory, setNavigationHistory] = useState<Array<'login' | LoggedInScreen>>(['login']);
   const [fitnessSyncedTab, setFitnessSyncedTab] = useState<'workouts' | 'nutrition' | 'history'>('workouts');
+  const [healthInitialTrendGraph, setHealthInitialTrendGraph] = useState<TrendGraphId | undefined>();
   /** Bumps whenever we intend to show Fitness root (clears nested plan/workout overlays inside FitnessScreen). */
   const [fitnessSurfaceNonce, setFitnessSurfaceNonce] = useState(0);
   const [isLogin, setIsLogin] = useState(true);
@@ -948,6 +949,13 @@ function AppInner() {
 
   const handleNavigateToHealth = () => {
     openedFromMoreMenuRef.current = false;
+    setHealthInitialTrendGraph(undefined);
+    navigateToScreen('health');
+  };
+
+  const handleNavigateToNutritionTrends = () => {
+    openedFromMoreMenuRef.current = false;
+    setHealthInitialTrendGraph('nutrition');
     navigateToScreen('health');
   };
 
@@ -1207,6 +1215,7 @@ function AppInner() {
                 tourLogFoodIntent={tourLogFoodIntent}
                 tourFitnessIntent={tourFitnessIntent}
                 onFitnessTabChange={setFitnessSyncedTab}
+                onNavigateToNutritionTrends={handleNavigateToNutritionTrends}
                 onCompleteTask={(taskTitle: string) => {
                   console.log('Task completed:', taskTitle);
                 }}
@@ -1273,7 +1282,7 @@ function AppInner() {
         body = (
           <SmoothTransition isVisible={true} direction="slideInRight">
             <SwipeNavigation onSwipeBack={handleGoBack}>
-              <HealthScreen onBack={handleGoBack} />
+              <HealthScreen onBack={handleGoBack} initialTrendGraph={healthInitialTrendGraph} />
             </SwipeNavigation>
           </SmoothTransition>
         );

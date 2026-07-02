@@ -28,11 +28,15 @@ import {
   type CustomExercise,
   type DayWorkout,
   type PlanWeek,
+  type CustomPlanScheduleMode,
   cloneDayWorkoutsFromPreviousWeek,
+  createFlexibleTrainingDays,
   createInitialProgramWeeks,
   dayWorkoutsToSavedWeekDays,
   parseSetsAndReps,
   savedPlanToEditableProgram,
+  sortWeeklyTrainingDays,
+  scheduleModeDescription,
 } from './src/utils/customWorkoutPlan';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
@@ -67,6 +71,8 @@ export default function BuildYourOwnWorkoutScreen({
   const [editingPlanId, setEditingPlanId] = useState<string | null>(planToEdit?.id ?? null);
   // Step 1: Basic Details
   const [workoutName, setWorkoutName] = useState('');
+  const [scheduleMode, setScheduleMode] = useState<CustomPlanScheduleMode>('weekly_split');
+  const [flexibleDayCount, setFlexibleDayCount] = useState(4);
   const [trainingDays, setTrainingDays] = useState<string[]>([]);
   const [numWeeks, setNumWeeks] = useState(1);
   const [weekNames, setWeekNames] = useState<string[]>(['Week 1']);
@@ -112,6 +118,8 @@ export default function BuildYourOwnWorkoutScreen({
     }
     setEditingPlanId(planToEdit.id);
     setWorkoutName(editable.workoutName);
+    setScheduleMode(editable.scheduleMode);
+    setFlexibleDayCount(editable.flexibleDayCount);
     setTrainingDays(editable.trainingDays);
     setNumWeeks(editable.numWeeks);
     setWeekNames(editable.weekNames);
@@ -202,17 +210,44 @@ export default function BuildYourOwnWorkoutScreen({
     }
   };
 
+  const step1Ready =
+    Boolean(workoutName.trim()) &&
+    (scheduleMode === 'weekly_split'
+      ? trainingDays.length > 0
+      : flexibleDayCount >= 1);
+
+  const selectScheduleMode = (mode: CustomPlanScheduleMode) => {
+    setScheduleMode(mode);
+    if (mode === 'flexible_days') {
+      setNumWeeks(1);
+      syncWeekNamesFromCount(1);
+    }
+  };
+
   const handleStartBuildingDays = () => {
     if (!workoutName.trim()) {
       Alert.alert('Error', 'Please enter a program name');
       return;
     }
-    if (trainingDays.length === 0) {
-      Alert.alert('Error', 'Please select at least one training day');
+
+    const resolvedTrainingDays =
+      scheduleMode === 'flexible_days'
+        ? createFlexibleTrainingDays(flexibleDayCount)
+        : sortWeeklyTrainingDays(trainingDays);
+
+    if (resolvedTrainingDays.length === 0) {
+      Alert.alert(
+        'Error',
+        scheduleMode === 'flexible_days'
+          ? 'Choose at least one training day in your rotation'
+          : 'Please select at least one training day'
+      );
       return;
     }
 
-    const weeks = createInitialProgramWeeks(numWeeks, trainingDays, weekNames);
+    setTrainingDays(resolvedTrainingDays);
+    const effectiveWeeks = scheduleMode === 'flexible_days' ? 1 : numWeeks;
+    const weeks = createInitialProgramWeeks(effectiveWeeks, resolvedTrainingDays, weekNames);
     setProgramWeeks(weeks);
     setCurrentWeekIndex(0);
     setCurrentDayIndex(0);
@@ -538,7 +573,7 @@ export default function BuildYourOwnWorkoutScreen({
     const programWeeksSaved = programWeeks.map((week, weekIndex) => ({
       weekNumber: weekIndex + 1,
       name: week.name,
-      weekDays: dayWorkoutsToSavedWeekDays(week.dayWorkouts, workoutName),
+      weekDays: dayWorkoutsToSavedWeekDays(week.dayWorkouts, workoutName, scheduleMode),
     }));
 
     const firstWeekDays = programWeeksSaved[0]?.weekDays ?? [];
@@ -560,6 +595,9 @@ export default function BuildYourOwnWorkoutScreen({
       totalWeeks: programWeeks.length,
       programWeeks: programWeeksSaved,
       trainingDays,
+      scheduleMode,
+      flexibleDayCount:
+        scheduleMode === 'flexible_days' ? trainingDays.length : flexibleDayCount,
       weeklyPlan,
       isCustom: true,
     };
@@ -643,6 +681,113 @@ export default function BuildYourOwnWorkoutScreen({
           </View>
 
           <View style={styles.section}>
+            <Text style={styles.label}>Schedule Type</Text>
+            <Text style={styles.hint}>
+              Weekly split ties workouts to calendar days. Flexible days lets you rotate through workouts and rest when you need.
+            </Text>
+            <View style={styles.scheduleModeRow}>
+              <TouchableOpacity
+                style={[
+                  styles.scheduleModeButton,
+                  scheduleMode === 'weekly_split' && styles.scheduleModeButtonSelected,
+                ]}
+                onPress={() => selectScheduleMode('weekly_split')}
+              >
+                <Text
+                  style={[
+                    styles.scheduleModeButtonTitle,
+                    scheduleMode === 'weekly_split' && styles.scheduleModeButtonTitleSelected,
+                  ]}
+                >
+                  Weekly split
+                </Text>
+                <Text style={styles.scheduleModeButtonHint}>Mon, Wed, Fri…</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.scheduleModeButton,
+                  scheduleMode === 'flexible_days' && styles.scheduleModeButtonSelected,
+                ]}
+                onPress={() => selectScheduleMode('flexible_days')}
+              >
+                <Text
+                  style={[
+                    styles.scheduleModeButtonTitle,
+                    scheduleMode === 'flexible_days' && styles.scheduleModeButtonTitleSelected,
+                  ]}
+                >
+                  Flexible days
+                </Text>
+                <Text style={styles.scheduleModeButtonHint}>Rest when needed</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              {scheduleMode === 'weekly_split' ? 'Training Days' : 'Workouts in Rotation'}
+            </Text>
+            {scheduleMode === 'weekly_split' ? (
+              <>
+                <Text style={styles.hint}>Select the days you want to train each week</Text>
+                <View style={styles.daysContainer}>
+                  {DAYS_OF_WEEK.map(day => (
+                    <TouchableOpacity
+                      key={day}
+                      style={[
+                        styles.dayButton,
+                        trainingDays.includes(day) && styles.dayButtonSelected
+                      ]}
+                      onPress={() => handleToggleDay(day)}
+                    >
+                      <Text style={[
+                        styles.dayButtonText,
+                        trainingDays.includes(day) && styles.dayButtonTextSelected
+                      ]}>
+                        {day.substring(0, 3)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {trainingDays.length > 0 && (
+                  <Text style={styles.selectedDaysText}>
+                    Selected: {sortWeeklyTrainingDays(trainingDays).join(', ')}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <>
+                <Text style={styles.hint}>
+                  How many distinct workouts do you rotate through? Take rest days whenever you need — no fixed weekday required.
+                </Text>
+                <View style={styles.weekStepperRow}>
+                  <TouchableOpacity
+                    style={styles.weekStepperBtn}
+                    onPress={() => setFlexibleDayCount((n) => Math.max(1, n - 1))}
+                    disabled={flexibleDayCount <= 1}
+                  >
+                    <Text style={styles.weekStepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.weekStepperValue}>
+                    {flexibleDayCount} {flexibleDayCount === 1 ? 'workout' : 'workouts'}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.weekStepperBtn}
+                    onPress={() => setFlexibleDayCount((n) => Math.min(7, n + 1))}
+                    disabled={flexibleDayCount >= 7}
+                  >
+                    <Text style={styles.weekStepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.selectedDaysText}>
+                  {createFlexibleTrainingDays(flexibleDayCount).join(', ')}
+                </Text>
+              </>
+            )}
+          </View>
+
+          {scheduleMode === 'weekly_split' ? (
+          <View style={styles.section}>
             <Text style={styles.label}>Program Length</Text>
             <Text style={styles.hint}>
               Multi-week plans let you change rep schemes each phase (build, hypertrophy, etc.)
@@ -699,46 +844,20 @@ export default function BuildYourOwnWorkoutScreen({
               </View>
             )}
           </View>
-
-          <View style={styles.section}>
-            <Text style={styles.label}>Training Days</Text>
-            <Text style={styles.hint}>Select the days you want to train</Text>
-            <View style={styles.daysContainer}>
-              {DAYS_OF_WEEK.map(day => (
-                <TouchableOpacity
-                  key={day}
-                  style={[
-                    styles.dayButton,
-                    trainingDays.includes(day) && styles.dayButtonSelected
-                  ]}
-                  onPress={() => handleToggleDay(day)}
-                >
-                  <Text style={[
-                    styles.dayButtonText,
-                    trainingDays.includes(day) && styles.dayButtonTextSelected
-                  ]}>
-                    {day.substring(0, 3)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {trainingDays.length > 0 && (
-              <Text style={styles.selectedDaysText}>
-                Selected: {trainingDays.join(', ')}
-              </Text>
-            )}
-          </View>
+          ) : null}
 
           <TouchableOpacity
-            style={[styles.nextButton, (!workoutName.trim() || trainingDays.length === 0) && styles.nextButtonDisabled]}
+            style={[styles.nextButton, !step1Ready && styles.nextButtonDisabled]}
             onPress={handleStartBuildingDays}
-            disabled={!workoutName.trim() || trainingDays.length === 0}
+            disabled={!step1Ready}
           >
             <Text style={styles.nextButtonText}>Next — Add Exercises</Text>
           </TouchableOpacity>
-          {(!workoutName.trim() || trainingDays.length === 0) && (
+          {!step1Ready && (
             <Text style={styles.step1Hint}>
-              Enter a program name and select at least one training day to continue.
+              {scheduleMode === 'weekly_split'
+                ? 'Enter a program name and select at least one training day to continue.'
+                : 'Enter a program name and choose how many workouts are in your rotation.'}
             </Text>
           )}
         </ScrollView>
@@ -855,8 +974,9 @@ export default function BuildYourOwnWorkoutScreen({
 
         <View style={styles.progressContainer}>
           <Text style={styles.progressText}>
-            Week {currentWeekIndex + 1} of {programWeeks.length} • Day {currentDayIndex + 1} of{' '}
-            {trainingDays.length}
+            Week {currentWeekIndex + 1} of {programWeeks.length} •{' '}
+            {scheduleMode === 'flexible_days' ? currentDay : `Day ${currentDayIndex + 1}`} ·{' '}
+            {currentDayIndex + 1} of {trainingDays.length}
           </Text>
           <View style={styles.workoutNameEditRow}>
             <Text style={styles.workoutNameEditLabel}>Workout name</Text>
@@ -1183,7 +1303,7 @@ export default function BuildYourOwnWorkoutScreen({
           </View>
           <Text style={styles.hint}>
             {programWeeks.length} {programWeeks.length === 1 ? 'week' : 'weeks'} •{' '}
-            {trainingDays.length} training days per week
+            {scheduleModeDescription(scheduleMode, trainingDays.length)}
           </Text>
 
           {programWeeks.map((week, weekIndex) => (
@@ -1449,6 +1569,36 @@ const styles = StyleSheet.create({
     color: '#00ff88',
     fontSize: 14,
     marginTop: 10,
+  },
+  scheduleModeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  scheduleModeButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#121212',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  scheduleModeButtonSelected: {
+    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    borderColor: '#4ADE80',
+  },
+  scheduleModeButtonTitle: {
+    color: AppTheme.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  scheduleModeButtonTitleSelected: {
+    color: '#4ADE80',
+  },
+  scheduleModeButtonHint: {
+    color: AppTheme.textMuted,
+    fontSize: 12,
   },
   weekStepperRow: {
     flexDirection: 'row',
