@@ -9,6 +9,8 @@
     "ios": "expo run:ios",
     "ios:device": "bash scripts/sync-gemini-proxy-env.sh && expo run:ios --device 00008120-000251D62E68201E --no-bundler",
     "web": "expo start --web",
+    "deploy": "npx expo export -p web && wrangler deploy",
+    "preview": "npx expo export -p web && wrangler dev",
     "db:bootstrap": "bash scripts/bootstrap-usda-sqlite.sh",
     "maestro:test": "maestro test .maestro",
     "maestro:smoke": "maestro test .maestro/flows/smoke.yaml",
@@ -72,7 +74,8 @@
     "@types/lodash": "^4.17.24",
     "@types/react": "~19.1.0",
     "concurrently": "^9.2.1",
-    "eas-cli": "^16.0.0"
+    "eas-cli": "^16.0.0",
+    "wrangler": "^4.69.0"
   },
   "overrides": {
     "react": "19.1.0",

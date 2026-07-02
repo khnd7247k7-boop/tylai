@@ -49,3 +49,9 @@ maestro.log
 maestro-report.xml
 .maestro/**/report-*
 .maestro/**/screenshots/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
