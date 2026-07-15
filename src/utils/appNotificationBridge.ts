@@ -41,16 +41,32 @@ function mapAlertButtons(buttons?: AlertButton[]): NotificationAction[] {
   }));
 }
 
-/** Route React Native `Alert.alert` calls through the top notification banner. */
+function inferAlertType(title: string, interactive: boolean): AppNotificationPayload['type'] {
+  if (/error|fail|unable|could not|invalid/i.test(title)) return 'error';
+  if (/success|saved|updated|deleted|complete|applied|copied/i.test(title)) return 'success';
+  if (interactive) return 'warning';
+  return 'info';
+}
+
+let alertBridgeInstalled = false;
+const nativeAlert = Alert.alert.bind(Alert);
+
+/**
+ * Route React Native `Alert.alert` calls through the top notification banner.
+ * Simple “OK / Success” alerts auto-dismiss and never block the next action.
+ * Multi-button or destructive alerts stay interactive.
+ */
 export function installAppAlertBridge(): void {
-  const original = Alert.alert.bind(Alert);
+  if (alertBridgeInstalled) return;
+  alertBridgeInstalled = true;
+
   Alert.alert = (
     title: string,
     message?: string,
     buttons?: AlertButton[]
   ) => {
     if (!showNotificationFn) {
-      original(title, message, buttons);
+      nativeAlert(title, message, buttons);
       return;
     }
 
@@ -59,15 +75,34 @@ export function installAppAlertBridge(): void {
       .map((line) => line.trim())
       .filter(Boolean);
     const actions = mapAlertButtons(buttons);
-    const persistent = actions.length > 1 || actions.some((a) => a.style === 'destructive');
+    const interactive =
+      actions.length > 1 ||
+      actions.some((a) => a.style === 'destructive' || a.style === 'cancel') ||
+      (buttons?.length ?? 0) > 1;
+
+    // Post-action acks: run any side effect immediately, show a brief non-blocking toast.
+    if (!interactive) {
+      const only = actions[0];
+      try {
+        only?.onPress?.();
+      } catch {
+        /* ignore */
+      }
+      showNotificationFn({
+        title,
+        lines,
+        type: inferAlertType(title, false),
+        durationMs: /error|fail/i.test(title) ? 4000 : 2400,
+      });
+      return;
+    }
 
     showNotificationFn({
       title,
       lines,
       actions,
-      persistent,
-      durationMs: persistent ? undefined : 4500,
-      type: actions.some((a) => a.style === 'destructive') ? 'warning' : 'info',
+      persistent: true,
+      type: inferAlertType(title, true),
     });
   };
 }

@@ -1,0 +1,389 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  TouchableOpacity,
+  Animated,
+  PanResponder,
+  Dimensions,
+} from 'react-native';
+import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
+import { PHOTO_POSES, PHOTO_POSE_LABELS } from '../../../types/progressPhotos';
+import type { SessionCompleteness } from '../../../utils/sessionCompleteness';
+import { formatTimelineLabel, formatSessionStamp } from '../../../services/PhotoService';
+import { AppTheme } from '../../../theme/appVisualTheme';
+import SessionProgressRing from './SessionProgressRing';
+
+interface PhotoHeroCardProps {
+  session: PhotoSession;
+  weekIndex: number;
+  isToday: boolean;
+  completeness: SessionCompleteness;
+  compareSession?: PhotoSession | null;
+  compareMode?: boolean;
+  onCompareModeChange?: (enabled: boolean) => void;
+  onOpenDetails: () => void;
+  onSwipeSession?: (direction: 'prev' | 'next') => void;
+  /** When true, hides week chrome — page timeline owns the week label. */
+  embedded?: boolean;
+}
+
+/**
+ * Featured transformation frame — crossfades on week/pose change,
+ * optional inline before/after scrub (no navigation).
+ */
+export default function PhotoHeroCard({
+  session,
+  weekIndex,
+  isToday,
+  completeness,
+  compareSession,
+  compareMode: compareModeProp,
+  onCompareModeChange,
+  onOpenDetails,
+  onSwipeSession,
+  embedded = false,
+}: PhotoHeroCardProps): React.ReactElement {
+  const [pose, setPose] = useState<PhotoPose>('front');
+  const [compareModeLocal, setCompareModeLocal] = useState(false);
+  const compareMode = compareModeProp ?? compareModeLocal;
+  const setCompareMode = (next: boolean) => {
+    onCompareModeChange?.(next);
+    if (compareModeProp === undefined) setCompareModeLocal(next);
+  };
+
+  const [slider, setSlider] = useState(0.5);
+  const [frameW, setFrameW] = useState(0);
+  const widthRef = useRef(0);
+  const pressScale = useRef(new Animated.Value(1)).current;
+
+  // Dual-layer crossfade: bottom stays, top fades to new image
+  const [baseUri, setBaseUri] = useState(session.photos.front);
+  const [overlayUri, setOverlayUri] = useState(session.photos.front);
+  const overlayOpacity = useRef(new Animated.Value(1)).current;
+  const pendingUri = useRef(session.photos.front);
+  const animating = useRef(false);
+
+  const label = formatTimelineLabel(session, weekIndex, isToday);
+  const uri = session.photos[pose];
+  const compareUri = compareSession?.photos[pose];
+  const canCompare = Boolean(compareSession && compareSession.id !== session.id);
+
+  useEffect(() => {
+    setPose('front');
+    setCompareMode(false);
+    setSlider(0.5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on session change
+  }, [session.id]);
+
+  useEffect(() => {
+    if (uri === pendingUri.current && !animating.current) {
+      setBaseUri(uri);
+      setOverlayUri(uri);
+      overlayOpacity.setValue(1);
+      return;
+    }
+    if (uri === pendingUri.current) return;
+    pendingUri.current = uri;
+
+    if (animating.current) {
+      // Jump to latest mid-animation
+      setBaseUri(uri);
+      setOverlayUri(uri);
+      overlayOpacity.setValue(1);
+      animating.current = false;
+      return;
+    }
+
+    animating.current = true;
+    setOverlayUri(uri);
+    overlayOpacity.setValue(0);
+    Animated.timing(overlayOpacity, {
+      toValue: 1,
+      duration: 320,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setBaseUri(uri);
+      overlayOpacity.setValue(1);
+      animating.current = false;
+    });
+  }, [uri, overlayOpacity]);
+
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          compareMode ? true : Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderGrant: (evt) => {
+          if (!compareMode) return;
+          const x = evt.nativeEvent.locationX;
+          setSlider(Math.min(1, Math.max(0, x / (widthRef.current || 1))));
+        },
+        onPanResponderMove: (evt) => {
+          if (!compareMode) return;
+          const x = evt.nativeEvent.locationX;
+          setSlider(Math.min(1, Math.max(0, x / (widthRef.current || 1))));
+        },
+        onPanResponderRelease: (_, g) => {
+          if (compareMode) return;
+          if (g.dx <= -48) onSwipeSession?.('next');
+          else if (g.dx >= 48) onSwipeSession?.('prev');
+        },
+      }),
+    [compareMode, onSwipeSession]
+  );
+
+  return (
+    <Animated.View
+      style={[styles.card, embedded && styles.cardEmbedded, { transform: [{ scale: pressScale }] }]}
+    >
+      {!embedded ? (
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.weekTitle}>{label}</Text>
+          </View>
+          <View style={styles.ringWrap}>
+            <SessionProgressRing completeness={completeness} size={42} />
+            <Text style={styles.ringCaption}>
+              {completeness.completedCount}/{completeness.total}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      <TouchableOpacity
+        activeOpacity={1}
+        onPressIn={() =>
+          Animated.spring(pressScale, {
+            toValue: 0.985,
+            useNativeDriver: true,
+            speed: 40,
+            bounciness: 0,
+          }).start()
+        }
+        onPressOut={() =>
+          Animated.spring(pressScale, {
+            toValue: 1,
+            useNativeDriver: true,
+            speed: 20,
+            bounciness: 6,
+          }).start()
+        }
+        onPress={onOpenDetails}
+      >
+        <View
+          style={styles.heroFrame}
+          onLayout={(e) => {
+            widthRef.current = e.nativeEvent.layout.width;
+            setFrameW(e.nativeEvent.layout.width);
+          }}
+          {...pan.panHandlers}
+        >
+          <Image source={{ uri: baseUri }} style={styles.heroImage} resizeMode="cover" />
+          <Animated.View style={[styles.overlayLayer, { opacity: overlayOpacity }]}>
+            <Image source={{ uri: overlayUri }} style={styles.heroImage} resizeMode="cover" />
+          </Animated.View>
+
+          {compareMode && compareUri ? (
+            <>
+              <View style={[styles.beforeClip, { width: frameW * slider }]} pointerEvents="none">
+                <Image
+                  source={{ uri: compareUri }}
+                  style={[styles.heroImage, frameW > 0 ? { width: frameW } : null]}
+                  resizeMode="cover"
+                />
+              </View>
+              <View style={[styles.handle, { left: Math.max(0, frameW * slider - 1) }]} />
+              <View
+                style={[styles.handleKnob, { left: Math.max(12, frameW * slider - 14) }]}
+              />
+              <Text style={styles.beforeBadge}>Before</Text>
+              <Text style={styles.afterBadge}>After</Text>
+            </>
+          ) : null}
+
+          <View style={styles.stampWrap} pointerEvents="none">
+            <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+
+      <View style={styles.poseRow}>
+        {PHOTO_POSES.map((p) => (
+          <TouchableOpacity
+            key={p}
+            style={[styles.poseChip, pose === p && styles.poseChipActive]}
+            onPress={() => setPose(p)}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.poseText, pose === p && styles.poseTextActive]}>
+              {PHOTO_POSE_LABELS[p]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.actionRow}>
+        <TouchableOpacity style={styles.ghostBtn} onPress={onOpenDetails} activeOpacity={0.85}>
+          <Text style={styles.ghostText}>Session details</Text>
+        </TouchableOpacity>
+        {canCompare ? (
+          <TouchableOpacity
+            style={[styles.ghostBtn, compareMode && styles.ghostBtnActive]}
+            onPress={() => setCompareMode(!compareMode)}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.ghostText, compareMode && styles.ghostTextActive]}>
+              {compareMode ? 'Exit compare' : 'Compare'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: AppTheme.card,
+    borderRadius: AppTheme.radiusCard,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    padding: 14,
+    marginBottom: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  cardEmbedded: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    padding: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+    marginBottom: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  weekTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: AppTheme.textPrimary,
+  },
+  ringWrap: { alignItems: 'center', marginLeft: 8 },
+  ringCaption: { fontSize: 10, color: AppTheme.textFaint, marginTop: 2 },
+  heroFrame: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    maxHeight: Math.min(460, Dimensions.get('window').height * 0.48),
+    borderRadius: AppTheme.radiusCard,
+    overflow: 'hidden',
+    backgroundColor: AppTheme.bgElevated,
+  },
+  heroImage: { width: '100%', height: '100%' },
+  overlayLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  stampWrap: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    maxWidth: '70%',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  stampText: {
+    color: '#a3a3a3',
+    fontSize: 11,
+    fontWeight: '500',
+    letterSpacing: 0.2,
+  },
+  beforeClip: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    overflow: 'hidden',
+  },
+  handle: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: '#fff',
+  },
+  handleKnob: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -14,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: 'rgba(0,0,0,0.12)',
+  },
+  beforeBadge: {
+    position: 'absolute',
+    left: 10,
+    top: 10,
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 11,
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowRadius: 4,
+  },
+  afterBadge: {
+    position: 'absolute',
+    right: 10,
+    top: 10,
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 11,
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowRadius: 4,
+  },
+  poseRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  poseChip: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: AppTheme.radiusPill,
+    backgroundColor: AppTheme.bgElevated,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+  },
+  poseChipActive: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0,255,136,0.1)',
+  },
+  poseText: { color: AppTheme.textMuted, fontWeight: '600', fontSize: 13 },
+  poseTextActive: { color: AppTheme.accent },
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  ghostBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: AppTheme.radiusButton,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.bgElevated,
+  },
+  ghostBtnActive: { borderColor: AppTheme.accent },
+  ghostText: { color: AppTheme.textSecondary, fontWeight: '600', fontSize: 13 },
+  ghostTextActive: { color: AppTheme.accent },
+});

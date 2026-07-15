@@ -49,6 +49,8 @@ import {
 } from './src/constants/trackableLifts';
 import { useKeyboardInsets, KeyboardModalFrame, dismissKeyboard } from './src/keyboard';
 import HealthService from './src/services/HealthService';
+import HealthSyncSettingsSection from './src/components/HealthSyncSettingsSection';
+import ProgressPhotoSettingsSection from './src/components/ProgressPhotoSettingsSection';
 import type { WorkoutSession } from './data/workoutPrograms';
 
 interface Meal {
@@ -522,11 +524,6 @@ export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreen
     return windowHeight * 0.72;
   }, [windowHeight, liftPickerKeyboardHeight]);
 
-  const liftResultsListMaxHeight = useMemo(() => {
-    if (liftPickerKeyboardHeight <= 0) return 280;
-    return Math.min(280, Math.max(120, windowHeight - liftPickerKeyboardHeight - 300));
-  }, [windowHeight, liftPickerKeyboardHeight]);
-
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') loadData();
@@ -795,7 +792,7 @@ export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreen
         >
           <Text style={styles.backArrow}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Trends</Text>
+        <Text style={styles.headerTitle}>Health & Trends</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -1314,11 +1311,15 @@ export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreen
           <TouchableOpacity style={styles.refreshBtn} onPress={loadData} disabled={loading}>
             <Text style={styles.refreshBtnText}>{loading ? 'Refreshing…' : '↻ Refresh data'}</Text>
           </TouchableOpacity>
-        ) : (
-          <Text style={styles.hint}>
-            Enable Watch &amp; Health Data Sync in Settings to pull device metrics.
-          </Text>
-        )}
+        ) : null}
+
+        <View style={styles.card}>
+          <HealthSyncSettingsSection onSyncEnabledChange={setHealthSyncEnabled} />
+        </View>
+
+        <View style={styles.card}>
+          <ProgressPhotoSettingsSection />
+        </View>
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -1399,78 +1400,83 @@ export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreen
               },
             ]}
           >
-            <Text style={styles.liftModalTitle}>Track 1RM and volume for</Text>
-            <Text style={styles.liftModalHint}>Applies to Realized e1RM and Lift volume load charts.</Text>
+            <FlatList
+              data={liftSearchQuery.trim() ? liftSearchResults : []}
+              keyExtractor={(name) => name}
+              keyboardShouldPersistTaps="handled"
+              ListHeaderComponent={
+                <>
+                  <Text style={styles.liftModalTitle}>Track 1RM and volume for</Text>
+                  <Text style={styles.liftModalHint}>Applies to Realized e1RM and Lift volume load charts.</Text>
 
-            <Text style={styles.liftModalSection}>Common lifts</Text>
-            {PRIORITY_TRACKABLE_LIFTS.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                style={[
-                  styles.liftOption,
-                  item.id === trackedLiftId && styles.liftOptionSelected,
-                ]}
-                onPress={async () => {
-                  setTrackedLiftId(item.id);
-                  await saveTrackedLiftId(item.id);
-                  closeLiftPicker();
-                }}
-              >
-                <Text style={styles.liftOptionText}>{item.label}</Text>
-                {item.id === trackedLiftId ? <Text style={styles.liftCheck}>✓</Text> : null}
-              </TouchableOpacity>
-            ))}
-
-            <Text style={styles.liftModalSection}>Search exercises</Text>
-            <TextInput
-              style={styles.liftSearchInput}
-              value={liftSearchQuery}
-              onChangeText={setLiftSearchQuery}
-              placeholder="Type a name (e.g. pull-up, curl)"
-              placeholderTextColor={AppTheme.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="off"
-              spellCheck={false}
-              textContentType="none"
-              clearButtonMode="while-editing"
-            />
-            {!liftSearchQuery.trim() ? (
-              <Text style={styles.liftSearchHint}>Search the exercise library to chart any strength movement.</Text>
-            ) : liftSearchResults.length === 0 ? (
-              <Text style={styles.liftSearchHint}>No matches. Try a shorter word.</Text>
-            ) : (
-              <FlatList
-                data={liftSearchResults}
-                keyExtractor={(name) => name}
-                style={{ maxHeight: liftResultsListMaxHeight }}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled
-                renderItem={({ item: name }) => {
-                  const id = encodeCustomLiftId(name);
-                  const selected = id === trackedLiftId;
-                  return (
+                  <Text style={styles.liftModalSection}>Common lifts</Text>
+                  {PRIORITY_TRACKABLE_LIFTS.map((item) => (
                     <TouchableOpacity
-                      style={[styles.liftOption, selected && styles.liftOptionSelected]}
+                      key={item.id}
+                      style={[
+                        styles.liftOption,
+                        item.id === trackedLiftId && styles.liftOptionSelected,
+                      ]}
                       onPress={async () => {
-                        setTrackedLiftId(id);
-                        await saveTrackedLiftId(id);
+                        setTrackedLiftId(item.id);
+                        await saveTrackedLiftId(item.id);
                         closeLiftPicker();
                       }}
                     >
-                      <Text style={styles.liftOptionText}>{name}</Text>
-                      {selected ? <Text style={styles.liftCheck}>✓</Text> : null}
+                      <Text style={styles.liftOptionText}>{item.label}</Text>
+                      {item.id === trackedLiftId ? <Text style={styles.liftCheck}>✓</Text> : null}
                     </TouchableOpacity>
-                  );
-                }}
-              />
-            )}
-            <TouchableOpacity
-              style={styles.liftModalCancel}
-              onPress={closeLiftPicker}
-            >
-              <Text style={styles.liftModalCancelText}>Cancel</Text>
-            </TouchableOpacity>
+                  ))}
+
+                  <Text style={styles.liftModalSection}>Search exercises</Text>
+                  <TextInput
+                    style={styles.liftSearchInput}
+                    value={liftSearchQuery}
+                    onChangeText={setLiftSearchQuery}
+                    placeholder="Type a name (e.g. pull-up, curl)"
+                    placeholderTextColor={AppTheme.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    spellCheck={false}
+                    textContentType="none"
+                    clearButtonMode="while-editing"
+                  />
+                  {!liftSearchQuery.trim() ? (
+                    <Text style={styles.liftSearchHint}>Search the exercise library to chart any strength movement.</Text>
+                  ) : liftSearchResults.length === 0 ? (
+                    <Text style={styles.liftSearchHint}>No matches. Try a shorter word.</Text>
+                  ) : (
+                    <Text style={styles.liftSearchHint}>Tap a result below.</Text>
+                  )}
+                </>
+              }
+              renderItem={({ item: name }) => {
+                const id = encodeCustomLiftId(name);
+                const selected = id === trackedLiftId;
+                return (
+                  <TouchableOpacity
+                    style={[styles.liftOption, selected && styles.liftOptionSelected]}
+                    onPress={async () => {
+                      setTrackedLiftId(id);
+                      await saveTrackedLiftId(id);
+                      closeLiftPicker();
+                    }}
+                  >
+                    <Text style={styles.liftOptionText}>{name}</Text>
+                    {selected ? <Text style={styles.liftCheck}>✓</Text> : null}
+                  </TouchableOpacity>
+                );
+              }}
+              ListFooterComponent={
+                <TouchableOpacity
+                  style={styles.liftModalCancel}
+                  onPress={closeLiftPicker}
+                >
+                  <Text style={styles.liftModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              }
+            />
           </View>
         </KeyboardModalFrame>
       </Modal>

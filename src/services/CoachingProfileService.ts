@@ -5,7 +5,10 @@ import {
   type ExperienceLevel,
   type PrimaryGoal,
   type NutritionBodyProfile,
+  type NutritionPreferencesProfile,
+  type AdvancedNutritionProfile,
   createEmptyCoachingProfile,
+  migrateNutritionPreferencesProfile,
   isCoachingProfileComplete,
   PRIMARY_GOAL_LABELS,
 } from '../types/coachingProfile';
@@ -16,6 +19,11 @@ import {
   computeOverestimateRisk,
   type WorkoutGenerationModifiers,
 } from './GoalDrivenCoaching';
+import {
+  isTrainingScheduleConfigured,
+  resolveTrainingDaysForSchedule,
+} from '../utils/trainingSchedule';
+import type { CustomPlanScheduleMode } from '../utils/customWorkoutPlan';
 import { deriveNutritionTargetsFromProfile, isNutritionBodyProfileComplete, normalizeNutritionBodyDraft } from '../utils/nutritionTargets';
 import { formatHeightDisplay, formatWeightDisplay } from '../utils/bodyMetricsParse';
 import { savePersistedNutritionGoals } from '../utils/nutritionGoalsStorage';
@@ -106,6 +114,7 @@ export async function loadCoachingProfile(): Promise<CoachingProfile> {
       ...createEmptyCoachingProfile().nutritionBodyProfile,
       ...raw.nutritionBodyProfile,
     },
+    nutritionPreferencesProfile: migrateNutritionPreferencesProfile(raw.nutritionPreferencesProfile),
   };
 }
 
@@ -179,7 +188,33 @@ export async function syncCoachingProfileToUserProfile(profile: CoachingProfile)
             profile.nutritionBodyProfile.unitPreference
           )
         : existing.weight),
+    nutritionPreferences: profile.nutritionPreferencesProfile,
+    foodAllergies: formatAllergySummary(profile.nutritionPreferencesProfile),
+    foodIntolerances: formatIntoleranceSummary(profile.nutritionPreferencesProfile),
+    wantsMealPlan: profile.nutritionPreferencesProfile.helpMode === 'meal_plans',
+    nutritionHelpMode: profile.nutritionPreferencesProfile.helpMode ?? existing.nutritionHelpMode,
+    nutritionPrimaryGoal: profile.nutritionPreferencesProfile.primaryGoal ?? existing.nutritionPrimaryGoal,
+    eatingStyle: profile.nutritionPreferencesProfile.eatingStyle ?? existing.eatingStyle,
+    proactiveNutritionCoaching:
+      profile.nutritionPreferencesProfile.proactiveCoaching ?? existing.proactiveNutritionCoaching,
+    advancedNutritionProfile: profile.nutritionPreferencesProfile.advancedProfile ?? existing.advancedNutritionProfile,
   });
+}
+
+function formatAllergySummary(prefs: NutritionPreferencesProfile): string {
+  if (prefs.allergies.includes('none')) return 'None';
+  return prefs.allergies
+    .filter((a) => a !== 'none')
+    .map((a) => (a === 'other' ? prefs.allergyOther || 'Other' : a.replace(/_/g, ' ')))
+    .join(', ');
+}
+
+function formatIntoleranceSummary(prefs: NutritionPreferencesProfile): string {
+  if (prefs.intolerances.includes('none')) return 'None';
+  return prefs.intolerances
+    .filter((i) => i !== 'none')
+    .map((i) => (i === 'other' ? prefs.intoleranceOther || 'Other' : i.replace(/_/g, ' ')))
+    .join(', ');
 }
 
 function buildFinalizedCoachingProfile(
@@ -346,6 +381,38 @@ export async function saveNutritionBodyProfile(body: NutritionBodyProfile): Prom
   await saveUserData(NUTRITION_BODY_PROMPT_DISMISSED_KEY, true);
 }
 
+export async function saveNutritionPreferencesProfile(
+  prefs: NutritionPreferencesProfile
+): Promise<void> {
+  const profile = await loadCoachingProfile();
+  const updated: CoachingProfile = {
+    ...profile,
+    nutritionPreferencesProfile: {
+      ...prefs,
+      advancedProfile: prefs.advancedProfile ?? profile.nutritionPreferencesProfile.advancedProfile,
+    },
+  };
+  await saveUserData(COACHING_PROFILE_KEY, updated);
+  await syncCoachingProfileToUserProfile(updated);
+  notifyUserDataReady();
+}
+
+export async function saveAdvancedNutritionProfile(
+  advanced: AdvancedNutritionProfile
+): Promise<void> {
+  const profile = await loadCoachingProfile();
+  const updated: CoachingProfile = {
+    ...profile,
+    nutritionPreferencesProfile: {
+      ...profile.nutritionPreferencesProfile,
+      advancedProfile: advanced,
+    },
+  };
+  await saveUserData(COACHING_PROFILE_KEY, updated);
+  await syncCoachingProfileToUserProfile(updated);
+  notifyUserDataReady();
+}
+
 /** @deprecated Prefer isPendingFirstWorkoutPlan — pending clears when the user saves a plan. */
 export async function consumePendingFirstWorkoutPlan(): Promise<boolean> {
   return isPendingFirstWorkoutPlan();
@@ -361,6 +428,8 @@ export interface WorkoutGenerationInput {
   challengeDial: string;
   primaryGoal: PrimaryGoal | null;
   modifiers: WorkoutGenerationModifiers;
+  scheduleMode: CustomPlanScheduleMode;
+  trainingDays: string[];
   missingFields: string[];
 }
 
@@ -375,6 +444,13 @@ export function buildWorkoutGenerationInput(profile: CoachingProfile): WorkoutGe
   if (!level) missingFields.push('experience level');
   if (!days) missingFields.push('training days per week');
   if (!length) missingFields.push('session length');
+  if (!profile.scheduleProfile.scheduleMode) missingFields.push('weekly or flexible schedule');
+  if (!isTrainingScheduleConfigured(profile.scheduleProfile)) {
+    missingFields.push('training day selection');
+  }
+
+  const scheduleMode = profile.scheduleProfile.scheduleMode ?? 'weekly_split';
+  const trainingDays = resolveTrainingDaysForSchedule(profile.scheduleProfile);
 
   const secondaryGoals: string[] = [];
   if (profile.goalProfile.secondaryGoal?.trim()) {
@@ -425,6 +501,8 @@ export function buildWorkoutGenerationInput(profile: CoachingProfile): WorkoutGe
     preferredLength: length ?? 45,
     challengeDial: profile.adherenceProfile.challengeDial ?? 'balanced',
     primaryGoal: goal,
+    scheduleMode,
+    trainingDays,
     modifiers,
     missingFields,
   };
@@ -444,5 +522,7 @@ export default {
   shouldShowNutritionBodyProfilePrompt,
   dismissNutritionBodyProfilePrompt,
   saveNutritionBodyProfile,
+  saveNutritionPreferencesProfile,
+  saveAdvancedNutritionProfile,
   updateCoachingProfileFromQuestionnaire,
 };

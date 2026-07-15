@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="TYL Apparel — performance meets everyday wear from the TYL AI brand. Request custom designs." />
+  <title>Apparel — TYL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=17" />
+</head>
+<body data-page="apparel.html">
+  <div class="wrap">
+    <header class="site-header">
+      <a class="logo" href="index.html" aria-label="TYL home">
+        <img src="app-icon.png" alt="TYL" width="52" height="52" />
+      </a>
+      <ul class="nav-center" id="navMenu">
+        <li><a href="features.html">Features</a></li>
+        <li><a href="index.html#app-preview">App Preview</a></li>
+        <li><a href="index.html#about">About</a></li>
+        <li><a href="join.html">Pricing</a></li>
+        <li><a href="index.html#faq">FAQ</a></li>
+      </ul>
+      <div class="nav-right">
+        <button type="button" class="menu-toggle" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">☰</button>
+        <a class="nav-download" href="join.html#pricing">Get Premium</a>
+      </div>
+    </header>
+
+  <main class="page-main apparel-page">
+    <p class="section-title">TYL Apparel</p>
+    <h1 class="about-head">Performance meets everyday wear</h1>
+    <p class="about-lead">Explore the TYL Apparel line — designed to match the energy you bring to training and life.</p>
+    <div class="apparel-logos">
+      <div class="on-light"><img src="tyl-apparel-01.png" alt="TYL Apparel logo on white" width="200" height="120" loading="lazy" /></div>
+      <div class="on-dark"><img src="tyl-apparel-02.png" alt="TYL Apparel logo on black" width="200" height="120" loading="lazy" /></div>
+    </div>
+    <div class="apparel-actions">
+      <button type="button" class="btn-solid" id="apparelRequestBtn">Request a custom design</button>
+      <button type="button" class="btn-outline" id="apparelBtn">See what clothing we offer</button>
+    </div>
+    <p class="apparel-actions-hint">Have a logo, pattern, or idea in mind? Tell us your size, color, and design — we’ll follow up with pricing and next steps.</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div class="footer-brand"><strong>TYL</strong><p>Transform Your Life LLC</p></div>
+      <div class="footer-links">
+        <a href="legal.html#privacy-policy">Privacy</a>
+        <a href="legal.html#terms-of-service">Terms</a>
+        <a href="#" id="contactOpen">Contact</a>
+      </div>
+    </div>
+    <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved. Transform Your Life LLC owns the TYL app, apparel, and all related products and content.</p>
+  </footer>
+  </div>
+
+  <div class="modal-overlay" id="apparelModal" role="dialog" aria-modal="true" aria-labelledby="apparelModalTitle">
+    <div class="modal">
+      <button type="button" class="modal-close" id="apparelClose" aria-label="Close">×</button>
+      <h3 id="apparelModalTitle">TYL Apparel</h3>
+      <p>The full storefront is coming soon. Want something made for you now? Use the custom design request form.</p>
+      <button type="button" class="btn-solid" id="apparelRequestFromModalBtn">Request a custom design</button>
+      <button type="button" class="btn-outline contact-open-inline" style="margin-top:10px;width:100%;">General contact</button>
+    </div>
+  </div>
+
+  <div class="apparel-drawer" id="apparelRequestModal" role="dialog" aria-modal="true" aria-labelledby="apparelRequestModalTitle" aria-hidden="true">
+    <div class="apparel-drawer-backdrop" data-drawer-close="apparelRequestModal" aria-hidden="true"></div>
+    <div class="apparel-drawer-panel">
+      <div class="apparel-drawer-header">
+        <h3 id="apparelRequestModalTitle">Custom apparel request</h3>
+        <button type="button" class="apparel-drawer-close" id="apparelRequestClose" aria-label="Close">×</button>
+      </div>
+      <div class="apparel-drawer-scroll" id="apparelRequestScroll">
+        <p class="form-notice">Tell us what you want printed or embroidered. Upload a reference image, describe your design, or both. We’ll email you back with next steps.</p>
+        <form id="apparelRequestForm" novalidate>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="apparelName">Name</label>
+            <input type="text" id="apparelName" name="name" autocomplete="name" required placeholder="Your name" />
+          </div>
+          <div class="form-field">
+            <label for="apparelEmail">Email</label>
+            <input type="email" id="apparelEmail" name="email" autocomplete="email" required placeholder="you@example.com" />
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="apparelPhone">Phone <span class="label-optional">(optional)</span></label>
+          <input type="tel" id="apparelPhone" name="phone" autocomplete="tel" placeholder="For order updates" />
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="apparelGarment">Garment type</label>
+            <select id="apparelGarment" name="garmentType" required>
+              <option value="T-shirt" selected>T-shirt</option>
+              <option value="Hoodie">Hoodie</option>
+              <option value="Tank top">Tank top</option>
+              <option value="Long sleeve">Long sleeve</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="apparelSize">T-shirt / garment size</label>
+            <select id="apparelSize" name="size" required>
+              <option value="" disabled selected>Select size</option>
+              <option value="XS">XS</option>
+              <option value="S">S</option>
+              <option value="M">M</option>
+              <option value="L">L</option>
+              <option value="XL">XL</option>
+              <option value="2XL">2XL</option>
+              <option value="3XL">3XL</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="apparelColor">Color</label>
+            <input type="text" id="apparelColor" name="color" required placeholder="e.g. Black, Navy, Heather gray" />
+          </div>
+          <div class="form-field">
+            <label for="apparelQuantity">Quantity</label>
+            <input type="number" id="apparelQuantity" name="quantity" min="1" max="99" value="1" required />
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="apparelPlacement">Design placement</label>
+          <select id="apparelPlacement" name="placement">
+            <option value="Front" selected>Front</option>
+            <option value="Back">Back</option>
+            <option value="Front & back">Front &amp; back</option>
+            <option value="Sleeve">Sleeve</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="apparelDesignFile">Reference image <span class="label-optional">(optional if you describe below)</span></label>
+          <input type="file" id="apparelDesignFile" name="designFile" accept="image/jpeg,image/png,image/webp,image/gif" />
+          <p class="form-hint" id="apparelDesignFileHint">JPG, PNG, WebP, or GIF · max 5 MB</p>
+        </div>
+        <div class="form-field">
+          <label for="apparelDesignDescription">Describe your pattern / design</label>
+          <textarea id="apparelDesignDescription" name="designDescription" placeholder="Colors, text, logo placement, inspiration links, or anything we should know to produce your design."></textarea>
+          <p class="form-hint">Required if you don’t upload a reference image.</p>
+        </div>
+        <div class="form-field">
+          <label for="apparelNotes">Additional notes <span class="label-optional">(optional)</span></label>
+          <textarea id="apparelNotes" name="additionalNotes" placeholder="Deadline, shipping address, budget, or special instructions"></textarea>
+        </div>
+        <button type="submit" class="btn-solid" style="width:100%;">Submit custom request</button>
+        <p class="form-error" id="apparelRequestError" hidden role="alert"></p>
+        <p class="form-success" id="apparelRequestSuccess" role="status">Request sent! Check your inbox for a confirmation — we’ll follow up with pricing and next steps.</p>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="contactModal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+    <div class="modal modal-wide">
+      <button type="button" class="modal-close" id="contactClose" aria-label="Close">×</button>
+      <h3 id="contactModalTitle">Contact TYL AI</h3>
+      <p>Send us a message — we'll get back to you at the email you provide.</p>
+      <form id="contactForm" novalidate>
+        <div class="form-field">
+          <label for="contactName">Name</label>
+          <input type="text" id="contactName" name="name" autocomplete="name" required placeholder="Your name" />
+        </div>
+        <div class="form-field">
+          <label for="contactEmail">Email</label>
+          <input type="email" id="contactEmail" name="email" autocomplete="email" required placeholder="you@example.com" />
+        </div>
+        <div class="form-field">
+          <label for="contactMessage">Message</label>
+          <textarea id="contactMessage" name="message" required placeholder="How can we help?"></textarea>
+        </div>
+        <button type="submit" class="btn-solid" style="width:100%;">Send message</button>
+        <p class="form-success" id="contactSuccess" role="status">Message received! We'll reply to your email soon.</p>
+      </form>
+      <p style="margin-top:16px;font-size:0.8rem;color:var(--muted);">Or email directly: <a href="mailto:travis@tyl-ai.com" style="color:var(--glow-3);">travis@tyl-ai.com</a></p>
+    </div>
+  </div>
+
+  <script src="site.js?v=17"></script>
+</body>
+</html>

@@ -20,8 +20,10 @@ copy_file() {
 echo "Syncing from $SRC → $DST"
 
 for rel in \
-  App.tsx WorkoutScreen.tsx SettingsScreen.tsx Dashboard.tsx AIService.ts \
+  App.tsx WorkoutScreen.tsx WorkoutOptionsScreen.tsx SettingsScreen.tsx Dashboard.tsx AIService.ts \
   src/components/onboarding/OnboardingWizard.tsx \
+  src/components/onboarding/WorkoutOptionsScreen.tsx \
+  src/utils/onboardingContinueHints.ts \
   src/components/AppTextInput.tsx \
   src/types/coachingProfile.ts \
   src/services/CoachingProfileService.ts \

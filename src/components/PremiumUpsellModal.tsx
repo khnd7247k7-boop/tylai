@@ -88,29 +88,34 @@ export default function PremiumUpsellModal({ visible, onClose, highlightFeature 
             </Text>
           )}
 
-          <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
             <FeatureList title="Included with Basic" items={basicFeatures} accent={AppTheme.textMuted} />
             <FeatureList title="Premium (Gemini AI)" items={premiumFeatures} accent={AppTheme.accent} />
-          </ScrollView>
 
-          <TouchableOpacity style={styles.primaryBtn} onPress={handleUpgrade} activeOpacity={0.88}>
-            <Text style={styles.primaryBtnText}>
-              {__DEV__ ? 'Enable Premium (dev)' : 'Get Premium on the web'}
-            </Text>
-          </TouchableOpacity>
-          {!__DEV__ ? (
-            <Text style={styles.betaNote}>
-              Pay on our website with the same email you use in the app. Premium unlocks automatically on TestFlight after payment.
-            </Text>
-          ) : null}
-          <TouchableOpacity style={styles.secondaryBtn} onPress={onClose} activeOpacity={0.7}>
-            <Text style={styles.secondaryBtnText}>Not now</Text>
-          </TouchableOpacity>
-          {__DEV__ ? (
-            <Text style={styles.devNote}>
-              Dev builds can toggle Premium in Settings → Subscription. Set EXPO_PUBLIC_GRANT_PREMIUM=true to auto-grant.
-            </Text>
-          ) : null}
+            <TouchableOpacity style={styles.primaryBtn} onPress={handleUpgrade} activeOpacity={0.88}>
+              <Text style={styles.primaryBtnText}>
+                {__DEV__ ? 'Enable Premium (dev)' : 'Get Premium on the web'}
+              </Text>
+            </TouchableOpacity>
+            {!__DEV__ ? (
+              <Text style={styles.betaNote}>
+                Pay on our website with the same email you use in the app. Premium unlocks automatically on TestFlight after payment.
+              </Text>
+            ) : null}
+            <TouchableOpacity style={styles.secondaryBtn} onPress={onClose} activeOpacity={0.7}>
+              <Text style={styles.secondaryBtnText}>Not now</Text>
+            </TouchableOpacity>
+            {__DEV__ ? (
+              <Text style={styles.devNote}>
+                Dev builds can toggle Premium in Settings → Subscription. Set EXPO_PUBLIC_GRANT_PREMIUM=true to auto-grant.
+              </Text>
+            ) : null}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -165,8 +170,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   scroll: {
-    maxHeight: 340,
-    marginBottom: 16,
+    flexGrow: 0,
+    maxHeight: '70%',
+    marginBottom: 8,
+  },
+  scrollContent: {
+    paddingBottom: 16,
   },
   listBlock: {
     marginBottom: 18,

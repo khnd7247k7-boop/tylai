@@ -9,6 +9,10 @@ export interface Exercise {
   instructions?: string;
   /** Warm-up exercises: suggested duration in seconds (slow, controlled). */
   durationSeconds?: number;
+  /** Exercises sharing this id alternate sets (superset). */
+  supersetId?: string;
+  /** Order within the superset (0 = first). */
+  supersetOrder?: number;
 }
 
 export interface WorkoutProgram {

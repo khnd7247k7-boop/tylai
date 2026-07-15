@@ -61,6 +61,12 @@ import {
   nextLoadOrRepProgression,
 } from './src/utils/compoundRepCaps';
 import { computeSystemicVolumeContext, adjustSplitFocusesForSystemicTax } from './src/utils/systemicVolume';
+import {
+  exerciseDataFitsDayFocus,
+  exerciseFitsDayFocus,
+  filterExercisePoolForFocus,
+  isLegDayFocus,
+} from './src/utils/workoutFocusFilter';
 import WorkoutOptionsScreen from './WorkoutOptionsScreen';
 import type { GeneratedWorkoutPlan } from './data/workoutPrograms';
 import { useSmallWins } from './src/context/SmallWinsContext';
@@ -161,9 +167,12 @@ interface SavedWorkoutPlan extends WorkoutPlan {
 export default function WorkoutScreen({
   onBack,
   onPlanSetupComplete,
+  initialSetupPending = false,
 }: {
   onBack: () => void;
   onPlanSetupComplete?: () => void;
+  /** True while first-time setup still needs a saved workout plan. */
+  initialSetupPending?: boolean;
 }): React.ReactElement {
   const fitnessAiGenerateRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessAiGenerate);
   const [generatingPlan, setGeneratingPlan] = useState(false);
@@ -238,16 +247,17 @@ export default function WorkoutScreen({
 
   const allExercises = getAllExercises();
 
-  // Load saved plans and coaching profile
-  useEffect(() => {
-    loadSavedPlans();
-    void refreshCoachingProfile();
-  }, []);
-
   const refreshCoachingProfile = async () => {
     const cp = await loadCoachingProfile();
     setCoachingProfile(cp);
     setOnboardingReady(await isOnboardingComplete());
+  };
+
+  const completeInitialSetupIfNeeded = async () => {
+    const wasPending = await isPendingFirstWorkoutPlan();
+    if (!wasPending) return;
+    await clearPendingFirstWorkoutPlan();
+    onPlanSetupComplete?.();
   };
 
   const runGenerateFromProfile = async (cp: CoachingProfile) => {
@@ -287,9 +297,45 @@ export default function WorkoutScreen({
   };
 
   useEffect(() => {
+    loadSavedPlans();
+    void refreshCoachingProfile();
+  }, []);
+
+  const handleSkipInitialSetup = () => {
+    Alert.alert(
+      'Skip for now?',
+      'You can generate and save a workout plan anytime from Workouts. Skip setup to explore the rest of the app.',
+      [
+        { text: 'Keep setting up', style: 'cancel' },
+        {
+          text: 'Skip for now',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              await clearPendingFirstWorkoutPlan();
+              onPlanSetupComplete?.();
+              onBack();
+            })();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleWorkoutOptionsBack = () => {
+    if (initialSetupPending) {
+      Alert.alert(
+        'Pick a plan to finish setup',
+        'Swipe through the options and tap Save Plan (or Save & Start Workout). You can also tap Generate again if you want fresh options.',
+        [{ text: 'OK' }]
+      );
+    }
+    setShowWorkoutOptions(false);
+  };
+
+  useEffect(() => {
+    if (!initialSetupPending) return;
     void (async () => {
-      const pending = await isPendingFirstWorkoutPlan();
-      if (!pending) return;
       const complete = await isOnboardingComplete();
       if (!complete) return;
       const cp = await loadCoachingProfile();
@@ -300,11 +346,11 @@ export default function WorkoutScreen({
         console.error('Auto-generate first plan', e);
         Alert.alert(
           'Plan generation failed',
-          'Your answers were saved. Tap Generate My Personalized Plan to try again.'
+          'Your answers were saved. Tap Generate My Personalized Plan below to try again.'
         );
       }
     })();
-  }, []);
+  }, [initialSetupPending]);
 
   const { onWorkoutLoggerOpened } = useSmallWins();
   useEffect(() => {
@@ -975,12 +1021,21 @@ export default function WorkoutScreen({
 
     const exerciseIsCompoundLift = (ex: Exercise): boolean => (ex.muscleGroups?.length ?? 0) > 1;
 
+    const getDefaultFallbackExercise = (focus: string): Exercise | null => {
+      const data = isLegDayFocus(focus)
+        ? (getExerciseData('Bodyweight Squats') ?? getExerciseData('Goblet Squat'))
+        : getExerciseData('Push-ups');
+      return data ? getExerciseDetails(data) : null;
+    };
+
     const splitTemplateBlocksForDay = (
       mainList: Exercise[],
-      dayIndex: number
+      dayIndex: number,
+      focus: string
     ): { mainLift: Exercise[]; secondary: Exercise[]; accessory: Exercise[]; finisher: Exercise[] } => {
-      if (mainList.length === 0) return { mainLift: [], secondary: [], accessory: [], finisher: [] };
-      const sorted = [...mainList].sort(
+      const focusFilteredMain = mainList.filter(ex => exerciseFitsDayFocus(ex, focus));
+      if (focusFilteredMain.length === 0) return { mainLift: [], secondary: [], accessory: [], finisher: [] };
+      const sorted = [...focusFilteredMain].sort(
         (a, b) => (exerciseIsCompoundLift(b) ? 1 : 0) - (exerciseIsCompoundLift(a) ? 1 : 0)
       );
       const compounds = sorted.filter(exerciseIsCompoundLift);
@@ -999,6 +1054,7 @@ export default function WorkoutScreen({
       const used = new Set([...mainLift, ...secondary, ...accessory].map(e => e.name));
       const accessoryCandidates = exercisePool.filter(ex => {
         if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (!exerciseDataFitsDayFocus(ex, focus)) return false;
         if (ex.category === 'balance') return true;
         if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
         return false;
@@ -1018,6 +1074,7 @@ export default function WorkoutScreen({
 
       const finisherCandidates = exercisePool.filter(ex => {
         if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (!exerciseDataFitsDayFocus(ex, focus)) return false;
         if (ex.category === 'cardio' || ex.category === 'balance') return true;
         if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
         return false;
@@ -1124,11 +1181,10 @@ export default function WorkoutScreen({
         
         // Safety check: ensure exercise pool has exercises
         if (exercisePool.length === 0) {
-          // If all exercises are excluded, use a minimal safe set
-            const pushUpData = getExerciseData('Push-ups');
-            if (pushUpData) {
-              dayExercises = [getExerciseDetails(pushUpData)];
-            }
+          const fallback = getDefaultFallbackExercise(focus);
+          if (fallback) {
+            dayExercises = [fallback];
+          }
         } else {
         if (focus.includes('Chest') && focus.includes('Back')) {
           const targetMuscles = ['chest', 'back'];
@@ -1185,6 +1241,7 @@ export default function WorkoutScreen({
           let quadCalfExercises = exercisePool.filter(e => {
             const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
             return e.category === 'strength' &&
+              exerciseDataFitsDayFocus(e, focus) &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
           if (level === 'advanced' && quadCalfExercises.length > 0) {
@@ -1209,6 +1266,7 @@ export default function WorkoutScreen({
           let gluteHamExercises = exercisePool.filter(e => {
             const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
             return e.category === 'strength' &&
+              exerciseDataFitsDayFocus(e, focus) &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
           if (level === 'advanced' && gluteHamExercises.length > 0) {
@@ -1312,6 +1370,7 @@ export default function WorkoutScreen({
           let lowerBodyExercises = exercisePool.filter(e => {
             const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
             return e.category === 'strength' && 
+                   exerciseDataFitsDayFocus(e, focus) &&
                    muscleGroups.some(mg => lowerBodyMuscleGroups.some(lmg => mg.toLowerCase().includes(lmg.toLowerCase())));
           });
           
@@ -1519,6 +1578,7 @@ export default function WorkoutScreen({
           let legExercises = exercisePool.filter(e => {
             const muscleGroups = e.muscleGroups || [e.primaryMuscleGroup, ...e.secondaryMuscleGroups];
             return e.category === 'strength' && 
+                   exerciseDataFitsDayFocus(e, focus) &&
                    (e.movementPattern === 'squat' || e.movementPattern === 'lunge' || e.movementPattern === 'hinge' ||
                     muscleGroups.some(mg => legMuscleGroups.some(lmg => mg.toLowerCase().includes(lmg.toLowerCase()))));
           });
@@ -1739,14 +1799,16 @@ export default function WorkoutScreen({
           }
         }
 
-        // Ensure no excluded exercises are included
-        dayExercises = dayExercises.filter(ex => !excludedExercises.includes(ex.name));
+        // Ensure no excluded exercises are included and exercises match the day's focus
+        dayExercises = dayExercises
+          .filter(ex => !excludedExercises.includes(ex.name))
+          .filter(ex => exerciseFitsDayFocus(ex, focus));
         
         // If we don't have enough exercises after filtering, add more from the pool
         if (dayExercises.length < exercisesPerDay) {
           const additionalNeeded = exercisesPerDay - dayExercises.length;
           const usedExerciseNames = dayExercises.map(e => e.name);
-          const availableExercises = exercisePool
+          const availableExercises = filterExercisePoolForFocus(exercisePool, focus)
               .filter(ex => !usedExerciseNames.includes(ex.name) && !excludedExercises.includes(ex.name));
           
           if (availableExercises.length > 0) {
@@ -1759,12 +1821,11 @@ export default function WorkoutScreen({
         
         // Final safety check - ensure we have at least one exercise
         if (dayExercises.length === 0) {
-          // Fallback to a safe default exercise if all were excluded
-            const pushUpData = getExerciseData('Push-ups');
-            if (pushUpData) {
-              dayExercises = [getExerciseDetails(pushUpData)];
-            }
+          const fallback = getDefaultFallbackExercise(focus);
+          if (fallback) {
+            dayExercises = [fallback];
           }
+        }
         }
 
         // Calculate duration based on preferred workout length or default
@@ -1773,9 +1834,11 @@ export default function WorkoutScreen({
           duration = exercisesPerDay * (level === 'beginner' ? 5 : level === 'intermediate' ? 6 : 7);
         }
 
-        const mainExercises = dayExercises.length > 0 ? dayExercises : (() => {
-          const pushUpData = getExerciseData('Push-ups');
-          return pushUpData ? [getExerciseDetails(pushUpData)] : [];
+        const mainExercises = (() => {
+          const filtered = dayExercises.filter(ex => exerciseFitsDayFocus(ex, focus));
+          if (filtered.length > 0) return filtered;
+          const fallback = getDefaultFallbackExercise(focus);
+          return fallback ? [fallback] : [];
         })();
 
         let orderedExercises: Exercise[];
@@ -1783,7 +1846,7 @@ export default function WorkoutScreen({
 
         if (useOptimalPeakStructure) {
           const phase1Warmup = getDynamicWarmupPhase(focus).map(ex => ({ ...ex, phase: 'Warm-Up' as const }));
-          const { mainLift, secondary, accessory, finisher } = splitTemplateBlocksForDay(mainExercises, dayIndex);
+          const { mainLift, secondary, accessory, finisher } = splitTemplateBlocksForDay(mainExercises, dayIndex, focus);
           const phase2MainLift = mainLift.map(ex => ({ ...ex, phase: 'Main Lift' as const }));
           const phase3Secondary = secondary.map(ex => ({ ...ex, phase: 'Secondary Lifts' as const }));
           const phase4Accessory = accessory.map(ex => ({ ...ex, phase: 'Accessory Lifts' as const }));
@@ -1792,16 +1855,18 @@ export default function WorkoutScreen({
             const targetPlyo = plyometricPool.length >= 2 ? 2 : Math.max(1, Math.min(2, plyometricPool.length));
             if (targetPlyo > 0 && plyometricPool.length > 0) {
               let seed = variationIndex * 7919 + i * 997 + dayIndex * 13;
-              const pPool = [...plyometricPool];
-              for (let ki = pPool.length - 1; ki > 0; ki--) {
-                seed = (seed * 9301 + 49297) % 233280;
-                const j = Math.floor((seed / 233280) * (ki + 1));
-                [pPool[ki], pPool[j]] = [pPool[j], pPool[ki]];
+              const pPool = [...filterExercisePoolForFocus(plyometricPool, focus)];
+              if (pPool.length > 0) {
+                for (let ki = pPool.length - 1; ki > 0; ki--) {
+                  seed = (seed * 9301 + 49297) % 233280;
+                  const j = Math.floor((seed / 233280) * (ki + 1));
+                  [pPool[ki], pPool[j]] = [pPool[j], pPool[ki]];
+                }
+                phase5Finisher = pPool.slice(0, targetPlyo).map(p => ({
+                  ...getPlyometricPhaseDetails(p),
+                  phase: 'Finisher' as const,
+                }));
               }
-              phase5Finisher = pPool.slice(0, targetPlyo).map(p => ({
-                ...getPlyometricPhaseDetails(p),
-                phase: 'Finisher' as const,
-              }));
             }
           }
           const phase6Cooldown = getCooldownPhase();
@@ -2162,10 +2227,7 @@ export default function WorkoutScreen({
 
     try {
       const savedPlan = await persistSavedPlan(workout, { activate: true });
-      if (wasInitialSetup) {
-        await clearPendingFirstWorkoutPlan();
-        onPlanSetupComplete?.();
-      }
+      await completeInitialSetupIfNeeded();
 
       Alert.alert(
         'Plan saved',
@@ -2174,9 +2236,7 @@ export default function WorkoutScreen({
           {
             text: 'OK',
             onPress: () => {
-              if (wasInitialSetup) {
-                onBack();
-              }
+              if (wasInitialSetup) onBack();
             },
           },
         ]
@@ -2200,6 +2260,7 @@ export default function WorkoutScreen({
 
     try {
       await persistSavedPlan(workout, { activate: true });
+      await completeInitialSetupIfNeeded();
     } catch (error) {
       console.error('Error saving workout plan:', error);
       Alert.alert('Error', 'Failed to save workout plan');
@@ -2569,9 +2630,10 @@ export default function WorkoutScreen({
       <WorkoutOptionsScreen
         workoutOptions={workoutOptions as unknown as GeneratedWorkoutPlan[]}
         generatedGoal={workoutOptions[0]?.goal}
+        isInitialSetup={initialSetupPending}
         onSave={(w) => void handleSavePlanFromOptions(w as unknown as WorkoutPlan)}
         onStartWorkout={(w) => void handleSelectWorkout(w as unknown as WorkoutPlan)}
-        onBack={() => setShowWorkoutOptions(false)}
+        onBack={handleWorkoutOptionsBack}
       />
     );
   }
@@ -2614,6 +2676,18 @@ export default function WorkoutScreen({
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {initialSetupPending ? (
+          <View style={styles.setupBanner}>
+            <Text style={styles.setupBannerTitle}>Last step: save your workout plan</Text>
+            <Text style={styles.setupBannerText}>
+              We generated options from your onboarding answers. Pick one and tap Save Plan to finish setup.
+            </Text>
+            <TouchableOpacity onPress={handleSkipInitialSetup} style={styles.setupSkipLink}>
+              <Text style={styles.setupSkipLinkText}>Skip for now</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {/* Saved Plans View */}
         {showSavedPlans ? (
           <View style={styles.section}>
@@ -3135,6 +3209,35 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  setupBanner: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: 'rgba(0, 255, 136, 0.12)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 136, 0.35)',
+  },
+  setupBannerTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: AppTheme.textPrimary,
+    marginBottom: 8,
+  },
+  setupBannerText: {
+    fontSize: 14,
+    color: AppTheme.textSecondary,
+    lineHeight: 20,
+  },
+  setupSkipLink: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
+  setupSkipLinkText: {
+    color: AppTheme.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   section: {
     marginBottom: 30,
   },
@@ -3610,14 +3713,13 @@ const styles = StyleSheet.create({
     color: '#00ff88',
   },
   exerciseSelectionContainer: {
-    maxHeight: 400,
     marginTop: 15,
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
     padding: 15,
   },
   exerciseScrollView: {
-    maxHeight: 370,
+    flexGrow: 0,
   },
   exerciseCategory: {
     marginBottom: 20,

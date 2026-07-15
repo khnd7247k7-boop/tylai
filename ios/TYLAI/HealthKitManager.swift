@@ -58,6 +58,8 @@ final class HealthKitManager: ObservableObject {
     private var bodyMassType: HKQuantityType?
     private var vo2MaxType: HKQuantityType?
     private var activeEnergyType: HKQuantityType?
+    private var stepsType: HKQuantityType?
+    private var distanceType: HKQuantityType?
     private var sleepType: HKCategoryType?
     private var mindfulSessionType: HKCategoryType?
 
@@ -73,6 +75,8 @@ final class HealthKitManager: ObservableObject {
         bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass)
         vo2MaxType = HKQuantityType.quantityType(forIdentifier: .vo2Max)
         activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)
+        stepsType = HKQuantityType.quantityType(forIdentifier: .stepCount)
+        distanceType = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)
         sleepType = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis)
         mindfulSessionType = HKCategoryType.categoryType(forIdentifier: .mindfulSession)
 
@@ -81,6 +85,8 @@ final class HealthKitManager: ObservableObject {
         if let t = bodyMassType { set.append(t) }
         if let t = vo2MaxType { set.append(t) }
         if let t = activeEnergyType { set.append(t) }
+        if let t = stepsType { set.append(t) }
+        if let t = distanceType { set.append(t) }
         if let t = sleepType { set.append(t) }
         if let t = mindfulSessionType { set.append(t) }
         typesToRead = set
@@ -100,13 +106,15 @@ final class HealthKitManager: ObservableObject {
     }
 
     /// Request read-only authorization for all configured types.
-    func requestAuthorization() async {
+    /// Returns `true` when HealthKit is available and the system auth sheet flow finished (allow or deny).
+    @discardableResult
+    func requestAuthorization() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else {
             lastErrorMessage = "Health is not available on this device."
-            return
+            return false
         }
         let toRead = Set(typesToRead)
-        guard !toRead.isEmpty else { return }
+        guard !toRead.isEmpty else { return false }
 
         do {
             try await healthStore.requestAuthorization(toShare: [], read: toRead)
@@ -117,12 +125,19 @@ final class HealthKitManager: ObservableObject {
             await enableBackgroundDeliveryForAllTypes()
             #endif
             await refreshAllMetrics()
+            return true
         } catch {
             // User cancel or system error — do not crash; rest of app remains usable.
             lastErrorMessage = error.localizedDescription
             UserDefaults.standard.set(true, forKey: Self.authFlowDefaultsKey)
             authFlowCompleted = true
+            return true
         }
+    }
+
+    /// Whether HealthKit is available on this device (false on Simulator / unsupported hardware).
+    var isHealthDataAvailable: Bool {
+        HKHealthStore.isHealthDataAvailable()
     }
 
     // MARK: - Permission check (compliance / UX)
@@ -144,6 +159,8 @@ final class HealthKitManager: ObservableObject {
             ("Weight", bodyMassType),
             ("VO₂ max", vo2MaxType),
             ("Active energy", activeEnergyType),
+            ("Steps", stepsType),
+            ("Distance", distanceType),
             ("Sleep", sleepType),
             ("Mindful minutes", mindfulSessionType),
         ]
@@ -256,9 +273,6 @@ final class HealthKitManager: ObservableObject {
     /// Most recent `HKQuantitySample` for the given type, or `nil` if no data / access blocked.
     func fetchLatestSample(for quantityType: HKQuantityType?) async -> HKQuantitySample? {
         guard let quantityType else { return nil }
-        if healthStore.authorizationStatus(for: quantityType) == .sharingDenied {
-            return nil
-        }
 
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
         return await withCheckedContinuation { continuation in
@@ -410,10 +424,6 @@ final class HealthKitManager: ObservableObject {
             return 0
         }
 
-        if healthStore.authorizationStatus(for: mindfulType) == .sharingDenied {
-            return 0
-        }
-
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
         guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else {
@@ -445,13 +455,68 @@ final class HealthKitManager: ObservableObject {
         return seconds / 60.0
     }
 
+    /// Quantity samples for a metric key used by the RN `HealthService` (`heartRate`, `activeEnergy`, `steps`, `distance`, `bodyMass`).
+    func fetchQuantitySamples(metric: String, startMs: Double, endMs: Double) async -> [[String: Double]] {
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let start = Date(timeIntervalSince1970: startMs / 1000.0)
+        let end = Date(timeIntervalSince1970: endMs / 1000.0)
+        guard end > start else { return [] }
+
+        guard let quantityType = quantityType(forMetric: metric) else { return [] }
+        // Apple does not reliably expose *read* authorization status; always attempt the query.
+
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let samples: [HKQuantitySample] = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: quantityType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+            ) { _, results, _ in
+                continuation.resume(returning: (results as? [HKQuantitySample]) ?? [])
+            }
+            healthStore.execute(query)
+        }
+
+        return samples.map { sample in
+            [
+                "dateMs": sample.startDate.timeIntervalSince1970 * 1000.0,
+                "value": doubleValue(for: sample.quantity, metric: metric),
+            ]
+        }
+    }
+
+    private func quantityType(forMetric metric: String) -> HKQuantityType? {
+        switch metric {
+        case "heartRate": return heartRateType
+        case "activeEnergy": return activeEnergyType
+        case "steps": return stepsType
+        case "distance": return distanceType
+        case "bodyMass": return bodyMassType
+        default: return nil
+        }
+    }
+
+    private func doubleValue(for quantity: HKQuantity, metric: String) -> Double {
+        switch metric {
+        case "heartRate":
+            return quantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
+        case "activeEnergy":
+            return quantity.doubleValue(for: HKUnit.kilocalorie())
+        case "steps":
+            return quantity.doubleValue(for: HKUnit.count())
+        case "distance":
+            return quantity.doubleValue(for: HKUnit.meter())
+        case "bodyMass":
+            return quantity.doubleValue(for: HKUnit.pound())
+        default:
+            return 0
+        }
+    }
+
     /// Body-mass samples for the last `sinceDays` calendar days (one entry per sample; JS dedupes by day).
     func fetchBodyMassSamples(sinceDays: Int) async -> [[String: Double]] {
         guard HKHealthStore.isHealthDataAvailable(), let quantityType = bodyMassType else {
-            return []
-        }
-
-        if healthStore.authorizationStatus(for: quantityType) == .sharingDenied {
             return []
         }
 

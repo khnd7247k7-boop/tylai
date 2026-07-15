@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TYL — B/W Gradient Mockup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --black: #050505;
+        --ink: #0a0a0a;
+        --charcoal: #141414;
+        --graphite: #1c1c1c;
+        --slate: #2a2a2a;
+        --silver: #a3a3a3;
+        --mist: #d4d4d4;
+        --white: #fafafa;
+        --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--black);
+        color: var(--white);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Ambient page gradients */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 255, 255, 0.07), transparent 55%),
+          radial-gradient(ellipse 60% 40% at 100% 30%, rgba(255, 255, 255, 0.04), transparent 50%),
+          radial-gradient(ellipse 50% 35% at 0% 70%, rgba(255, 255, 255, 0.03), transparent 45%),
+          linear-gradient(180deg, #0d0d0d 0%, #050505 40%, #080808 100%);
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 1.5rem 5rem;
+      }
+
+      /* Nav */
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        text-decoration: none;
+        color: var(--white);
+      }
+
+      .logo-mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: linear-gradient(145deg, #ffffff 0%, #b8b8b8 45%, #ffffff 100%);
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        font-size: 0.7rem;
+        letter-spacing: 0.12em;
+        color: var(--black);
+      }
+
+      .logo-text {
+        font-weight: 600;
+        font-size: 0.95rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+
+      .nav-links {
+        display: none;
+        gap: 2rem;
+        list-style: none;
+      }
+
+      .nav-links a {
+        color: var(--silver);
+        text-decoration: none;
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        transition: color 0.2s;
+      }
+
+      .nav-links a:hover {
+        color: var(--white);
+      }
+
+      .nav-cta {
+        padding: 0.55rem 1.1rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+        color: var(--white);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-decoration: none;
+        transition: border-color 0.2s, background 0.2s;
+      }
+
+      .nav-cta:hover {
+        border-color: rgba(255, 255, 255, 0.45);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.06) 100%);
+      }
+
+      @media (min-width: 768px) {
+        .nav-links {
+          display: flex;
+        }
+      }
+
+      /* Hero */
+      .hero {
+        padding: 4.5rem 0 3.5rem;
+        text-align: center;
+      }
+
+      .hero-badge {
+        display: inline-block;
+        padding: 0.35rem 0.9rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--mist);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+        margin-bottom: 1.75rem;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.5rem, 7vw, 4.25rem);
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        margin-bottom: 1.25rem;
+        background: linear-gradient(180deg, #ffffff 0%, #ffffff 40%, #8a8a8a 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .hero p {
+        max-width: 32rem;
+        margin: 0 auto 2.25rem;
+        color: var(--silver);
+        font-size: 1.1rem;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: center;
+      }
+
+      .btn-primary {
+        padding: 0.85rem 1.75rem;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(180deg, #ffffff 0%, #d4d4d4 100%);
+        color: var(--black);
+        font-weight: 700;
+        font-size: 0.85rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .btn-ghost {
+        padding: 0.85rem 1.75rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: transparent;
+        color: var(--mist);
+        font-weight: 600;
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-decoration: none;
+      }
+
+      /* Phone mock */
+      .phone-wrap {
+        margin: 3.5rem auto 0;
+        max-width: 280px;
+        position: relative;
+      }
+
+      .phone-wrap::before {
+        content: "";
+        position: absolute;
+        inset: -40% -30%;
+        background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.08), transparent 65%);
+        pointer-events: none;
+      }
+
+      .phone {
+        position: relative;
+        border-radius: 36px;
+        padding: 10px;
+        background: linear-gradient(160deg, #3a3a3a 0%, #1a1a1a 40%, #0a0a0a 100%);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .phone-screen {
+        border-radius: 28px;
+        overflow: hidden;
+        background: linear-gradient(180deg, #161616 0%, #0a0a0a 100%);
+        aspect-ratio: 9 / 19;
+        padding: 1.25rem 1rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .phone-notch {
+        width: 80px;
+        height: 22px;
+        background: var(--black);
+        border-radius: 0 0 12px 12px;
+        margin: -1.25rem auto 1rem;
+      }
+
+      .phone-logo {
+        width: 48px;
+        height: 48px;
+        margin: 0 auto 1rem;
+        border-radius: 12px;
+        background: linear-gradient(145deg, #fff, #999, #fff);
+        display: grid;
+        place-items: center;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        color: var(--black);
+      }
+
+      .phone-card {
+        flex: 1;
+        border-radius: 14px;
+        padding: 1rem;
+        margin-bottom: 0.6rem;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .phone-card h3 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-bottom: 0.35rem;
+        color: var(--white);
+      }
+
+      .phone-card p {
+        font-size: 0.65rem;
+        color: var(--silver);
+      }
+
+      .phone-bar {
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        margin-top: 0.5rem;
+        overflow: hidden;
+      }
+
+      .phone-bar-fill {
+        height: 100%;
+        width: 68%;
+        border-radius: 3px;
+        background: linear-gradient(90deg, #666, #fff);
+      }
+
+      /* Features */
+      .section-label {
+        text-align: center;
+        font-size: 0.72rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--silver);
+        margin: 4rem 0 2rem;
+      }
+
+      .features {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1fr;
+      }
+
+      @media (min-width: 640px) {
+        .features {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      .feature {
+        padding: 1.75rem 1.5rem;
+        border-radius: 16px;
+        background: linear-gradient(160deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .feature-num {
+        font-size: 0.7rem;
+        color: var(--silver);
+        letter-spacing: 0.15em;
+        margin-bottom: 0.75rem;
+      }
+
+      .feature h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+      }
+
+      .feature p {
+        font-size: 0.88rem;
+        color: var(--silver);
+      }
+
+      /* Split band */
+      .band {
+        margin-top: 4rem;
+        border-radius: 20px;
+        padding: 2.5rem 2rem;
+        background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 50%, #1c1c1c 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        display: grid;
+        gap: 2rem;
+        align-items: center;
+      }
+
+      @media (min-width: 768px) {
+        .band {
+          grid-template-columns: 1fr 1fr;
+          padding: 3rem;
+        }
+      }
+
+      .band h2 {
+        font-size: clamp(1.5rem, 3vw, 2rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.75rem;
+      }
+
+      .band p {
+        color: var(--silver);
+        font-size: 0.95rem;
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .stat {
+        padding: 1.25rem;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: center;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        background: linear-gradient(180deg, #fff, #888);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .stat span {
+        font-size: 0.72rem;
+        color: var(--silver);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      /* Footer */
+      footer {
+        margin-top: 5rem;
+        padding-top: 2rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+        color: var(--silver);
+        font-size: 0.8rem;
+      }
+
+      .mockup-tag {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--silver);
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mockup-tag">Design mockup</div>
+
+    <div class="page">
+      <nav>
+        <a class="logo" href="#">
+          <div class="logo-mark">TYL</div>
+          <span class="logo-text">Transform Your Life</span>
+        </a>
+        <ul class="nav-links">
+          <li><a href="#">Training</a></li>
+          <li><a href="#">Nutrition</a></li>
+          <li><a href="#">Apparel</a></li>
+          <li><a href="#">About</a></li>
+        </ul>
+        <a class="nav-cta" href="#">Get the app</a>
+      </nav>
+
+      <section class="hero">
+        <div class="hero-badge">Train smarter · Live intentional</div>
+        <h1>Your coach.<br />Your rhythm.</h1>
+        <p>
+          AI-powered training and nutrition in a minimal interface — built for people who want
+          results without the noise.
+        </p>
+        <div class="hero-actions">
+          <a class="btn-primary" href="#">Download</a>
+          <a class="btn-ghost" href="#">See how it works</a>
+        </div>
+
+        <div class="phone-wrap">
+          <div class="phone">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-logo">TYL</div>
+              <div class="phone-card">
+                <h3>Today's workout</h3>
+                <p>Upper push · 45 min</p>
+                <div class="phone-bar"><div class="phone-bar-fill"></div></div>
+              </div>
+              <div class="phone-card">
+                <h3>Nutrition</h3>
+                <p>1,840 / 2,100 kcal</p>
+                <div class="phone-bar"><div class="phone-bar-fill" style="width: 78%"></div></div>
+              </div>
+              <div class="phone-card" style="flex: 0.6">
+                <h3>Coach insight</h3>
+                <p>Recovery looks solid — push intensity today.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <p class="section-label">What you get</p>
+      <div class="features">
+        <article class="feature">
+          <div class="feature-num">01</div>
+          <h3>Personalized plans</h3>
+          <p>Workouts and nutrition tailored to your goals, schedule, and equipment.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-num">02</div>
+          <h3>One calm dashboard</h3>
+          <p>Training, food, and progress in a single dark, distraction-free space.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-num">03</div>
+          <h3>Coach that adapts</h3>
+          <p>Guidance that evolves as you log workouts, meals, and recovery.</p>
+        </article>
+      </div>
+
+      <section class="band">
+        <div>
+          <h2>Designed like the icon.<br />Built for daily use.</h2>
+          <p>
+            Monochrome on the surface — white type on deep black with soft silver gradients.
+            No clutter. Just the essentials.
+          </p>
+        </div>
+        <div class="stat-grid">
+          <div class="stat">
+            <strong>12</strong>
+            <span>Week programs</span>
+          </div>
+          <div class="stat">
+            <strong>AI</strong>
+            <span>Meal guidance</span>
+          </div>
+          <div class="stat">
+            <strong>24/7</strong>
+            <span>Coach chat</span>
+          </div>
+          <div class="stat">
+            <strong>1</strong>
+            <span>App to run it</span>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <span>© TYL · Mockup only</span>
+        <span>Black · white · gradient</span>
+      </footer>
+    </div>
+  </body>
+</html>

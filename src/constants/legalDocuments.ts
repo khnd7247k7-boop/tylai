@@ -1,8 +1,22 @@
 // Legal Documents Content
 // These files are embedded as strings for display in the app
+//
+// Enterprise policies (Privacy, Terms, Fitness & AI disclaimers):
+//   src/constants/legalPolicies.ts
+//   src/constants/legalMeta.ts
+//   src/constants/complianceDisclosures.ts (short in-app summaries)
 
-export const NOTICE_CONTENT = `TYL AI App - Third-Party Notices and Licenses
-==============================================
+import { COPYRIGHT_APACHE_LINE, COMPANY_LEGAL_NAME, COPYRIGHT_NOTICE } from './copyright';
+
+export {
+  PRIVACY_POLICY_CONTENT,
+  TERMS_OF_SERVICE_CONTENT,
+  FITNESS_DISCLAIMER_CONTENT,
+  AI_DISCLAIMER_CONTENT,
+} from './legalPolicies';
+
+export const NOTICE_CONTENT = `TYL — Third-Party Notices and Licenses
+======================================
 
 This application includes software developed by various open-source projects
 and uses proprietary services. This file contains the required attributions
@@ -10,8 +24,10 @@ and license information.
 
 Copyright Notice
 ----------------
-Copyright (c) 2024 TYL AI App
+${COPYRIGHT_APACHE_LINE}
 Licensed under the Apache License, Version 2.0 (see LICENSE.txt)
+
+${COMPANY_LEGAL_NAME} owns the TYL mobile application, apparel line, branding, and all other products and content developed under the Transform Your Life (TYL) brand.
 
 Apache License 2.0
 ------------------
@@ -192,7 +208,7 @@ For questions about licensing or third-party software, please contact:
 For the complete Apache License 2.0 text, see LICENSE.txt
 For TypeScript third-party notices, see ThirdPartyNoticeText.txt
 
-Last Updated: 2024`;
+Last Updated: 2026`;
 
 export const LICENSE_CONTENT = `Apache License
 
@@ -320,7 +336,7 @@ Most dependencies use the MIT License, which is very permissive:
 - Platform APIs (HealthKit, Google Fit) are covered by platform licenses
 
 ## Copyright
-- **Your code**: You own the copyright (or should verify ownership)
+- **TYL app, apparel, and brand**: ${COMPANY_LEGAL_NAME} (${COPYRIGHT_APACHE_LINE}. All rights reserved.)
 - **Third-party code**: Copyrighted by respective authors (listed in NOTICE)
 - **TypeScript**: Includes third-party code (see ThirdPartyNoticeText.txt)
 
@@ -338,57 +354,63 @@ Most dependencies use the MIT License, which is very permissive:
    - Show in Settings → About or Legal section
    - Or link from app store listings
 
-2. **Privacy Policy**
-   - Required for App Store/Play Store
-   - Must disclose health data usage
-   - Must comply with HIPAA/GDPR if applicable
+2. **Privacy Policy** ✅
+   - Published in-app (Settings → Legal) and at https://tyl-ai.com/legal.html#privacy-policy
+   - Covers data collection, third-party services, user rights, and health-data use
 
-3. **Terms of Service**
-   - Recommended for commercial apps
-   - Should cover health data usage
+3. **Terms of Service** ✅
+   - Published in-app and at https://tyl-ai.com/legal.html#terms-of-service
+   - Covers eligibility, subscriptions, acceptable use, and Utah governing law
 
-4. **App Store Compliance**
-   - **iOS**: HealthKit usage requires privacy policy
-   - **Android**: Health data access requires privacy policy
-   - Both require clear permission descriptions
+4. **Fitness & AI Disclaimers** ✅
+   - Published in-app and at https://tyl-ai.com/legal.html
+   - Required for App Store/Play Store health and AI feature disclosures
 
-5. **Service Agreements**
-   - Ensure compliance with:
+5. **App Store Compliance**
+   - **iOS**: HealthKit usage requires privacy policy (published)
+   - **Android**: Health data access requires privacy policy (published)
+   - Both require clear permission descriptions in app metadata
+
+6. **Service Agreements**
+   - Ensure ongoing compliance with:
      - Firebase Terms of Service
      - Expo Terms of Service
      - Apple Developer Program License
      - Google Play Developer Policy
+     - Stripe, RevenueCat, Nutritionix, and AI provider terms as integrated
 
 ## Health Data Compliance
 
 ### Legal Requirements
-- **HIPAA** (US): If storing/transmitting health data, may need compliance
-- **GDPR** (EU): Requires explicit consent, data portability, right to deletion
-- **CCPA** (California): Similar to GDPR for California residents
+- **HIPAA** (US): TYL is a consumer wellness app, not a covered healthcare provider; consult counsel if offering B2B clinical integrations
+- **GDPR** (EU): Privacy Policy describes consent, portability, and deletion rights
+- **CCPA** (California): Privacy Policy states we do not sell personal information
 
 ### Best Practices
-- ✅ Request explicit permission (you do this)
-- ✅ Store data locally (you do this)
-- ✅ Allow users to disable sync (you do this)
-- ⚠️ Add privacy policy (recommended)
-- ⚠️ Add data deletion option (recommended)
+- ✅ Request explicit permission (HealthKit / Health Connect)
+- ✅ Use connected health data only to personalize in-app experience
+- ✅ Privacy Policy published
+- ✅ In-app data deletion tools where available
+- ✅ Allow users to revoke health permissions via device settings
 
 ## Distribution Checklist
 
 ### Before Publishing
-- [ ] Review NOTICE file
-- [ ] Create Privacy Policy
-- [ ] Create Terms of Service (if commercial)
+- [x] Review NOTICE file
+- [x] Create Privacy Policy
+- [x] Create Terms of Service
+- [x] Create Fitness and AI disclaimers
 - [ ] Verify all licenses are compatible
 - [ ] Check service agreements compliance
 - [ ] Test health data permissions flow
-- [ ] Document health data usage
+- [x] Document health data usage
 
 ### App Store Requirements
-- [ ] Privacy Policy URL
-- [ ] Health data usage description
+- [x] Privacy Policy URL (https://tyl-ai.com/legal.html#privacy-policy)
+- [x] Terms of Service URL (https://tyl-ai.com/legal.html#terms-of-service)
+- [ ] Health data usage description in App Store Connect / Play Console
 - [ ] Permission request descriptions
-- [ ] Data collection disclosure
+- [ ] Data collection disclosure (nutrition labels / Data safety form)
 
 ## Summary
 
@@ -397,12 +419,12 @@ Most dependencies use the MIT License, which is very permissive:
 - ✅ No patent concerns identified
 - ✅ Using official platform APIs (covered by platform licenses)
 - ✅ NOTICE file created with all attributions
+- ✅ Enterprise-grade Privacy Policy, Terms, and disclaimers published
 
-**Action Items:**
-- 📝 Create Privacy Policy (required for app stores)
-- 📝 Consider Terms of Service
-- 📝 Review service agreements
-- 📝 Ensure health data compliance
+**Remaining Action Items:**
+- 📝 Complete App Store / Play Console privacy questionnaires
+- 📝 Review service agreements before each new partner integration
+- 📝 Consult qualified counsel before regulated or clinical use cases
 
 **No Blockers:**
 - No licensing issues that prevent distribution
@@ -411,8 +433,8 @@ Most dependencies use the MIT License, which is very permissive:
 
 ---
 
-Last Updated: 2024
-For questions, refer to NOTICE file or contact legal counsel.`;
+Last Updated: July 2026
+For questions, contact ${COMPANY_LEGAL_NAME} at travis@tyl-ai.com or refer to NOTICE and legalPolicies.ts.`;
 
 // For ThirdPartyNoticeText, we'll use a reference since it's very long
 export const THIRD_PARTY_CONTENT = `Third Party Notices - TypeScript

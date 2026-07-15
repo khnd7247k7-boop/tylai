@@ -74,8 +74,7 @@ export default function BarcodeScanner({
         'Search by food name or enter macros manually from the package label.',
       ],
       type: 'warning',
-      durationMs: 7000,
-      actions: [{ label: 'OK' }],
+      durationMs: 4500,
     });
   };
 
@@ -91,8 +90,7 @@ export default function BarcodeScanner({
         'Could not look up this barcode. Check your connection and try again, or add the food manually.',
       ],
       type: 'error',
-      durationMs: 6000,
-      actions: [{ label: 'OK' }],
+      durationMs: 4500,
     });
   };
 

@@ -28,7 +28,10 @@ import {
   PRIMARY_GOAL_LABELS,
   ONBOARDING_TOTAL_STEPS,
   createEmptyCoachingProfile,
+  isNutritionPreferencesAnswered,
+  formatNutritionPreferencesSummary,
 } from '../../types/coachingProfile';
+import InitialNutritionSetupForm from './InitialNutritionSetupForm';
 import {
   loadCoachingProfile,
   saveCoachingProfileDraft,
@@ -41,6 +44,10 @@ import {
   normalizeNutritionBodyDraft,
 } from '../../utils/nutritionTargets';
 import { parseAgeYears, parseHeightToCm, parseWeightToKg } from '../../utils/bodyMetricsParse';
+import { getOnboardingContinueIssues, getCoachingProfileCompletionIssues } from '../../utils/onboardingContinueHints';
+import { ContinueRequirementHint } from './nutritionQuestionnaireUi';
+import TrainingScheduleFields from '../TrainingScheduleFields';
+import { scheduleSummaryLine, isTrainingScheduleConfigured } from '../../utils/trainingSchedule';
 
 type Props = {
   visible: boolean;
@@ -64,6 +71,9 @@ function OptionChip({
       style={[styles.chip, selected && styles.chipSelected]}
       onPress={onPress}
       activeOpacity={0.8}
+      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
     >
       <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
     </TouchableOpacity>
@@ -152,6 +162,16 @@ export default function OnboardingWizard({
 
   const finish = useCallback(async () => {
     if (finishing) return;
+
+    const completionIssues = getCoachingProfileCompletionIssues(profile);
+    if (completionIssues.length > 0) {
+      Alert.alert(
+        'Almost there',
+        `Complete these before we build your plan:\n\n${completionIssues.map((i) => `• ${i}`).join('\n')}`
+      );
+      return;
+    }
+
     setFinishing(true);
     try {
       if (isEditMode) {
@@ -182,6 +202,8 @@ export default function OnboardingWizard({
     });
   }, [profile]);
 
+  const continueIssues = useMemo(() => getOnboardingContinueIssues(step, profile), [step, profile]);
+
   if (!visible) return null;
 
   const progress = ((step + 1) / ONBOARDING_TOTAL_STEPS) * 100;
@@ -199,7 +221,9 @@ export default function OnboardingWizard({
         return (
           profile.scheduleProfile.daysPerWeek !== null &&
           profile.scheduleProfile.sessionLengthMinutes !== null &&
-          profile.scheduleProfile.bestTimeOfDay !== null
+          profile.scheduleProfile.bestTimeOfDay !== null &&
+          profile.scheduleProfile.scheduleMode !== null &&
+          isTrainingScheduleConfigured(profile.scheduleProfile)
         );
       case 4:
         return profile.equipmentProfile.access !== null;
@@ -218,6 +242,8 @@ export default function OnboardingWizard({
       case 9:
         return normalizeNutritionBodyDraft(profile.nutritionBodyProfile) !== null;
       case 10:
+        return isNutritionPreferencesAnswered(profile.nutritionPreferencesProfile);
+      case 11:
         return true;
       default:
         return false;
@@ -233,6 +259,7 @@ export default function OnboardingWizard({
               title="What are you working toward right now?"
               subtitle="Pick the goal that matters most — we'll personalize everything around it."
             />
+            <Text style={styles.requiredNote}>Required — choose one option below.</Text>
             <View style={styles.chipGrid}>
               {(Object.keys(PRIMARY_GOAL_LABELS) as PrimaryGoal[]).map((g) => (
                 <OptionChip
@@ -331,6 +358,7 @@ export default function OnboardingWizard({
               title="Where are you starting from?"
               subtitle="Be honest — the best plan is one matched to your real level."
             />
+            <Text style={styles.requiredNote}>Required — choose one experience level.</Text>
             <View style={styles.chipGrid}>
               {(
                 [
@@ -361,24 +389,15 @@ export default function OnboardingWizard({
           <>
             <CoachPrompt
               title="Let's talk about your real schedule."
-              subtitle="Consistency beats perfection — I need the week you can actually follow."
+              subtitle="Consistency beats perfection — pick the days and style you can actually follow."
             />
-            <Text style={styles.fieldLabel}>Days per week you can train</Text>
-            <View style={styles.chipRow}>
-              {[2, 3, 4, 5, 6].map((d) => (
-                <OptionChip
-                  key={d}
-                  label={String(d)}
-                  selected={profile.scheduleProfile.daysPerWeek === d}
-                  onPress={() =>
-                    setProfile((p) => ({
-                      ...p,
-                      scheduleProfile: { ...p.scheduleProfile, daysPerWeek: d },
-                    }))
-                  }
-                />
-              ))}
-            </View>
+            <Text style={styles.requiredNote}>Required — days, schedule type, session length, and best time.</Text>
+            <TrainingScheduleFields
+              schedule={profile.scheduleProfile}
+              onChange={(scheduleProfile) =>
+                setProfile((p) => ({ ...p, scheduleProfile }))
+              }
+            />
             <Text style={styles.fieldLabel}>Session length (minutes)</Text>
             <View style={styles.chipRow}>
               {[20, 30, 45, 60, 75].map((m) => (
@@ -425,6 +444,7 @@ export default function OnboardingWizard({
         return (
           <>
             <CoachPrompt title="What equipment can you use?" />
+            <Text style={styles.requiredNote}>Required — choose one option.</Text>
             <View style={styles.chipGrid}>
               {(
                 [
@@ -516,6 +536,7 @@ export default function OnboardingWizard({
         return (
           <>
             <CoachPrompt title="How's recovery looking outside the gym?" />
+            <Text style={styles.requiredNote}>Required — answer all three questions below.</Text>
             <Text style={styles.fieldLabel}>Sleep quality</Text>
             <View style={styles.chipRow}>
               {(['low', 'medium', 'high'] as RecoveryLevel[]).map((v) => (
@@ -581,6 +602,7 @@ export default function OnboardingWizard({
         return (
           <>
             <CoachPrompt title="Any injuries or movements to avoid?" />
+            <Text style={styles.requiredNote}>Required — tap No injuries or Yes, I have constraints.</Text>
             <View style={styles.chipRow}>
               <OptionChip
                 label="No injuries"
@@ -646,6 +668,7 @@ export default function OnboardingWizard({
               title="On a realistic week, how hard should we push?"
               subtitle="This sets your Challenge Dial — we can adjust it anytime."
             />
+            <Text style={styles.requiredNote}>Required — choose one challenge level.</Text>
             <View style={styles.chipGrid}>
               {(
                 [
@@ -686,6 +709,7 @@ export default function OnboardingWizard({
               title="Nutrition basics"
               subtitle="We use this to estimate your metabolism and set a starting calorie target. Your coach adapts as you log food and track progress."
             />
+            <Text style={styles.requiredNote}>Required — sex, age, height, and weight below.</Text>
             <Text style={styles.fieldLabel}>Biological sex (for BMR estimate)</Text>
             <View style={styles.chipRow}>
               {(
@@ -834,6 +858,23 @@ export default function OnboardingWizard({
         return (
           <>
             <CoachPrompt
+              title="Nutrition setup"
+              subtitle="About 30–60 seconds — allergies, goals, and how you want nutrition coaching."
+            />
+            <Text style={styles.requiredNote}>Required — answer every question in this section.</Text>
+            <InitialNutritionSetupForm
+              value={profile.nutritionPreferencesProfile}
+              onChange={(nutritionPreferencesProfile) =>
+                setProfile((p) => ({ ...p, nutritionPreferencesProfile }))
+              }
+            />
+          </>
+        );
+
+      case 11:
+        return (
+          <>
+            <CoachPrompt
               title="Does this look right?"
               subtitle="This is the foundation for your training plan."
             />
@@ -846,9 +887,7 @@ export default function OnboardingWizard({
               </Text>
               <Text style={styles.summaryLine}>
                 <Text style={styles.summaryLabel}>Schedule: </Text>
-                {profile.scheduleProfile.daysPerWeek ?? '—'} days ×{' '}
-                {profile.scheduleProfile.sessionLengthMinutes ?? '—'} min (
-                {profile.scheduleProfile.bestTimeOfDay ?? '—'})
+                {scheduleSummaryLine(profile.scheduleProfile)}
               </Text>
               <Text style={styles.summaryLine}>
                 <Text style={styles.summaryLabel}>Experience: </Text>
@@ -869,6 +908,11 @@ export default function OnboardingWizard({
                   protein
                 </Text>
               ) : null}
+              {formatNutritionPreferencesSummary(profile.nutritionPreferencesProfile).map((line) => (
+                <Text key={line} style={styles.summaryLine}>
+                  {line}
+                </Text>
+              ))}
               {profile.constraintProfile.hasInjuries ? (
                 <Text style={styles.summaryLine}>
                   <Text style={styles.summaryLabel}>Constraints: </Text>
@@ -893,8 +937,14 @@ export default function OnboardingWizard({
   };
 
   return (
-    <View style={styles.overlay}>
+    <View style={styles.overlay} pointerEvents="auto">
       <SafeAreaView style={styles.safe}>
+        {!hydrated ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator size="large" color={AppTheme.accent} />
+            <Text style={styles.loadingText}>Loading your answers…</Text>
+          </View>
+        ) : (
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -919,6 +969,7 @@ export default function OnboardingWizard({
           </ScrollView>
 
           <View style={styles.footer}>
+            {!canContinue ? <ContinueRequirementHint issues={continueIssues} /> : null}
             <View style={styles.footerRow}>
               {step > 0 ? (
                 <TouchableOpacity style={styles.backBtn} onPress={goBack}>
@@ -962,6 +1013,7 @@ export default function OnboardingWizard({
             ) : null}
           </View>
         </KeyboardAvoidingView>
+        )}
       </SafeAreaView>
     </View>
   );
@@ -973,6 +1025,17 @@ const styles = StyleSheet.create({
     zIndex: 200010,
     elevation: 200010,
     backgroundColor: AppTheme.bgScreen,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    color: AppTheme.textMuted,
+    fontSize: 15,
+    fontWeight: '600',
   },
   safe: { flex: 1 },
   flex: { flex: 1 },
@@ -1030,6 +1093,14 @@ const styles = StyleSheet.create({
     color: AppTheme.textMuted,
     fontSize: 15,
     lineHeight: 22,
+  },
+  requiredNote: {
+    color: AppTheme.textFaint,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: -12,
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   chipGrid: {
     flexDirection: 'row',

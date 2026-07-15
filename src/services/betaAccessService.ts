@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { Alert, Linking } from 'react-native';
 import { auth } from '../../firebaseConfig';
 
 function readEnvString(key: string): string {
@@ -16,6 +17,13 @@ export function getBetaAccessApiUrl(): string {
   return (
     readEnvString('EXPO_PUBLIC_BETA_ACCESS_API_URL') ||
     'https://tyl-ai.com/api/beta-access'
+  );
+}
+
+export function getBillingPortalApiUrl(): string {
+  return (
+    readEnvString('EXPO_PUBLIC_BILLING_PORTAL_API_URL') ||
+    'https://tyl-ai.com/api/billing-portal'
   );
 }
 
@@ -81,4 +89,45 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
     console.warn('[betaAccess] status check error', error);
     return empty;
   }
+}
+
+export async function openStripeBillingPortal(): Promise<boolean> {
+  const user = auth?.currentUser;
+  if (!user?.email || auth?._isMock) {
+    Alert.alert('Sign in required', 'Sign in with the same email you used at Stripe checkout.');
+    return false;
+  }
+
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch(getBillingPortalApiUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+
+    if (!res.ok || !data.url) {
+      Alert.alert(
+        'Billing unavailable',
+        data.error ||
+          'We could not open billing management. Make sure you subscribed with this email, or contact support.'
+      );
+      return false;
+    }
+
+    await Linking.openURL(data.url);
+    return true;
+  } catch (error) {
+    console.warn('[billing] portal open failed', error);
+    Alert.alert('Billing unavailable', 'Could not open the billing page. Check your connection and try again.');
+    return false;
+  }
+}
+
+export function formatStripePlanLabel(plan: string | null): string | null {
+  if (plan === 'yearly') return 'Yearly';
+  if (plan === 'monthly') return 'Monthly';
+  return null;
 }

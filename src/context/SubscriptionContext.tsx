@@ -15,6 +15,11 @@ import {
   saveSubscriptionTier,
   setPremiumAccessSync,
 } from '../utils/subscription';
+import {
+  fetchStripeSubscriptionStatus,
+  openStripeBillingPortal,
+  type StripeSubscriptionStatus,
+} from '../services/betaAccessService';
 
 type SubscriptionContextValue = {
   tier: SubscriptionTier;
@@ -29,6 +34,8 @@ type SubscriptionContextValue = {
   /** Dev-only: simulate premium after purchase flow is wired. */
   setDevPremiumOverride: (enabled: boolean) => Promise<void>;
   restorePurchases: () => Promise<void>;
+  stripeStatus: StripeSubscriptionStatus | null;
+  manageBilling: () => Promise<boolean>;
 };
 
 const SubscriptionContext = createContext<SubscriptionContextValue | null>(null);
@@ -37,11 +44,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const [tier, setTier] = useState<SubscriptionTier>('basic');
   const [isLoading, setIsLoading] = useState(true);
   const [upgradeVisible, setUpgradeVisible] = useState(false);
+  const [stripeStatus, setStripeStatus] = useState<StripeSubscriptionStatus | null>(null);
 
   const refreshTier = useCallback(async () => {
     const resolved = await resolveSubscriptionTier();
     setTier(resolved);
     setPremiumAccessSync(isPremiumTier(resolved));
+    const status = await fetchStripeSubscriptionStatus();
+    setStripeStatus(status);
   }, []);
 
   useEffect(() => {
@@ -89,9 +99,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const restorePurchases = useCallback(async () => {
-    // Placeholder until RevenueCat / StoreKit is integrated.
     await refreshTier();
   }, [refreshTier]);
+
+  const manageBilling = useCallback(async () => {
+    return openStripeBillingPortal();
+  }, []);
 
   const value = useMemo<SubscriptionContextValue>(
     () => ({
@@ -105,6 +118,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       dismissUpgrade,
       setDevPremiumOverride,
       restorePurchases,
+      stripeStatus,
+      manageBilling,
     }),
     [
       tier,
@@ -115,6 +130,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       dismissUpgrade,
       setDevPremiumOverride,
       restorePurchases,
+      stripeStatus,
+      manageBilling,
     ]
   );
 

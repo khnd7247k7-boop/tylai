@@ -7,11 +7,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#000000"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -23,8 +23,10 @@
       "infoPlist": {
         "NSHealthShareUsageDescription": "We read heart rate, sleep, active energy, weight, and cardio fitness from Apple Health to personalize recovery-oriented coaching, suggest training intensity, and show your trends in the app.",
         "NSHealthUpdateUsageDescription": "If you choose to save activity, we can write selected workouts or metrics to Apple Health so your Activity rings and history stay up to date. We only write data you explicitly allow.",
-        "NSCameraUsageDescription": "TYLAI uses the camera to scan barcodes for meal tracking.",
+        "NSCameraUsageDescription": "TYLAI uses the camera to scan barcodes for meal tracking and to capture weekly progress photos.",
         "NSMicrophoneUsageDescription": "TYLAI uses the microphone when recording video with the camera.",
+        "NSPhotoLibraryAddUsageDescription": "TYLAI can save your weekly progress photos to your camera roll when you turn on that option.",
+        "NSPhotoLibraryUsageDescription": "TYLAI needs photo library access to save progress photos when you enable camera roll backup.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -32,10 +34,12 @@
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#000000"
       },
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -43,7 +47,15 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow TYLAI to access your photos.",
+          "savePhotosPermission": "Allow TYLAI to save progress photos to your camera roll.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
     ],
     "extra": {
       "eas": {

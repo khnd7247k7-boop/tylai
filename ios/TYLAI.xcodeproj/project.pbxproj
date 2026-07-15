@@ -21,6 +21,8 @@
 		C40000322E0307B50044C1D9 /* TestFlightBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = C40000312E0307B50044C1D9 /* TestFlightBridge.m */; };
 		C40000422E0307B60044C1D9 /* BodyMassBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000412E0307B60044C1D9 /* BodyMassBridge.swift */; };
 		C40000522E0307B60044C1D9 /* BodyMassBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = C40000512E0307B60044C1D9 /* BodyMassBridge.m */; };
+		C40000622E0307B70044C1D9 /* HealthKitBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000612E0307B70044C1D9 /* HealthKitBridge.swift */; };
+		C40000722E0307B70044C1D9 /* HealthKitBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = C40000712E0307B70044C1D9 /* HealthKitBridge.m */; };
 		D330347416E1E3B04D39CC1C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CB061D552DA8A18C0E152C /* ExpoModulesProvider.swift */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
@@ -45,6 +47,8 @@
 		C40000312E0307B50044C1D9 /* TestFlightBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = TestFlightBridge.m; path = TYLAI/TestFlightBridge.m; sourceTree = "<group>"; };
 		C40000412E0307B60044C1D9 /* BodyMassBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BodyMassBridge.swift; path = TYLAI/BodyMassBridge.swift; sourceTree = "<group>"; };
 		C40000512E0307B60044C1D9 /* BodyMassBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = BodyMassBridge.m; path = TYLAI/BodyMassBridge.m; sourceTree = "<group>"; };
+		C40000612E0307B70044C1D9 /* HealthKitBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthKitBridge.swift; path = TYLAI/HealthKitBridge.swift; sourceTree = "<group>"; };
+		C40000712E0307B70044C1D9 /* HealthKitBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = HealthKitBridge.m; path = TYLAI/HealthKitBridge.m; sourceTree = "<group>"; };
 		DD96D7912E547BCF645D0FFB /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = TYLAI/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = TYLAI/AppDelegate.swift; sourceTree = "<group>"; };
@@ -76,6 +80,8 @@
 				C40000312E0307B50044C1D9 /* TestFlightBridge.m */,
 				C40000412E0307B60044C1D9 /* BodyMassBridge.swift */,
 				C40000512E0307B60044C1D9 /* BodyMassBridge.m */,
+				C40000612E0307B70044C1D9 /* HealthKitBridge.swift */,
+				C40000712E0307B70044C1D9 /* HealthKitBridge.m */,
 				F11748442D0722820044C1D9 /* TYLAI-Bridging-Header.h */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
@@ -328,6 +334,7 @@
 				"${PODS_CONFIGURATION_BUILD_DIR}/EXConstants/ExpoConstants_privacy.bundle",
 				"${PODS_CONFIGURATION_BUILD_DIR}/EXNotifications/ExpoNotifications_privacy.bundle",
 				"${PODS_CONFIGURATION_BUILD_DIR}/ExpoFileSystem/ExpoFileSystem_privacy.bundle",
+				"${PODS_CONFIGURATION_BUILD_DIR}/ExpoMediaLibrary/ExpoMediaLibrary_privacy.bundle",
 				"${PODS_CONFIGURATION_BUILD_DIR}/RCT-Folly/RCT-Folly_privacy.bundle",
 				"${PODS_CONFIGURATION_BUILD_DIR}/RNCAsyncStorage/RNCAsyncStorage_resources.bundle",
 				"${PODS_CONFIGURATION_BUILD_DIR}/RNSVG/RNSVGFilters.bundle",
@@ -343,6 +350,7 @@
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ExpoConstants_privacy.bundle",
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ExpoNotifications_privacy.bundle",
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ExpoFileSystem_privacy.bundle",
+				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ExpoMediaLibrary_privacy.bundle",
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/RCT-Folly_privacy.bundle",
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/RNCAsyncStorage_resources.bundle",
 				"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/RNSVGFilters.bundle",
@@ -372,6 +380,8 @@
 				C40000322E0307B50044C1D9 /* TestFlightBridge.m in Sources */,
 				C40000422E0307B60044C1D9 /* BodyMassBridge.swift in Sources */,
 				C40000522E0307B60044C1D9 /* BodyMassBridge.m in Sources */,
+				C40000622E0307B70044C1D9 /* HealthKitBridge.swift in Sources */,
+				C40000722E0307B70044C1D9 /* HealthKitBridge.m in Sources */,
 				D330347416E1E3B04D39CC1C /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

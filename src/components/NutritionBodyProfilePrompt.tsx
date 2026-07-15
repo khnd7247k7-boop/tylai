@@ -286,7 +286,18 @@ export default function NutritionBodyProfilePrompt({ visible, onComplete, onDism
               </ScrollView>
             )}
 
-            <View style={styles.actions}>
+            <View style={styles.actionsWrap}>
+              {!saving && validationIssues.length > 0 ? (
+                <View style={styles.actionsHint}>
+                  <Text style={styles.validationTitle}>To save, complete:</Text>
+                  {validationIssues.map((issue) => (
+                    <Text key={issue} style={styles.validationLine}>
+                      • {issue}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+              <View style={styles.actions}>
               <TouchableOpacity
                 style={styles.secondaryBtn}
                 onPress={() => handleDismiss().catch(console.error)}
@@ -295,9 +306,12 @@ export default function NutritionBodyProfilePrompt({ visible, onComplete, onDism
                 <Text style={styles.secondaryBtnText}>Not now</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.primaryBtn, saving && styles.primaryBtnDisabled]}
+                style={[
+                  styles.primaryBtn,
+                  (saving || validationIssues.length > 0) && styles.primaryBtnDisabled,
+                ]}
                 onPress={() => handleSave().catch(console.error)}
-                disabled={saving}
+                disabled={saving || validationIssues.length > 0}
               >
                 {saving ? (
                   <ActivityIndicator color="#111" />
@@ -305,6 +319,7 @@ export default function NutritionBodyProfilePrompt({ visible, onComplete, onDism
                   <Text style={styles.primaryBtnText}>Save & continue</Text>
                 )}
               </TouchableOpacity>
+              </View>
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -345,7 +360,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   loader: { marginVertical: 24 },
-  scroll: { maxHeight: 420 },
+  scroll: { flexGrow: 0 },
   scrollContent: { paddingBottom: 8 },
   fieldLabel: {
     color: AppTheme.textMuted,
@@ -420,10 +435,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  actionsWrap: {
+    marginTop: 16,
+    gap: 10,
+  },
+  actionsHint: {
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 180, 77, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 180, 77, 0.35)',
+  },
   actions: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 16,
   },
   secondaryBtn: {
     flex: 1,

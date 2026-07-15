@@ -2,6 +2,12 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import type { WarmupLogItem } from '../utils/workoutWarmupLogging';
+import {
+  formatStretchProtocolLabel,
+  getStretchProtocol,
+  isStretchLoggingExercise,
+} from '../utils/stretchLogging';
+import { AppTheme } from '../theme/appVisualTheme';
 
 type WarmupBlockSessionProps = {
   items: WarmupLogItem[];
@@ -11,51 +17,103 @@ type WarmupBlockSessionProps = {
   onCompleteAll: () => void;
 };
 
+function itemHint(item: WarmupLogItem): string | null {
+  const protocol = getStretchProtocol({
+    name: item.name,
+    sets: 1,
+    reps: item.reps,
+    durationSeconds: item.durationSeconds,
+    category: 'flexibility',
+  });
+  if (protocol) return formatStretchProtocolLabel(protocol);
+  if (item.repNote) return item.repNote;
+  if (item.durationSeconds != null && item.durationSeconds > 0) {
+    return `~${Math.round(item.durationSeconds / 60) || 1} min · slow and controlled`;
+  }
+  if (item.reps != null && item.reps > 0) return `${item.reps} controlled reps`;
+  return null;
+}
+
 export default function WarmupBlockSession({
   items,
   blockComplete,
   blockLabel = 'Warm-up',
   onToggleItem,
   onCompleteAll,
-}: WarmupBlockSessionProps) {
+}: WarmupBlockSessionProps): React.ReactElement {
   const doneCount = items.filter((i) => i.completed).length;
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.lead}>
-        Go through each movement at an easy pace. Tap to check off when done.
+        Prep movement — holds and easy drills, not loaded sets. Mark each one complete when
+        finished.
       </Text>
       <Text style={styles.progress}>
         {doneCount} of {items.length} movements
         {blockComplete ? ' · complete' : ''}
       </Text>
 
-      {items.map((item) => (
-        <Pressable
-          key={item.id}
-          style={[styles.row, item.completed && styles.rowDone]}
-          onPress={() => {
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onToggleItem(item.id);
-          }}
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: item.completed }}
-        >
-          <View style={[styles.check, item.completed && styles.checkDone]}>
-            <Text style={styles.checkMark}>{item.completed ? '✓' : ''}</Text>
-          </View>
-          <View style={styles.rowText}>
-            <Text style={[styles.itemName, item.completed && styles.itemNameDone]}>{item.name}</Text>
-            {item.repNote ? (
-              <Text style={styles.itemHint}>{item.repNote}</Text>
-            ) : item.durationSeconds != null && item.durationSeconds > 0 ? (
-              <Text style={styles.itemHint}>
-                ~{Math.round(item.durationSeconds / 60) || 1} min · slow and controlled
+      {items.map((item) => {
+        const stretch = isStretchLoggingExercise({
+          name: item.name,
+          reps: item.reps,
+          durationSeconds: item.durationSeconds,
+          category: 'flexibility',
+        });
+        const hint = itemHint(item);
+
+        return (
+          <View
+            key={item.id}
+            style={[
+              styles.row,
+              stretch && styles.rowStretch,
+              item.completed && styles.rowDone,
+            ]}
+          >
+            <View style={styles.rowText}>
+              {stretch ? (
+                <View style={styles.stretchBadge}>
+                  <Text style={styles.stretchBadgeText}>Stretch</Text>
+                </View>
+              ) : null}
+              <Text style={[styles.itemName, item.completed && styles.itemNameDone]}>
+                {item.name}
               </Text>
-            ) : null}
+              {hint ? <Text style={styles.itemHint}>{hint}</Text> : null}
+            </View>
+
+            {!item.completed ? (
+              <Pressable
+                style={[styles.completeChip, stretch && styles.completeChipStretch]}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  onToggleItem(item.id);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Complete ${item.name}`}
+              >
+                <Text style={[styles.completeChipText, stretch && styles.completeChipTextStretch]}>
+                  Complete
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={styles.doneChip}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onToggleItem(item.id);
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: true }}
+              >
+                <Text style={styles.doneChipText}>✓</Text>
+              </Pressable>
+            )}
           </View>
-        </Pressable>
-      ))}
+        );
+      })}
 
       {!blockComplete && (
         <Pressable
@@ -90,9 +148,9 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 12,
     marginBottom: 8,
     borderRadius: 12,
@@ -100,28 +158,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
+  rowStretch: {
+    backgroundColor: 'rgba(0,255,136,0.06)',
+    borderColor: 'rgba(0,255,136,0.22)',
+  },
   rowDone: {
     borderColor: 'rgba(0,255,136,0.35)',
     backgroundColor: 'rgba(0,255,136,0.08)',
   },
-  check: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#555',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
+  stretchBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,255,136,0.14)',
+    marginBottom: 6,
   },
-  checkDone: {
-    borderColor: '#00ff88',
-    backgroundColor: '#00ff88',
-  },
-  checkMark: {
-    color: '#000',
-    fontSize: 14,
-    fontWeight: '800',
+  stretchBadgeText: {
+    color: AppTheme.accent,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   rowText: {
     flex: 1,
@@ -138,6 +196,41 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 13,
     marginTop: 4,
+  },
+  completeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: AppTheme.bgElevated,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  completeChipStretch: {
+    backgroundColor: AppTheme.accent,
+    borderColor: AppTheme.accent,
+  },
+  completeChipText: {
+    color: AppTheme.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  completeChipTextStretch: {
+    color: AppTheme.accentDark,
+  },
+  doneChip: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,255,136,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,255,136,0.45)',
+  },
+  doneChipText: {
+    color: AppTheme.accent,
+    fontSize: 16,
+    fontWeight: '800',
   },
   completeAllBtn: {
     marginTop: 8,

@@ -63,13 +63,13 @@ export default function WorkoutOptionsScreen({
   }) => {
     return (
       <View style={styles.cardWrapper}>
-        <View style={styles.card}>
-          <ScrollView
-            style={styles.cardContent}
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={true}
-            nestedScrollEnabled={true}
-          >
+        <ScrollView
+          style={styles.cardContent}
+          contentContainerStyle={styles.cardContentInner}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.card}>
             <View style={styles.header}>
               <Text style={styles.workoutName}>{workout.name}</Text>
               <Text style={styles.workoutInfo}>
@@ -101,8 +101,20 @@ export default function WorkoutOptionsScreen({
                 </View>
               ))}
             </View>
-          </ScrollView>
-        </View>
+
+            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+              <Text style={styles.saveButtonText}>
+                {isInitialSetup ? 'Save Plan & Finish Setup' : 'Save Plan'}
+              </Text>
+            </TouchableOpacity>
+
+            {onStartWorkout ? (
+              <TouchableOpacity style={[styles.startButton, { marginTop: 10 }]} onPress={handleStart}>
+                <Text style={styles.startButtonText}>Save & Start Workout</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </ScrollView>
       </View>
     );
   };
@@ -166,16 +178,6 @@ export default function WorkoutOptionsScreen({
         <Text style={styles.counter}>
           {currentIndex + 1} of {workoutOptions.length}
         </Text>
-
-        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-          <Text style={styles.saveButtonText}>Save Plan</Text>
-        </TouchableOpacity>
-
-        {onStartWorkout ? (
-          <TouchableOpacity style={styles.startButton} onPress={handleStart}>
-            <Text style={styles.startButtonText}>Save & Start Workout</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -228,24 +230,25 @@ const styles = StyleSheet.create({
   },
   carouselContainer: {
     flex: 1,
-    paddingVertical: 20,
   },
   cardWrapper: {
     width: SCREEN_WIDTH,
-    justifyContent: 'center',
-    alignItems: 'center',
+    flex: 1,
+  },
+  cardContent: {
+    flex: 1,
+  },
+  cardContentInner: {
+    paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
+    paddingVertical: 16,
+    paddingBottom: 28,
   },
   card: {
     width: CARD_WIDTH,
-    height: '85%',
     backgroundColor: AppTheme.card,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: AppTheme.border,
-    overflow: 'hidden',
-  },
-  cardContent: {
-    flex: 1,
     padding: 20,
   },
   header: {

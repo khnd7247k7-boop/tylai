@@ -17,6 +17,7 @@ import {
   AppState,
   useWindowDimensions,
 } from 'react-native';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -92,6 +93,7 @@ import {
   duplicateLoggedMealToDate,
   duplicateMealsFromDayToDate,
   localDateKeyFromIso,
+  dateKeyToLocalNoonIso,
 } from './src/utils/loggedMeals';
 import AIService, { ProgramAdaptation } from './AIService';
 import HealthService from './src/services/HealthService';
@@ -121,6 +123,13 @@ import {
   formatLogFoodItemsSummary,
 } from './src/utils/logFoodItems';
 import LogFoodItemBreakdown from './src/components/LogFoodItemBreakdown';
+import {
+  type SavedMealRecord as SavedMeal,
+  bumpSavedMealUse,
+  loadSavedMealsFromDisk,
+  mergeSavedMealLists,
+  persistSavedMealUpsert,
+} from './src/utils/savedMealsStorage';
 
 interface MacroLog {
   id: string;
@@ -237,95 +246,6 @@ interface Meal {
   servingUnit?: string;
 }
 
-interface SavedMeal {
-  id: string;
-  name: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  timesUsed: number;
-  lastUsed: string;
-  lastServingUnit?: string;
-  lastBaseServingSize?: string;
-  lastServings?: string;
-  lastServingAmount?: string;
-}
-
-interface SavedMealPortionHint {
-  lastServingUnit?: string;
-  lastBaseServingSize?: string;
-  lastServings?: string;
-  lastServingAmount?: string;
-}
-
-/** Upsert a meal template by name; collapses duplicate names (e.g. dev StrictMode). */
-function applySavedMealUpsert(
-  prev: SavedMeal[],
-  mealName: string,
-  totals: { calories: number; protein: number; carbs: number; fat: number },
-  opts?: { bumpUsesOnMatch?: boolean; portion?: SavedMealPortionHint }
-): SavedMeal[] {
-  const trimmed = mealName.trim();
-  if (!trimmed) return prev;
-  const key = trimmed.toLowerCase();
-  const existing = prev.find((m) => m.name.toLowerCase() === key);
-  const now = new Date().toISOString();
-  const portion = opts?.portion;
-  let next: SavedMeal[];
-  if (existing) {
-    next = prev.map((m) =>
-      m.id === existing.id
-        ? {
-            ...m,
-            name: trimmed,
-            calories: totals.calories,
-            protein: totals.protein,
-            carbs: totals.carbs,
-            fat: totals.fat,
-            lastUsed: now,
-            timesUsed: opts?.bumpUsesOnMatch ? m.timesUsed + 1 : m.timesUsed,
-            ...(portion?.lastServingUnit ? { lastServingUnit: portion.lastServingUnit } : {}),
-            ...(portion?.lastBaseServingSize ? { lastBaseServingSize: portion.lastBaseServingSize } : {}),
-            ...(portion?.lastServings ? { lastServings: portion.lastServings } : {}),
-            ...(portion?.lastServingAmount ? { lastServingAmount: portion.lastServingAmount } : {}),
-          }
-        : m
-    );
-  } else {
-    next = [
-      {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-        name: trimmed,
-        calories: totals.calories,
-        protein: totals.protein,
-        carbs: totals.carbs,
-        fat: totals.fat,
-        timesUsed: 1,
-        lastUsed: now,
-        ...(portion?.lastServingUnit ? { lastServingUnit: portion.lastServingUnit } : {}),
-        ...(portion?.lastBaseServingSize ? { lastBaseServingSize: portion.lastBaseServingSize } : {}),
-        ...(portion?.lastServings ? { lastServings: portion.lastServings } : {}),
-        ...(portion?.lastServingAmount ? { lastServingAmount: portion.lastServingAmount } : {}),
-      },
-      ...prev,
-    ];
-  }
-  const lastUsedTs = (iso: string) => {
-    const t = new Date(iso).getTime();
-    return Number.isFinite(t) ? t : 0;
-  };
-  const byName = new Map<string, SavedMeal>();
-  for (const m of next) {
-    const k = m.name.toLowerCase();
-    const cur = byName.get(k);
-    if (!cur || lastUsedTs(m.lastUsed) >= lastUsedTs(cur.lastUsed)) {
-      byName.set(k, m);
-    }
-  }
-  return Array.from(byName.values());
-}
-
 interface WorkoutHistory {
   id: string;
   date: string;
@@ -351,8 +271,10 @@ export default function FitnessScreen({
   fitnessSurfaceNonce = 0,
   tourLogFoodIntent,
   tourFitnessIntent,
+  onTourFitnessIntentConsumed,
   onFitnessTabChange,
   onNavigateToNutritionTrends,
+  onOpenNutritionQuestionnaire,
 }: {
   onBack: () => void;
   onCompleteTask: (taskTitle: string) => void;
@@ -363,9 +285,13 @@ export default function FitnessScreen({
   tourLogFoodIntent?: TourLogFoodIntent | null;
   /** Guided tour: open workout panels / nested workout flows. */
   tourFitnessIntent?: TourFitnessIntent | null;
+  /** Clear one-shot tour intent in App after it has been applied. */
+  onTourFitnessIntentConsumed?: () => void;
   onFitnessTabChange?: (tab: FitnessMainTab) => void;
   /** Opens Health → Trends with Nutrition consistency chart expanded. */
   onNavigateToNutritionTrends?: () => void;
+  /** Opens the nutrition food-profile questionnaire. */
+  onOpenNutritionQuestionnaire?: () => void;
 }) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { isPremium, presentUpgrade } = useSubscription();
@@ -384,15 +310,23 @@ export default function FitnessScreen({
   const logFoodAiInputRef = useTourTargetRef(TOUR_TARGET_IDS.logFoodAiInput);
 
   // Expose internal back handler for swipe navigation
+  const clearSavedPlanNavigation = () => {
+    setSavedPlanAutoStartSuggested(false);
+    setSelectedSavedPlan(null);
+    tourPlanPreviewPendingRef.current = false;
+    tourStartTodayPendingRef.current = false;
+    onTourFitnessIntentConsumed?.();
+    loadSavedWorkoutPlans();
+    loadWorkoutHistory();
+  };
+
   const handleInternalBack = () => {
     if (selectedProgram) {
       setSelectedProgram(null);
     } else if (selectedHistorySession) {
       setSelectedHistorySession(null);
     } else if (selectedSavedPlan) {
-      setSelectedSavedPlan(null);
-      loadSavedWorkoutPlans();
-      loadWorkoutHistory();
+      clearSavedPlanNavigation();
     } else if (showBuildYourOwnScreen) {
       setShowBuildYourOwnScreen(false);
       setPlanToEdit(null);
@@ -525,6 +459,8 @@ export default function FitnessScreen({
   const [selectedCategory, setSelectedCategory] = useState<'strength' | 'muscle_building' | 'cardio' | 'bodyweight' | null>(null);
   const [workoutQuickPanel, setWorkoutQuickPanel] = useState<WorkoutQuickPanel>(null);
   const tourPlanPreviewPendingRef = useRef(false);
+  const tourStartTodayPendingRef = useRef(false);
+  const lastTourFitnessIntentIdRef = useRef<number | null>(null);
 
   const toggleWorkoutQuickPanel = (panel: Exclude<WorkoutQuickPanel, null>) => {
     setWorkoutQuickPanel((prev) => (prev === panel ? null : panel));
@@ -627,6 +563,7 @@ export default function FitnessScreen({
       logFoodPreciseBasisRef.current = null;
       logFoodReferenceGramsPerPieceRef.current = undefined;
       setLogFoodEditingMealId(null);
+      setShowLogFoodDatePicker(false);
     }
   }, [showLogFoodModal]);
 
@@ -788,45 +725,11 @@ export default function FitnessScreen({
 
   const loadSavedMeals = async () => {
     try {
-      const parsedMeals = await loadUserData<SavedMeal[]>('savedMeals');
-      console.log('Loading saved meals:', parsedMeals);
-      if (parsedMeals && Array.isArray(parsedMeals)) {
-        console.log('Parsed saved meals:', parsedMeals);
-        setSavedMeals(parsedMeals);
-      } else if (parsedMeals != null) {
-        console.warn('savedMeals in storage was not an array; resetting');
-        setSavedMeals([]);
-      }
+      const fromDisk = await loadSavedMealsFromDisk();
+      // Merge with in-memory so a save that raced ahead of this load is not discarded.
+      setSavedMeals((prev) => mergeSavedMealLists(fromDisk, prev));
     } catch (error) {
       console.error('Error loading saved meals:', error);
-    }
-  };
-
-  const saveSavedMeals = async (meals: SavedMeal[]) => {
-    try {
-      const safe: SavedMeal[] = (Array.isArray(meals) ? meals : []).map((m) => ({
-        id: String(m?.id ?? `${Date.now()}`),
-        name: String(m?.name ?? 'Meal').trim() || 'Meal',
-        calories: Math.max(0, Math.round(Number(m?.calories) || 0)),
-        protein: Math.max(0, Math.round(Number(m?.protein) || 0)),
-        carbs: Math.max(0, Math.round(Number(m?.carbs) || 0)),
-        fat: Math.max(0, Math.round(Number(m?.fat) || 0)),
-        timesUsed: Math.max(0, Math.round(Number(m?.timesUsed) || 0)),
-        lastServingUnit: typeof m?.lastServingUnit === 'string' ? m.lastServingUnit : undefined,
-        lastBaseServingSize: typeof m?.lastBaseServingSize === 'string' ? m.lastBaseServingSize : undefined,
-        lastServings: typeof m?.lastServings === 'string' ? m.lastServings : undefined,
-        lastServingAmount: typeof m?.lastServingAmount === 'string' ? m.lastServingAmount : undefined,
-        lastUsed:
-          typeof m?.lastUsed === 'string' && Number.isFinite(new Date(m.lastUsed).getTime())
-            ? m.lastUsed
-            : new Date().toISOString(),
-      }));
-      console.log('Saving saved meals:', safe.length, 'items');
-      await saveUserData('savedMeals', safe);
-      console.log('Saved meals saved successfully');
-    } catch (error) {
-      console.error('Error saving saved meals:', error);
-      throw error;
     }
   };
 
@@ -1209,6 +1112,7 @@ export default function FitnessScreen({
     logFoodPreciseBasisRef.current = null;
     logFoodReferenceGramsPerPieceRef.current = undefined;
     setLogFoodEditingMealId(null);
+    setLogFoodTargetDateKey(null);
     setAiMealQuery('');
     setAiMealError(null);
     setAiMealEstimate(null);
@@ -1240,6 +1144,9 @@ export default function FitnessScreen({
 
   /** When set, Log Food "Add to log" updates this meal id instead of inserting a new row. */
   const [logFoodEditingMealId, setLogFoodEditingMealId] = useState<string | null>(null);
+  /** When set, new meals log to this calendar day (YYYY-MM-DD) instead of today. */
+  const [logFoodTargetDateKey, setLogFoodTargetDateKey] = useState<string | null>(null);
+  const [showLogFoodDatePicker, setShowLogFoodDatePicker] = useState(false);
 
   const deleteMeal = async (mealId: string) => {
     const list = await deleteLoggedMeal(mealId);
@@ -1368,6 +1275,47 @@ export default function FitnessScreen({
     });
   };
 
+  const getTodayDateKey = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  };
+
+  const dateKeyToLocalDate = (dateKey: string) => {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  };
+
+  const effectiveLogFoodDateKey = logFoodTargetDateKey ?? getTodayDateKey();
+  const isLoggingForPastDay = effectiveLogFoodDateKey !== getTodayDateKey();
+
+  const getLogFoodDateIso = (dateKey?: string | null) => {
+    const key = dateKey ?? logFoodTargetDateKey;
+    if (key) return dateKeyToLocalNoonIso(key);
+    return new Date().toISOString();
+  };
+
+  const handleLogFoodDateChange = (event: DateTimePickerEvent, selected?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowLogFoodDatePicker(false);
+    }
+    if (event.type === 'dismissed') {
+      setShowLogFoodDatePicker(false);
+      return;
+    }
+    if (!selected) return;
+    const key = `${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, '0')}-${String(selected.getDate()).padStart(2, '0')}`;
+    const todayKey = getTodayDateKey();
+    setLogFoodTargetDateKey(key === todayKey ? null : key);
+  };
+
+  const openLogFoodForDateKey = (dateKey: string) => {
+    Keyboard.dismiss();
+    resetLogFoodForm();
+    setLogFoodTargetDateKey(dateKey);
+    setLogFoodSlot(defaultSlotNow());
+    setShowLogFoodModal(true);
+  };
+
   const openMealInLogFoodForEdit = (meal: Meal) => {
     Keyboard.dismiss();
     const storedServings = Math.max(parseFloat(String(meal.servings ?? 1)) || 1, 0.0001);
@@ -1413,6 +1361,7 @@ export default function FitnessScreen({
     setNaturalFraction(1);
     logFoodMacrosPerWholeRef.current = null;
     setLogFoodSlot(meal.mealSlot ?? inferMealSlot(meal));
+    setLogFoodTargetDateKey(localDateKeyFromIso(meal.date));
     setLogFoodSuppressInlineSuggest(true);
     setMealNameInput(meal.name);
     const editInput = {
@@ -1518,8 +1467,9 @@ export default function FitnessScreen({
     const baseFat = servings > 0 ? Math.round((totalFat / servings) * 10) / 10 : totalFat;
     const calculatedCalories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
 
-    // Ensure date is set to today for proper filtering
     const todayDate = new Date();
+    const loggedDateKey = logFoodTargetDateKey;
+    const mealDateIso = getLogFoodDateIso(loggedDateKey);
     const mealName =
       mealNameInput.trim() ||
       mealInput.name?.trim() ||
@@ -1537,7 +1487,7 @@ export default function FitnessScreen({
         carbs: totalCarbs,
         fat: totalFat,
         time: mealInput.time?.trim() || existing?.time || todayDate.toLocaleTimeString(),
-        date: prevDate,
+        date: loggedDateKey ? getLogFoodDateIso(loggedDateKey) : prevDate,
         servings,
         baseProtein,
         baseCarbs,
@@ -1561,10 +1511,9 @@ export default function FitnessScreen({
         return;
       }
 
-      let nextSavedTemplates: SavedMeal[] = [];
-      setSavedMeals((prev) => {
-        nextSavedTemplates = applySavedMealUpsert(
-          prev,
+      try {
+        const nextSavedTemplates = await persistSavedMealUpsert(
+          savedMeals,
           mealName,
           {
             calories: Math.round(calculatedCalories),
@@ -1582,10 +1531,7 @@ export default function FitnessScreen({
             },
           }
         );
-        return nextSavedTemplates;
-      });
-      try {
-        await saveSavedMeals(nextSavedTemplates);
+        setSavedMeals(nextSavedTemplates);
       } catch {
         // Non-blocking — meal log already saved.
       }
@@ -1603,7 +1549,7 @@ export default function FitnessScreen({
       carbs: totalCarbs,
       fat: totalFat,
       time: mealInput.time || todayDate.toLocaleTimeString(),
-      date: todayDate.toISOString(),
+      date: mealDateIso,
       servings: servings,
       baseProtein: baseProtein,
       baseCarbs: baseCarbs,
@@ -1630,10 +1576,9 @@ export default function FitnessScreen({
       return;
     }
 
-    let nextSavedTemplates: SavedMeal[] = [];
-    setSavedMeals((prev) => {
-      nextSavedTemplates = applySavedMealUpsert(
-        prev,
+    try {
+      const nextSavedTemplates = await persistSavedMealUpsert(
+        savedMeals,
         mealName,
         {
           calories: Math.round(calculatedCalories),
@@ -1651,10 +1596,7 @@ export default function FitnessScreen({
           },
         }
       );
-      return nextSavedTemplates;
-    });
-    try {
-      await saveSavedMeals(nextSavedTemplates);
+      setSavedMeals(nextSavedTemplates);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Could not update saved meals', msg);
@@ -1662,6 +1604,16 @@ export default function FitnessScreen({
 
     resetLogFoodForm();
     setShowLogFoodModal(false);
+    if (loggedDateKey) {
+      setSelectedCalendarDate(loggedDateKey);
+      setExpandedDayItems(new Set([`nutrition-${loggedDateKey}`]));
+      setHistoryNutritionFocus(true);
+      const [year, month] = loggedDateKey.split('-').map(Number);
+      setHistoryCalendarMonth(new Date(year, month - 1, 1));
+      if (activeTab !== 'history') {
+        updateFitnessTab('history');
+      }
+    }
     // no notification
   };
 
@@ -1686,10 +1638,9 @@ export default function FitnessScreen({
     const totalFat = Math.round(itemTotals?.fat ?? (parseFloat(mealInput.fat) || 0));
     const calculatedCalories = calculateCaloriesFromMacros(totalProtein, totalCarbs, totalFat);
 
-    let nextSaved: SavedMeal[] = [];
-    setSavedMeals((prev) => {
-      nextSaved = applySavedMealUpsert(
-        prev,
+    try {
+      const nextSaved = await persistSavedMealUpsert(
+        savedMeals,
         mealNameInput.trim(),
         {
           calories: Math.round(calculatedCalories),
@@ -1707,10 +1658,7 @@ export default function FitnessScreen({
           },
         }
       );
-      return nextSaved;
-    });
-    try {
-      await saveSavedMeals(nextSaved);
+      setSavedMeals(nextSaved);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Could not save favorite', msg);
@@ -1732,6 +1680,7 @@ export default function FitnessScreen({
 
   const handleUseSavedMeal = async (savedMeal: SavedMeal, slot?: MealSlot) => {
     const mealSlot = slot ?? defaultSlotNow();
+    const loggedDateKey = logFoodTargetDateKey;
     const storedServings = Math.max(parseFloat(savedMeal.lastServings || '1') || 1, 0.0001);
     const newMeal: Meal = {
       id: Date.now().toString(),
@@ -1741,7 +1690,7 @@ export default function FitnessScreen({
       carbs: savedMeal.carbs,
       fat: savedMeal.fat,
       time: new Date().toLocaleTimeString(),
-      date: new Date().toISOString(),
+      date: getLogFoodDateIso(loggedDateKey),
       servings: storedServings,
       baseProtein: storedServings > 0 ? Math.round((savedMeal.protein / storedServings) * 10) / 10 : savedMeal.protein,
       baseCarbs: storedServings > 0 ? Math.round((savedMeal.carbs / storedServings) * 10) / 10 : savedMeal.carbs,
@@ -1757,19 +1706,10 @@ export default function FitnessScreen({
       return updatedTodayMeals;
     });
 
-    // Update saved meal usage (functional update so list matches latest state)
-    let updatedSavedMeals: SavedMeal[] = [];
-    setSavedMeals((prev) => {
-      updatedSavedMeals = prev.map((meal) =>
-        meal.id === savedMeal.id
-          ? { ...meal, timesUsed: meal.timesUsed + 1, lastUsed: new Date().toISOString() }
-          : meal
-      );
-      return updatedSavedMeals;
-    });
-
     try {
-      await Promise.all([saveMeals(updatedTodayMeals), saveSavedMeals(updatedSavedMeals)]);
+      await saveMeals(updatedTodayMeals);
+      const updatedSavedMeals = await bumpSavedMealUse(savedMeals, savedMeal.id);
+      setSavedMeals(updatedSavedMeals);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Could not save', msg);
@@ -1778,6 +1718,16 @@ export default function FitnessScreen({
     setLogFoodSavedPickerOpen(false);
     resetLogFoodForm();
     setShowLogFoodModal(false);
+    if (loggedDateKey) {
+      setSelectedCalendarDate(loggedDateKey);
+      setExpandedDayItems(new Set([`nutrition-${loggedDateKey}`]));
+      setHistoryNutritionFocus(true);
+      const [year, month] = loggedDateKey.split('-').map(Number);
+      setHistoryCalendarMonth(new Date(year, month - 1, 1));
+      if (activeTab !== 'history') {
+        updateFitnessTab('history');
+      }
+    }
     // no notification
   };
 
@@ -1934,8 +1884,7 @@ export default function FitnessScreen({
           'Search by food name or enter macros manually from the package label.',
         ],
         type: 'warning',
-        durationMs: 7000,
-        actions: [{ label: 'OK' }],
+        durationMs: 4500,
       });
       return;
     }
@@ -2009,8 +1958,7 @@ export default function FitnessScreen({
           'Search by food name or enter macros manually from the package label.',
         ],
         type: 'warning',
-        durationMs: 7000,
-        actions: [{ label: 'OK' }],
+        durationMs: 4500,
       });
     },
     [showNotification]
@@ -2025,8 +1973,7 @@ export default function FitnessScreen({
           'Could not look up this barcode. Check your connection and try again, or add the food manually.',
         ],
         type: 'error',
-        durationMs: 6000,
-        actions: [{ label: 'OK' }],
+        durationMs: 4500,
       });
     },
     [showNotification]
@@ -2058,46 +2005,81 @@ export default function FitnessScreen({
   }, [tourLogFoodIntent, setNutritionLoggingModeWithPersist]);
 
   useEffect(() => {
-    if (!tourFitnessIntent) return;
-    if (tourFitnessIntent.closeAll) {
-      setShowWorkoutScreen(false);
-      setShowBuildYourOwnScreen(false);
-      setSelectedSavedPlan(null);
-      setSelectedProgram(null);
-      setWorkoutQuickPanel(null);
-      setPlanToEdit(null);
-      tourPlanPreviewPendingRef.current = false;
-      return;
+    if (tourFitnessIntent) {
+      const isNewIntent = lastTourFitnessIntentIdRef.current !== tourFitnessIntent.id;
+      if (isNewIntent) {
+        lastTourFitnessIntentIdRef.current = tourFitnessIntent.id;
+
+        if (tourFitnessIntent.closeAll) {
+          setShowWorkoutScreen(false);
+          setShowBuildYourOwnScreen(false);
+          setSelectedSavedPlan(null);
+          setSelectedProgram(null);
+          setWorkoutQuickPanel(null);
+          setPlanToEdit(null);
+          tourPlanPreviewPendingRef.current = false;
+          tourStartTodayPendingRef.current = false;
+          onTourFitnessIntentConsumed?.();
+        } else {
+          if (tourFitnessIntent.myPlansPanel) {
+            setShowWorkoutScreen(false);
+            setShowBuildYourOwnScreen(false);
+            setSelectedSavedPlan(null);
+            setSelectedProgram(null);
+            setPlanToEdit(null);
+            setWorkoutQuickPanel('myPlans');
+          }
+          if (tourFitnessIntent.buildWorkout) {
+            setShowWorkoutScreen(false);
+            setSelectedSavedPlan(null);
+            setSelectedProgram(null);
+            setWorkoutQuickPanel(null);
+            setPlanToEdit(null);
+            setShowBuildYourOwnScreen(true);
+          }
+          if (tourFitnessIntent.aiWorkout) {
+            setShowBuildYourOwnScreen(false);
+            setSelectedSavedPlan(null);
+            setSelectedProgram(null);
+            setWorkoutQuickPanel(null);
+            setShowWorkoutScreen(true);
+          }
+          if (tourFitnessIntent.planPreview) {
+            setShowWorkoutScreen(false);
+            setShowBuildYourOwnScreen(false);
+            setWorkoutQuickPanel(null);
+            setPlanToEdit(null);
+            tourStartTodayPendingRef.current = false;
+            const plan =
+              savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? savedWorkoutPlans[0] ?? null;
+            if (plan) {
+              setSelectedSavedPlan(plan);
+              tourPlanPreviewPendingRef.current = false;
+            } else {
+              tourPlanPreviewPendingRef.current = true;
+            }
+          }
+          if (tourFitnessIntent.startTodayWorkout) {
+            setShowWorkoutScreen(false);
+            setShowBuildYourOwnScreen(false);
+            setWorkoutQuickPanel(null);
+            setPlanToEdit(null);
+            tourPlanPreviewPendingRef.current = false;
+            const plan = savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? null;
+            if (plan) {
+              setSavedPlanAutoStartSuggested(true);
+              setSelectedSavedPlan(plan);
+              tourStartTodayPendingRef.current = false;
+            } else {
+              tourStartTodayPendingRef.current = true;
+            }
+          }
+          onTourFitnessIntentConsumed?.();
+        }
+      }
     }
-    if (tourFitnessIntent.myPlansPanel) {
-      setShowWorkoutScreen(false);
-      setShowBuildYourOwnScreen(false);
-      setSelectedSavedPlan(null);
-      setSelectedProgram(null);
-      setPlanToEdit(null);
-      setWorkoutQuickPanel('myPlans');
-    }
-    if (tourFitnessIntent.buildWorkout) {
-      setShowWorkoutScreen(false);
-      setSelectedSavedPlan(null);
-      setSelectedProgram(null);
-      setWorkoutQuickPanel(null);
-      setPlanToEdit(null);
-      setShowBuildYourOwnScreen(true);
-    }
-    if (tourFitnessIntent.aiWorkout) {
-      setShowBuildYourOwnScreen(false);
-      setSelectedSavedPlan(null);
-      setSelectedProgram(null);
-      setWorkoutQuickPanel(null);
-      setShowWorkoutScreen(true);
-    }
-    if (tourFitnessIntent.planPreview) {
-      setShowWorkoutScreen(false);
-      setShowBuildYourOwnScreen(false);
-      setWorkoutQuickPanel(null);
-      setPlanToEdit(null);
-      tourPlanPreviewPendingRef.current = true;
+
+    if (tourPlanPreviewPendingRef.current && !selectedSavedPlan) {
       const plan =
         savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? savedWorkoutPlans[0] ?? null;
       if (plan) {
@@ -2105,17 +2087,22 @@ export default function FitnessScreen({
         tourPlanPreviewPendingRef.current = false;
       }
     }
-  }, [tourFitnessIntent, savedWorkoutPlans, activePlans]);
 
-  useEffect(() => {
-    if (!tourPlanPreviewPendingRef.current || selectedSavedPlan) return;
-    const plan =
-      savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? savedWorkoutPlans[0] ?? null;
-    if (plan) {
-      setSelectedSavedPlan(plan);
-      tourPlanPreviewPendingRef.current = false;
+    if (tourStartTodayPendingRef.current && !selectedSavedPlan) {
+      const plan = savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? null;
+      if (plan) {
+        setSavedPlanAutoStartSuggested(true);
+        setSelectedSavedPlan(plan);
+        tourStartTodayPendingRef.current = false;
+      }
     }
-  }, [savedWorkoutPlans, activePlans, selectedSavedPlan]);
+  }, [
+    tourFitnessIntent,
+    savedWorkoutPlans,
+    activePlans,
+    selectedSavedPlan,
+    onTourFitnessIntentConsumed,
+  ]);
 
   useEffect(() => {
     const scrollLogFoodTop = () => {
@@ -3057,6 +3044,14 @@ export default function FitnessScreen({
     const isCurrentMonth = today.getMonth() === currentMonth.getMonth() && today.getFullYear() === currentMonth.getFullYear();
 
     const isCopyMode = Boolean(mealCopyPending || dayCopyPending);
+    const selectedDayMeals =
+      selectedCalendarDate != null ? mealsByDate[selectedCalendarDate] ?? [] : [];
+    const todayKey = getTodayDateKey();
+    const activityDateKeys = [
+      ...Object.keys(workoutsByDate),
+      ...Object.keys(mealsByDate),
+    ].sort();
+    const earliestActivityKey = activityDateKeys[0] ?? null;
 
     return (
       <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
@@ -3065,7 +3060,7 @@ export default function FitnessScreen({
         </Text>
         {historyNutritionFocus ? (
           <Text style={styles.historySectionHint}>
-            Tap a day to see logged meals. Use copy on any meal to paste it to another day.
+            Tap any day — including future days — to view or log meals. Use copy on any meal to paste it to another day.
           </Text>
         ) : null}
 
@@ -3114,12 +3109,18 @@ export default function FitnessScreen({
         <View style={styles.calendarGrid}>
           {days.map((day, index) => {
             const dateKey = getDateKey(day);
-            const hasWorkout = dateKey && workoutsByDate[dateKey];
-            const hasMeals = dateKey && mealsByDate[dateKey];
+            const hasWorkout = !!(dateKey && workoutsByDate[dateKey]?.length);
+            const hasMeals = !!(dateKey && mealsByDate[dateKey]?.length);
             const isToday = isCurrentMonth && day === today.getDate();
             const workouts = dateKey ? workoutsByDate[dateKey] || [] : [];
             const dayMeals = dateKey ? mealsByDate[dateKey] || [] : [];
-            const hasData = hasWorkout || hasMeals;
+            const hasLoggedActivity = hasWorkout || hasMeals;
+            const isPastDay = !!dateKey && dateKey < todayKey;
+            const isMissedDay =
+              isPastDay &&
+              !hasLoggedActivity &&
+              earliestActivityKey != null &&
+              dateKey >= earliestActivityKey;
             const isSelected = selectedCalendarDate === dateKey;
             const isCopySourceDay = dayCopyPending != null && dateKey === dayCopyPending;
 
@@ -3133,7 +3134,9 @@ export default function FitnessScreen({
                 style={[
                   styles.calendarDay,
                   isToday && styles.calendarDayToday,
-                  hasWorkout && styles.calendarDayWithWorkout,
+                  isSelected && styles.calendarDaySelected,
+                  hasLoggedActivity && styles.calendarDayLogged,
+                  isMissedDay && styles.calendarDayMissed,
                   isCopyMode && styles.calendarDayCopyMode,
                   isCopySourceDay && styles.calendarDayCopySource,
                 ]}
@@ -3143,28 +3146,26 @@ export default function FitnessScreen({
                     void completeMealCopyToDay(dateKey);
                     return;
                   }
-                  if (hasData) {
-                    if (isSelected) {
-                      setSelectedCalendarDate(null);
-                      setExpandedDayItems(new Set());
-                    } else {
-                      setSelectedCalendarDate(dateKey);
-                      const newExpanded = new Set<string>();
-                      if (hasWorkout) {
-                        newExpanded.add(`workout-${dateKey}`);
-                      }
-                      if (hasMeals) {
-                        newExpanded.add(`nutrition-${dateKey}`);
-                      }
-                      setExpandedDayItems(newExpanded);
+                  if (isSelected) {
+                    setSelectedCalendarDate(null);
+                    setExpandedDayItems(new Set());
+                  } else {
+                    setSelectedCalendarDate(dateKey);
+                    const newExpanded = new Set<string>();
+                    if (hasWorkout) {
+                      newExpanded.add(`workout-${dateKey}`);
                     }
+                    // Always offer nutrition details so users can log food for past days.
+                    newExpanded.add(`nutrition-${dateKey}`);
+                    setExpandedDayItems(newExpanded);
                   }
                 }}
               >
                 <Text style={[
                   styles.calendarDayNumber,
                   isToday && styles.calendarDayNumberToday,
-                  hasWorkout && styles.calendarDayNumberWithWorkout
+                  hasLoggedActivity && styles.calendarDayNumberLogged,
+                  isMissedDay && styles.calendarDayNumberMissed,
                 ]}>
                   {day}
                 </Text>
@@ -3256,102 +3257,125 @@ export default function FitnessScreen({
               </View>
             )}
 
-            {/* Nutrition */}
-            {mealsByDate[selectedCalendarDate] && mealsByDate[selectedCalendarDate].length > 0 && (
-              <View style={styles.dayDetailBubble}>
-                <View style={styles.dayDetailBubbleHeader}>
-                  <TouchableOpacity
-                    style={styles.dayDetailBubbleHeaderTap}
-                    onPress={() => {
-                      const key = `nutrition-${selectedCalendarDate}`;
-                      setExpandedDayItems((prev) => {
-                        const newSet = new Set(prev);
-                        if (newSet.has(key)) {
-                          newSet.delete(key);
-                        } else {
-                          newSet.add(key);
-                        }
-                        return newSet;
-                      });
-                    }}
-                  >
-                    <Text style={styles.dayDetailBubbleTitle}>
-                      Nutrition ({mealsByDate[selectedCalendarDate].length} meals)
-                    </Text>
-                    <Text style={styles.dayDetailBubbleArrow}>
-                      {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) ? '▼' : '▶'}
-                    </Text>
-                  </TouchableOpacity>
+            {/* Nutrition — always available so past days can be logged */}
+            <View style={styles.dayDetailBubble}>
+              <View style={styles.dayDetailBubbleHeader}>
+                <TouchableOpacity
+                  style={styles.dayDetailBubbleHeaderTap}
+                  onPress={() => {
+                    const key = `nutrition-${selectedCalendarDate}`;
+                    setExpandedDayItems((prev) => {
+                      const newSet = new Set(prev);
+                      if (newSet.has(key)) {
+                        newSet.delete(key);
+                      } else {
+                        newSet.add(key);
+                      }
+                      return newSet;
+                    });
+                  }}
+                >
+                  <Text style={styles.dayDetailBubbleTitle}>
+                    Nutrition ({selectedDayMeals.length} meal{selectedDayMeals.length === 1 ? '' : 's'})
+                  </Text>
+                  <Text style={styles.dayDetailBubbleArrow}>
+                    {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) ? '▼' : '▶'}
+                  </Text>
+                </TouchableOpacity>
+                {selectedDayMeals.length > 0 ? (
                   <TouchableOpacity
                     style={styles.copyAllMealsBtn}
                     onPress={() =>
                       startCopyAllMealsFromDay(
                         selectedCalendarDate,
-                        mealsByDate[selectedCalendarDate].length
+                        selectedDayMeals.length
                       )
                     }
                   >
                     <Text style={styles.copyAllMealsBtnText}>Copy all</Text>
                   </TouchableOpacity>
-                </View>
-                {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) && (
-                  <View style={styles.dayDetailBubbleContent}>
-                    {mealsByDate[selectedCalendarDate].map((meal, idx) => {
-                      const mealTime = meal.time || new Date(meal.date).toLocaleTimeString('en-US', {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      });
-                      return (
-                        <View key={`meal-${selectedCalendarDate}-${meal.id || idx}-${meal.date}-${meal.time || ''}`} style={styles.dayDetailItem}>
-                          <View style={styles.dayDetailItemTopRow}>
-                            <View style={styles.dayDetailItemTextCol}>
-                              <Text style={styles.dayDetailItemName}>{meal.name}</Text>
-                              <Text style={styles.dayDetailItemInfo}>
-                                {mealTime} • {meal.calories} cal
-                              </Text>
-                              <Text style={styles.dayDetailItemMacros}>
-                                P: {meal.protein}g • C: {meal.carbs}g • F: {meal.fat}g
-                              </Text>
-                            </View>
-                            <TouchableOpacity
-                              style={styles.mealCopyBtn}
-                              onPress={() => startCopyMealToDay(meal)}
-                              accessibilityLabel={`Copy ${meal.name} to another day`}
-                            >
-                              <Text style={styles.mealCopyBtnText}>Copy</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    })}
-                    {/* Daily Totals */}
-                    {mealsByDate[selectedCalendarDate].length > 0 && (
-                      <View style={styles.dayDetailTotals}>
-                        <Text style={styles.dayDetailTotalsLabel}>Daily Totals:</Text>
-                        <Text style={styles.dayDetailTotalsText}>
-                          {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.calories, 0)} cal • 
-                          P: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.protein, 0)}g • 
-                          C: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.carbs, 0)}g • 
-                          F: {mealsByDate[selectedCalendarDate].reduce((sum, m) => sum + m.fat, 0)}g
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                )}
+                ) : null}
               </View>
-            )}
+              {expandedDayItems.has(`nutrition-${selectedCalendarDate}`) && (
+                <View style={styles.dayDetailBubbleContent}>
+                  {selectedDayMeals.length === 0 ? (
+                    <Text style={styles.dayDetailEmptyInline}>No meals logged for this day yet.</Text>
+                  ) : null}
+                  {selectedDayMeals.map((meal, idx) => {
+                    const mealTime = meal.time || new Date(meal.date).toLocaleTimeString('en-US', {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    });
+                    return (
+                      <View key={`meal-${selectedCalendarDate}-${meal.id || idx}-${meal.date}-${meal.time || ''}`} style={styles.dayDetailItem}>
+                        <View style={styles.dayDetailItemTopRow}>
+                          <View style={styles.dayDetailItemTextCol}>
+                            <Text style={styles.dayDetailItemName}>{meal.name}</Text>
+                            <Text style={styles.dayDetailItemInfo}>
+                              {mealTime} • {meal.calories} cal
+                            </Text>
+                            <Text style={styles.dayDetailItemMacros}>
+                              P: {meal.protein}g • C: {meal.carbs}g • F: {meal.fat}g
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.mealCopyBtn}
+                            onPress={() => startCopyMealToDay(meal)}
+                            accessibilityLabel={`Copy ${meal.name} to another day`}
+                          >
+                            <Text style={styles.mealCopyBtnText}>Copy</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                  {selectedDayMeals.length > 0 ? (
+                    <View style={styles.dayDetailTotals}>
+                      <Text style={styles.dayDetailTotalsLabel}>Daily Totals:</Text>
+                      <Text style={styles.dayDetailTotalsText}>
+                        {selectedDayMeals.reduce((sum, m) => sum + m.calories, 0)} cal • 
+                        P: {selectedDayMeals.reduce((sum, m) => sum + m.protein, 0)}g • 
+                        C: {selectedDayMeals.reduce((sum, m) => sum + m.carbs, 0)}g • 
+                        F: {selectedDayMeals.reduce((sum, m) => sum + m.fat, 0)}g
+                      </Text>
+                    </View>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.historyLogFoodBtn}
+                    onPress={() => openLogFoodForDateKey(selectedCalendarDate)}
+                    accessibilityLabel={`Log food for ${formatHistoryDateLabel(selectedCalendarDate)}`}
+                  >
+                    <Text style={styles.historyLogFoodBtnText}>
+                      {selectedCalendarDate === getTodayDateKey()
+                        ? 'Log food for today'
+                        : 'Log food for this day'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
 
-            {!workoutsByDate[selectedCalendarDate] && !mealsByDate[selectedCalendarDate] && (
-              <Text style={styles.dayDetailEmpty}>No data for this day</Text>
+            {!workoutsByDate[selectedCalendarDate] &&
+              selectedDayMeals.length === 0 &&
+              !expandedDayItems.has(`nutrition-${selectedCalendarDate}`) && (
+              <Text style={styles.dayDetailEmpty}>No workouts logged — open Nutrition to add meals</Text>
             )}
           </View>
         )}
 
         {/* Legend */}
         <View style={styles.calendarLegend}>
-          <Text style={styles.legendText}>Today</Text>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, styles.legendDotLogged]} />
+            <Text style={styles.legendText}>Logged</Text>
+          </View>
           <Text style={styles.legendText}>•</Text>
-          <Text style={styles.legendText}>Green highlight = Workout completed</Text>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, styles.legendDotMissed]} />
+            <Text style={styles.legendText}>Missed</Text>
+          </View>
+          <Text style={styles.legendText}>•</Text>
+          <Text style={styles.legendText}>Today highlighted in green</Text>
         </View>
 
         {(!workoutHistory || workoutHistory.length === 0) && (!meals || meals.length === 0) && (
@@ -3596,9 +3620,6 @@ export default function FitnessScreen({
       });
     };
 
-    const logFoodSuggestPanelMax = Math.min(Math.round(windowHeight * 0.58), 580);
-    const logFoodSuggestInnerMax = Math.min(Math.round(windowHeight * 0.52), 520);
-
     const renderLogFoodNameSuggestions = () => {
       if (logFoodSuppressInlineSuggest) return null;
 
@@ -3621,103 +3642,95 @@ export default function FitnessScreen({
 
       if (!showPanel) return null;
 
+      // Inline in the parent Log Food ScrollView (no nested scroller) so the whole modal scrolls as one.
       return (
-        <View style={[styles.logFoodSuggestPanel, { maxHeight: logFoodSuggestPanelMax }]}>
-          <ScrollView
-            nestedScrollEnabled
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            showsVerticalScrollIndicator
-            style={[styles.logFoodSuggestScroll, { maxHeight: logFoodSuggestInnerMax }]}
-            contentContainerStyle={styles.logFoodSuggestScrollContent}
-          >
-            {yourFoods.length > 0 ? (
-              <>
-                <Text style={styles.logFoodSuggestHeader}>
-                  {quickPickMode ? 'Your frequent foods' : 'Your foods'}
-                </Text>
-                {yourFoods.map((row) => {
-                  const useCount = row.timesUsed > 0 ? row.timesUsed : row.logCount;
-                  return (
-                    <TouchableOpacity
-                      key={`log-your-${row.kind}-${row.id}`}
-                      style={styles.logFoodSuggestRow}
-                      onPressIn={() => {
-                        if (logFoodNameBlurTimerRef.current) {
-                          clearTimeout(logFoodNameBlurTimerRef.current);
-                          logFoodNameBlurTimerRef.current = null;
-                        }
-                      }}
-                      onPress={() => applyLogFoodYourFoodMatch(row)}
-                      activeOpacity={0.78}
-                    >
-                      <Text style={styles.logFoodSuggestTitle}>{row.name}</Text>
-                      <Text style={styles.logFoodSuggestSub}>
-                        Logged {useCount}× · {row.calories} cal · {row.protein}g P
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </>
-            ) : null}
-            {logFoodDatabaseLoading ? (
-              <View style={styles.logFoodSuggestLoading}>
-                <ActivityIndicator color={AppTheme.accent} />
-                <Text style={styles.logFoodSuggestMuted}>Loading food details…</Text>
-              </View>
-            ) : null}
-            {showUsdaSection && logFoodInlineUsda.loading ? (
-              <View style={styles.logFoodSuggestLoading}>
-                <ActivityIndicator color={AppTheme.accent} />
-                <Text style={styles.logFoodSuggestMuted}>Looking up USDA…</Text>
-              </View>
-            ) : null}
-            {showUsdaSection && logFoodInlineUsda.error ? (
-              <Text style={styles.logFoodSuggestError}>{logFoodInlineUsda.error}</Text>
-            ) : null}
-            {showUsdaSection && logFoodInlineUsda.results.length > 0 ? (
-              <>
-                <Text
-                  style={[styles.logFoodSuggestHeaderUsda, yourFoods.length > 0 && { marginTop: 10 }]}
-                >
-                  USDA (Foundation & SR Legacy)
-                </Text>
-                {logFoodInlineUsda.results.map((hit) => (
+        <View style={styles.logFoodSuggestPanel}>
+          {yourFoods.length > 0 ? (
+            <>
+              <Text style={styles.logFoodSuggestHeader}>
+                {quickPickMode ? 'Your frequent foods' : 'Your foods'}
+              </Text>
+              {yourFoods.map((row) => {
+                const useCount = row.timesUsed > 0 ? row.timesUsed : row.logCount;
+                return (
                   <TouchableOpacity
-                    key={`usda-${hit.fdcId}`}
+                    key={`log-your-${row.kind}-${row.id}`}
                     style={styles.logFoodSuggestRow}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      void applyUsdaHitToLogFoodForm(hit);
+                    onPressIn={() => {
+                      if (logFoodNameBlurTimerRef.current) {
+                        clearTimeout(logFoodNameBlurTimerRef.current);
+                        logFoodNameBlurTimerRef.current = null;
+                      }
                     }}
+                    onPress={() => applyLogFoodYourFoodMatch(row)}
                     activeOpacity={0.78}
                   >
-                    <Text style={styles.logFoodSuggestTitle}>{hit.description}</Text>
+                    <Text style={styles.logFoodSuggestTitle}>{row.name}</Text>
                     <Text style={styles.logFoodSuggestSub}>
-                      {hit.dataType ?? 'Food'}
-                      {hit.foodCategory ? ` · ${hit.foodCategory}` : ''}
+                      Logged {useCount}× · {row.calories} cal · {row.protein}g P
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </>
-            ) : null}
-            {showUsdaSection &&
-            !logFoodInlineUsda.loading &&
-            !logFoodInlineUsda.error &&
-            logFoodInlineUsda.results.length === 0 &&
-            yourFoods.length === 0 ? (
-              <Text style={styles.logFoodSuggestMuted}>No matches in your log or USDA yet.</Text>
-            ) : null}
-            {showUsdaSection &&
-            !logFoodInlineUsda.loading &&
-            !logFoodInlineUsda.error &&
-            logFoodInlineUsda.results.length === 0 &&
-            yourFoods.length > 0 ? (
-              <Text style={[styles.logFoodSuggestMuted, { marginTop: 8 }]}>
-                No USDA matches — pick one of your foods above or keep typing.
+                );
+              })}
+            </>
+          ) : null}
+          {logFoodDatabaseLoading ? (
+            <View style={styles.logFoodSuggestLoading}>
+              <ActivityIndicator color={AppTheme.accent} />
+              <Text style={styles.logFoodSuggestMuted}>Loading food details…</Text>
+            </View>
+          ) : null}
+          {showUsdaSection && logFoodInlineUsda.loading ? (
+            <View style={styles.logFoodSuggestLoading}>
+              <ActivityIndicator color={AppTheme.accent} />
+              <Text style={styles.logFoodSuggestMuted}>Looking up USDA…</Text>
+            </View>
+          ) : null}
+          {showUsdaSection && logFoodInlineUsda.error ? (
+            <Text style={styles.logFoodSuggestError}>{logFoodInlineUsda.error}</Text>
+          ) : null}
+          {showUsdaSection && logFoodInlineUsda.results.length > 0 ? (
+            <>
+              <Text
+                style={[styles.logFoodSuggestHeaderUsda, yourFoods.length > 0 && { marginTop: 10 }]}
+              >
+                USDA (Foundation & SR Legacy)
               </Text>
-            ) : null}
-          </ScrollView>
+              {logFoodInlineUsda.results.map((hit) => (
+                <TouchableOpacity
+                  key={`usda-${hit.fdcId}`}
+                  style={styles.logFoodSuggestRow}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    void applyUsdaHitToLogFoodForm(hit);
+                  }}
+                  activeOpacity={0.78}
+                >
+                  <Text style={styles.logFoodSuggestTitle}>{hit.description}</Text>
+                  <Text style={styles.logFoodSuggestSub}>
+                    {hit.dataType ?? 'Food'}
+                    {hit.foodCategory ? ` · ${hit.foodCategory}` : ''}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </>
+          ) : null}
+          {showUsdaSection &&
+          !logFoodInlineUsda.loading &&
+          !logFoodInlineUsda.error &&
+          logFoodInlineUsda.results.length === 0 &&
+          yourFoods.length === 0 ? (
+            <Text style={styles.logFoodSuggestMuted}>No matches in your log or USDA yet.</Text>
+          ) : null}
+          {showUsdaSection &&
+          !logFoodInlineUsda.loading &&
+          !logFoodInlineUsda.error &&
+          logFoodInlineUsda.results.length === 0 &&
+          yourFoods.length > 0 ? (
+            <Text style={[styles.logFoodSuggestMuted, { marginTop: 8 }]}>
+              No USDA matches — pick one of your foods above or keep typing.
+            </Text>
+          ) : null}
         </View>
       );
     };
@@ -3802,6 +3815,7 @@ export default function FitnessScreen({
     const totalMealWeightLabel = `${totalLogAmountStr} ${unitShort[mealInput.servingUnit] ?? mealInput.servingUnit}`;
 
     const openLogFood = () => {
+      resetLogFoodForm();
       setLogFoodSlot(defaultSlotNow());
       setShowLogFoodModal(true);
     };
@@ -4072,6 +4086,21 @@ export default function FitnessScreen({
               </TouchableOpacity>
             </View>
 
+            <View style={[styles.nuQuickRow, { marginTop: 8 }]}>
+              <TouchableOpacity
+                style={[styles.nuQuickTile, styles.nuQuickAmber]}
+                onPress={() => onOpenNutritionQuestionnaire?.()}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Food profile questionnaire"
+              >
+                <Text style={styles.nuQuickIcon}>📝</Text>
+                <Text style={styles.nuQuickLabel}>
+                  Food{'\n'}profile
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {eatingOutCoachHistory.length > 0 ? (
               <TouchableOpacity
                 style={styles.eatingOutHistoryBar}
@@ -4157,7 +4186,11 @@ export default function FitnessScreen({
                         <Text style={[styles.nuModalClose, styles.nuModalNavArrow]}>←</Text>
                       </TouchableOpacity>
                     ) : (
-                      <Text style={styles.logFoodTitle}>Log Food</Text>
+                      <Text style={styles.logFoodTitle}>
+                        {isLoggingForPastDay
+                          ? `Log Food · ${formatHistoryDateLabel(effectiveLogFoodDateKey)}`
+                          : 'Log Food'}
+                      </Text>
                     )}
                     <TouchableOpacity onPress={() => setShowLogFoodModal(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                       <Text style={styles.nuModalClose}>Done</Text>
@@ -4165,6 +4198,60 @@ export default function FitnessScreen({
                   </View>
                   {logFoodSavedPickerOpen ? (
                     <Text style={[styles.logFoodPanelTitle, { marginBottom: 14 }]}>Saved meals</Text>
+                  ) : (
+                    <View style={styles.logFoodDayRow}>
+                      <View style={styles.logFoodDayCopy}>
+                        <Text style={styles.logFoodDayLabel}>Day</Text>
+                        <Text style={styles.logFoodDayValue}>
+                          {isLoggingForPastDay
+                            ? formatHistoryDateLabel(effectiveLogFoodDateKey)
+                            : 'Today'}
+                        </Text>
+                      </View>
+                      <View style={styles.logFoodDayActions}>
+                        {isLoggingForPastDay ? (
+                          <TouchableOpacity
+                            style={styles.logFoodDayChip}
+                            onPress={() => setLogFoodTargetDateKey(null)}
+                            hitSlop={8}
+                          >
+                            <Text style={styles.logFoodDayChipText}>Today</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        <TouchableOpacity
+                          style={[styles.logFoodDayChip, styles.logFoodDayChipPrimary]}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setShowLogFoodDatePicker(true);
+                          }}
+                          hitSlop={8}
+                        >
+                          <Text style={[styles.logFoodDayChipText, styles.logFoodDayChipTextPrimary]}>
+                            {isLoggingForPastDay ? 'Change' : 'Past day'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {showLogFoodDatePicker ? (
+                    <View style={styles.logFoodDatePickerWrap}>
+                      {Platform.OS === 'ios' ? (
+                        <View style={styles.logFoodDatePickerIosBar}>
+                          <TouchableOpacity onPress={() => setShowLogFoodDatePicker(false)} hitSlop={10}>
+                            <Text style={styles.logFoodDatePickerDone}>Done</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                      <DateTimePicker
+                        value={dateKeyToLocalDate(effectiveLogFoodDateKey)}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        maximumDate={new Date()}
+                        onChange={handleLogFoodDateChange}
+                        themeVariant="dark"
+                      />
+                    </View>
                   ) : null}
 
                   <ScrollView
@@ -4172,7 +4259,6 @@ export default function FitnessScreen({
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
                     showsVerticalScrollIndicator={false}
-                    nestedScrollEnabled
                     bounces={Platform.OS === 'ios'}
                   >
                     {logFoodSavedPickerOpen ? (
@@ -4907,6 +4993,11 @@ export default function FitnessScreen({
         >
           <View style={styles.nuModalOverlay}>
             <View style={[styles.nuModalCard, styles.eatingOutHistoryModalCard]}>
+              <ScrollView
+                style={styles.eatingOutHistoryScroll}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
               <View style={styles.eatingOutHistoryModalHeader}>
                 <Text style={styles.nuModalTitle}>Past inquiries</Text>
                 <View style={styles.eatingOutHistoryModalHeaderActions}>
@@ -4943,8 +5034,7 @@ export default function FitnessScreen({
               <Text style={styles.eatingOutHistoryModalHint}>
                 Results stay on your phone so you can reopen them if the connection drops.
               </Text>
-              <ScrollView style={styles.eatingOutHistoryScroll} keyboardShouldPersistTaps="handled">
-                {eatingOutCoachHistory.map((item) => (
+              {eatingOutCoachHistory.map((item) => (
                   <TouchableOpacity
                     key={item.id}
                     style={styles.eatingOutHistoryRow}
@@ -5069,93 +5159,90 @@ export default function FitnessScreen({
         >
           <View style={styles.nuModalOverlay}>
             <View style={[styles.nuModalCard, { maxHeight: '88%' }]}>
-              {mealSlotSheet
-                ? (() => {
-                    const list = todayMeals.filter((m) => inferMealSlot(m) === mealSlotSheet);
-                    const t = list.reduce(
-                      (a, m) => ({
-                        cal: a.cal + (Number(m.calories) || 0),
-                        p: a.p + (Number(m.protein) || 0),
-                        c: a.c + (Number(m.carbs) || 0),
-                        f: a.f + (Number(m.fat) || 0),
-                      }),
-                      { cal: 0, p: 0, c: 0, f: 0 }
-                    );
-                    const slotLabel = mealSlotRows.find((r) => r.id === mealSlotSheet)?.label ?? '';
-                    return (
-                      <>
-                        <View style={styles.mealSlotSheetTopBar}>
-                          <Text style={styles.mealSlotSheetTitle}>{slotLabel}</Text>
-                          <TouchableOpacity
-                            style={styles.mealSlotSheetCloseBtn}
-                            onPress={() => {
-                              setMealSlotSheet(null);
-                            }}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                          >
-                            <Text style={styles.nuModalClose}>Close</Text>
-                          </TouchableOpacity>
-                        </View>
-                        {renderLogFoodStyleNutritionBlock(
-                          { calories: t.cal, protein: t.p, carbs: t.c, fat: t.f },
-                          { panelTitle: 'Meal total' }
-                        )}
-                      </>
-                    );
-                  })()
-                : null}
               <ScrollView showsVerticalScrollIndicator={false} style={styles.mealSlotSheetScroll}>
-                {mealSlotSheet &&
-                  todayMeals
-                    .filter((m) => inferMealSlot(m) === mealSlotSheet)
-                    .map((meal) => {
-                      const portionLine = formatMealPortionLine(meal);
+                {mealSlotSheet
+                  ? (() => {
+                      const list = todayMeals.filter((m) => inferMealSlot(m) === mealSlotSheet);
+                      const t = list.reduce(
+                        (a, m) => ({
+                          cal: a.cal + (Number(m.calories) || 0),
+                          p: a.p + (Number(m.protein) || 0),
+                          c: a.c + (Number(m.carbs) || 0),
+                          f: a.f + (Number(m.fat) || 0),
+                        }),
+                        { cal: 0, p: 0, c: 0, f: 0 }
+                      );
+                      const slotLabel = mealSlotRows.find((r) => r.id === mealSlotSheet)?.label ?? '';
                       return (
-                        <View key={meal.id} style={styles.mealSlotItemRow}>
+                        <>
+                          <View style={styles.mealSlotSheetTopBar}>
+                            <Text style={styles.mealSlotSheetTitle}>{slotLabel}</Text>
+                            <TouchableOpacity
+                              style={styles.mealSlotSheetCloseBtn}
+                              onPress={() => {
+                                setMealSlotSheet(null);
+                              }}
+                              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            >
+                              <Text style={styles.nuModalClose}>Close</Text>
+                            </TouchableOpacity>
+                          </View>
+                          {renderLogFoodStyleNutritionBlock(
+                            { calories: t.cal, protein: t.p, carbs: t.c, fat: t.f },
+                            { panelTitle: 'Meal total' }
+                          )}
+                          {list.map((meal) => {
+                            const portionLine = formatMealPortionLine(meal);
+                            return (
+                              <View key={meal.id} style={styles.mealSlotItemRow}>
+                                <TouchableOpacity
+                                  style={styles.mealSlotItemMainTap}
+                                  onPress={() => openMealInLogFoodForEdit(meal)}
+                                  activeOpacity={0.85}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`View ${meal.name} nutrition`}
+                                >
+                                  <View style={styles.mealSlotItemTextCol}>
+                                    <Text style={styles.mealSlotItemName}>{meal.name}</Text>
+                                    {portionLine ? (
+                                      <Text style={styles.mealSlotItemPortion}>{portionLine}</Text>
+                                    ) : null}
+                                  </View>
+                                  <Text style={styles.nuChevron}>›</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.mealCopyBtnCompact}
+                                  onPress={() => {
+                                    setMealSlotSheet(null);
+                                    startCopyMealToDay(meal);
+                                  }}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityLabel={`Copy ${meal.name} to another day`}
+                                >
+                                  <Text style={styles.mealCopyBtnText}>Copy</Text>
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
+                          {list.length === 0 ? (
+                            <Text style={styles.nuDetailsTextMuted}>Nothing logged for this meal yet.</Text>
+                          ) : null}
                           <TouchableOpacity
-                            style={styles.mealSlotItemMainTap}
-                            onPress={() => openMealInLogFoodForEdit(meal)}
-                            activeOpacity={0.85}
-                            accessibilityRole="button"
-                            accessibilityLabel={`View ${meal.name} nutrition`}
-                          >
-                            <View style={styles.mealSlotItemTextCol}>
-                              <Text style={styles.mealSlotItemName}>{meal.name}</Text>
-                              {portionLine ? (
-                                <Text style={styles.mealSlotItemPortion}>{portionLine}</Text>
-                              ) : null}
-                            </View>
-                            <Text style={styles.nuChevron}>›</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.mealCopyBtnCompact}
+                            style={[styles.nuModalPrimary, { marginTop: 12, marginBottom: 8 }]}
                             onPress={() => {
                               setMealSlotSheet(null);
-                              startCopyMealToDay(meal);
+                              setLogFoodEditingMealId(null);
+                              setLogFoodSlot(mealSlotSheet || defaultSlotNow());
+                              setShowLogFoodModal(true);
                             }}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            accessibilityLabel={`Copy ${meal.name} to another day`}
                           >
-                            <Text style={styles.mealCopyBtnText}>Copy</Text>
+                            <Text style={styles.nuModalPrimaryText}>Add to this meal</Text>
                           </TouchableOpacity>
-                        </View>
+                        </>
                       );
-                    })}
-                {mealSlotSheet && todayMeals.filter((m) => inferMealSlot(m) === mealSlotSheet).length === 0 && (
-                  <Text style={styles.nuDetailsTextMuted}>Nothing logged for this meal yet.</Text>
-                )}
+                    })()
+                  : null}
               </ScrollView>
-              <TouchableOpacity
-                style={[styles.nuModalPrimary, { marginTop: 12 }]}
-                onPress={() => {
-                  setMealSlotSheet(null);
-                  setLogFoodEditingMealId(null);
-                  setLogFoodSlot(mealSlotSheet || defaultSlotNow());
-                  setShowLogFoodModal(true);
-                }}
-              >
-                <Text style={styles.nuModalPrimaryText}>Add to this meal</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -5502,12 +5589,7 @@ export default function FitnessScreen({
       <SavedPlanViewScreen
         plan={selectedSavedPlan}
         autoStartSuggested={savedPlanAutoStartSuggested}
-        onBack={() => {
-          setSavedPlanAutoStartSuggested(false);
-          setSelectedSavedPlan(null);
-          loadSavedWorkoutPlans();
-          loadWorkoutHistory();
-        }}
+        onBack={clearSavedPlanNavigation}
         onEditPlan={(plan) => {
           setSavedPlanAutoStartSuggested(false);
           setSelectedSavedPlan(null);
@@ -5572,9 +5654,7 @@ export default function FitnessScreen({
           ) : activeTab === 'nutrition' ? (
             renderNutrition()
           ) : (
-            <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-              {activeTab === 'history' && renderHistory()}
-            </ScrollView>
+            renderHistory()
           )}
         </TabSwipeNavigation>
       </View>
@@ -6205,7 +6285,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   eatingOutHistoryScroll: {
-    maxHeight: 420,
+    flexGrow: 1,
   },
   eatingOutHistoryRow: {
     borderBottomWidth: 1,
@@ -6839,7 +6919,6 @@ const styles = StyleSheet.create({
   },
   logFoodSuggestPanel: {
     marginTop: 12,
-    maxHeight: 400,
     backgroundColor: AppTheme.card,
     borderRadius: AppTheme.radiusCard,
     borderWidth: 1,
@@ -6847,12 +6926,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 8,
     marginBottom: 0,
-  },
-  logFoodSuggestScroll: {
-    maxHeight: 360,
-  },
-  logFoodSuggestScrollContent: {
-    paddingBottom: 6,
   },
   logFoodSuggestHeader: {
     fontSize: 13,
@@ -7843,21 +7916,26 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 4,
-    position: 'relative',
+    borderRadius: 8,
+    // Reserve border space so selection outline does not shift the digit
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   calendarDayToday: {
     backgroundColor: '#2a4a2a',
-    borderRadius: 8,
+    borderColor: '#9a9a9a',
   },
-  calendarDayWithWorkout: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
+  calendarDaySelected: {
+    borderColor: '#9a9a9a',
+  },
+  calendarDayLogged: {
+    backgroundColor: '#2a4a2a',
+  },
+  calendarDayMissed: {
+    backgroundColor: '#4a2a2a',
   },
   calendarDayCopyMode: {
-    borderWidth: 1,
     borderColor: 'rgba(126, 182, 255, 0.45)',
-    borderRadius: 8,
     borderStyle: 'dashed',
   },
   calendarDayCopySource: {
@@ -7901,13 +7979,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#fff',
     fontWeight: '500',
+    textAlign: 'center',
+    // Optical center: iOS digit glyphs sit slightly low in the line box
+    marginBottom: 2,
   },
   calendarDayNumberToday: {
     color: '#00ff88',
     fontWeight: 'bold',
   },
-  calendarDayNumberWithWorkout: {
+  calendarDayNumberLogged: {
     color: '#00ff88',
+    fontWeight: '600',
+  },
+  calendarDayNumberMissed: {
+    color: '#ff6b6b',
+    fontWeight: '600',
   },
   workoutIndicator: {
     position: 'absolute',
@@ -7945,6 +8031,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#2a4a2a',
     borderWidth: 2,
     borderColor: '#00ff88',
+  },
+  legendDotLogged: {
+    backgroundColor: '#2a4a2a',
+    borderWidth: 2,
+    borderColor: '#00ff88',
+  },
+  legendDotMissed: {
+    backgroundColor: '#4a2a2a',
+    borderWidth: 2,
+    borderColor: '#ff6b6b',
   },
   legendDotWorkout: {
     backgroundColor: '#00ff88',
@@ -8108,6 +8204,92 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     padding: 20,
+  },
+  dayDetailEmptyInline: {
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+  historyLogFoodBtn: {
+    marginTop: 12,
+    alignSelf: 'center',
+    backgroundColor: '#2a4a2a',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  historyLogFoodBtnText: {
+    color: '#00ff88',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  logFoodDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingHorizontal: 2,
+    gap: 10,
+  },
+  logFoodDayCopy: {
+    flex: 1,
+  },
+  logFoodDayLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: AppTheme.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  logFoodDayValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
+  },
+  logFoodDayActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  logFoodDayChip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#121212',
+  },
+  logFoodDayChipPrimary: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0,255,136,0.1)',
+  },
+  logFoodDayChipText: {
+    color: AppTheme.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  logFoodDayChipTextPrimary: {
+    color: AppTheme.accent,
+  },
+  logFoodDatePickerWrap: {
+    marginBottom: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#121212',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  logFoodDatePickerIosBar: {
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+  },
+  logFoodDatePickerDone: {
+    color: AppTheme.accent,
+    fontSize: 15,
+    fontWeight: '700',
   },
   historyItem: {
     backgroundColor: '#2a2a2a',

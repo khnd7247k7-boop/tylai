@@ -68,6 +68,8 @@ export type TourFitnessIntent = {
   buildWorkout?: boolean;
   aiWorkout?: boolean;
   planPreview?: boolean;
+  /** Open the active plan and launch today's workout session directly. */
+  startTodayWorkout?: boolean;
   closeAll?: boolean;
 };
 

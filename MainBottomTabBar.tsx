@@ -9,7 +9,7 @@ import { useTourTargetRef } from './src/tour/useTourTargetRef';
 /** Vertical space for tab chrome only (paddingTop + bar row); safe-area inset is added separately by callers. */
 export const MAIN_TAB_BAR_CHROME_HEIGHT = 78;
 
-export type MainBottomTabId = 'dashboard' | 'workouts' | 'nutrition' | 'mindset' | 'more';
+export type MainBottomTabId = 'dashboard' | 'workouts' | 'nutrition' | 'progress' | 'more';
 
 interface MainBottomTabBarProps {
   activeTab: MainBottomTabId;
@@ -49,13 +49,13 @@ function NutritionIcon({ active }: { active: boolean }) {
   );
 }
 
-function MindsetIcon({ active }: { active: boolean }) {
+function ProgressIcon({ active }: { active: boolean }) {
   const c = active ? activeColor : inactiveColor;
   return (
-    <View style={styles.headIcon}>
-      <View style={[styles.headOutline, { borderColor: c }]}>
-        <View style={[styles.headDot, { backgroundColor: c }]} />
-      </View>
+    <View style={styles.progressIcon}>
+      <View style={[styles.progressBar, styles.progressBarShort, { backgroundColor: c }]} />
+      <View style={[styles.progressBar, styles.progressBarMid, { backgroundColor: c }]} />
+      <View style={[styles.progressBar, styles.progressBarTall, { backgroundColor: c }]} />
     </View>
   );
 }
@@ -82,7 +82,7 @@ export default function MainBottomTabBar({ activeTab, onTabPress }: MainBottomTa
     { id: 'dashboard', label: 'Dashboard', Icon: DashboardIcon },
     { id: 'workouts', label: 'Workouts', Icon: WorkoutsIcon },
     { id: 'nutrition', label: 'Nutrition', Icon: NutritionIcon },
-    { id: 'mindset', label: 'Mental', Icon: MindsetIcon },
+    { id: 'progress', label: 'Progress', Icon: ProgressIcon },
     { id: 'more', label: 'More', Icon: MoreIcon },
   ];
 
@@ -247,24 +247,27 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     textAlign: 'center',
   },
-  headIcon: {
-    alignItems: 'center',
+  progressIcon: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
     justifyContent: 'center',
-    height: 24,
+    height: 22,
+    gap: 3,
   },
-  headOutline: {
-    width: 18,
-    height: 20,
-    borderRadius: 12,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 4,
-  },
-  headDot: {
+  progressBar: {
     width: 5,
-    height: 5,
-    borderRadius: 3,
+    borderRadius: 2,
+  },
+  progressBarShort: {
+    height: 8,
+    opacity: 0.55,
+  },
+  progressBarMid: {
+    height: 14,
+    opacity: 0.8,
+  },
+  progressBarTall: {
+    height: 20,
   },
   moreRow: {
     flexDirection: 'row',

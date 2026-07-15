@@ -158,6 +158,9 @@ const USER_DATA_BASE_KEYS = [
   'interfaceSettings',
   'userPreferences',
   'customExerciseLibrary_v1',
+  'progressPhotoSessions',
+  'progressPhotoSettings',
+  'weightEntries',
 ] as const;
 
 function parseUserStorageKey(key: string): { userId: string; baseKey: string } | null {
@@ -220,8 +223,8 @@ export async function migrateLegacyUnprefixedKeysToCurrentUser(): Promise<number
 }
 
 /**
- * If the signed-in user has no data but exactly one other UID does on this device,
- * copy that data to the current user (same email often gets a new UID after a new Firebase project).
+ * If exactly one other UID has data on this device, copy any missing keys to the signed-in user.
+ * Also runs when the current user already has some categories (fills gaps like savedMeals).
  */
 export async function tryRecoverOrphanedUserDataOnDevice(): Promise<{
   recovered: boolean;
@@ -232,22 +235,6 @@ export async function tryRecoverOrphanedUserDataOnDevice(): Promise<{
   if (!currentUid) return { recovered: false, keysCopied: 0 };
 
   let keysCopied = await migrateLegacyUnprefixedKeysToCurrentUser();
-
-  const workoutKey = await getUserStorageKey('workoutHistory');
-  const mealsKey = await getUserStorageKey('meals');
-  const moodKey = await getUserStorageKey('moodEntries');
-  const goalsKey = await getUserStorageKey('nutritionGoals');
-  const profileKey = await getUserStorageKey('userProfile');
-  const hasCurrent =
-    (workoutKey && (await AsyncStorage.getItem(workoutKey)) != null) ||
-    (mealsKey && (await AsyncStorage.getItem(mealsKey)) != null) ||
-    (moodKey && (await AsyncStorage.getItem(moodKey)) != null) ||
-    (goalsKey && (await AsyncStorage.getItem(goalsKey)) != null) ||
-    (profileKey && (await AsyncStorage.getItem(profileKey)) != null);
-
-  if (hasCurrent) {
-    return { recovered: keysCopied > 0, keysCopied };
-  }
 
   const uids = await getUserIdsWithStoredData();
   const others = uids.filter((id) => id !== currentUid);

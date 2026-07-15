@@ -3,6 +3,7 @@ import type { SubscriptionTier } from '../constants/featureTiers';
 import Constants from 'expo-constants';
 import { isTestFlightInstall } from './testFlightAccess';
 import { checkStripePaidBetaAccess } from '../services/betaAccessService';
+import { currentUserHasDeveloperPremiumAccess } from './developerPremiumAccess';
 
 const STORAGE_KEY = 'subscriptionTier';
 
@@ -82,6 +83,11 @@ export async function testFlightGrantsPremium(): Promise<boolean> {
  */
 export async function resolveSubscriptionTier(): Promise<SubscriptionTier> {
   if (envGrantsPremium()) return 'premium';
+
+  if (currentUserHasDeveloperPremiumAccess()) {
+    await saveSubscriptionTier('premium');
+    return 'premium';
+  }
 
   if (await isTestFlightInstall()) {
     const paid = await checkStripePaidBetaAccess();

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
 import { AppTheme } from '../theme/appVisualTheme';
 import type { LogFoodItem } from '../types/nutritionLogging';
@@ -13,9 +13,32 @@ type Props = {
   onChange: (items: LogFoodItem[]) => void;
 };
 
-function parseQty(text: string): number {
-  const n = parseFloat(text.replace(/,/g, ''));
-  return Number.isFinite(n) && n > 0 ? n : 1;
+/** Human-friendly quantity string (supports decimals like 0.5 / 1.5). */
+function formatQty(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '1';
+  const rounded = Math.round(n * 1000) / 1000;
+  return String(rounded);
+}
+
+/** Parse a quantity while typing — null means incomplete (keep draft, don't snap). */
+function parseQtyDraft(text: string): number | null {
+  const cleaned = text.trim().replace(/,/g, '');
+  if (cleaned === '' || cleaned === '.' || cleaned === '0.') return null;
+  if (!/^\d*\.?\d*$/.test(cleaned)) return null;
+  const n = parseFloat(cleaned);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 1000) / 1000;
+}
+
+function sanitizeQtyInput(text: string): string {
+  // Allow digits and a single decimal point so users can type 1.5 / .5 freely.
+  let cleaned = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+  const firstDot = cleaned.indexOf('.');
+  if (firstDot !== -1) {
+    cleaned =
+      cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+  }
+  return cleaned;
 }
 
 function parseMacro(text: string): number {
@@ -25,9 +48,52 @@ function parseMacro(text: string): number {
 
 export default function LogFoodItemBreakdown({ items, onChange }: Props) {
   const totals = sumLogFoodItemMacros(items);
+  /** Draft qty text per item so partial decimals ("1.", ".5") don't snap back to 1. */
+  const [qtyDraftById, setQtyDraftById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const ids = new Set(items.map((item) => item.id));
+    setQtyDraftById((prev) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [id, text] of Object.entries(prev)) {
+        if (ids.has(id)) next[id] = text;
+        else changed = true;
+      }
+      return changed || Object.keys(next).length !== Object.keys(prev).length ? next : prev;
+    });
+  }, [items]);
 
   const updateItem = (id: string, patch: Partial<LogFoodItem>) => {
     onChange(items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const qtyTextFor = (item: LogFoodItem): string =>
+    Object.prototype.hasOwnProperty.call(qtyDraftById, item.id)
+      ? qtyDraftById[item.id]
+      : formatQty(item.quantity);
+
+  const handleQtyChange = (id: string, text: string) => {
+    const cleaned = sanitizeQtyInput(text);
+    setQtyDraftById((prev) => ({ ...prev, [id]: cleaned }));
+    const parsed = parseQtyDraft(cleaned);
+    if (parsed != null) {
+      updateItem(id, { quantity: parsed });
+    }
+  };
+
+  const commitQty = (id: string) => {
+    const draft = qtyDraftById[id];
+    const item = items.find((row) => row.id === id);
+    const parsed = draft != null ? parseQtyDraft(draft) : null;
+    const finalQty =
+      parsed != null
+        ? parsed
+        : item && item.quantity > 0
+          ? item.quantity
+          : 1;
+    updateItem(id, { quantity: finalQty });
+    setQtyDraftById((prev) => ({ ...prev, [id]: formatQty(finalQty) }));
   };
 
   const updateScaledMacro = (
@@ -57,7 +123,7 @@ export default function LogFoodItemBreakdown({ items, onChange }: Props) {
     <View style={styles.panel}>
       <Text style={styles.title}>What you ate (edit items & amounts)</Text>
       <Text style={styles.hint}>
-        Adjust portions, rename items, or change macros. Meal totals update automatically.
+        Change × Qty to scale an item (e.g. 0.5 or 1.5). Macros update automatically.
       </Text>
 
       {items.map((item, index) => {
@@ -103,11 +169,14 @@ export default function LogFoodItemBreakdown({ items, onChange }: Props) {
                 <Text style={styles.fieldLabel}>× Qty</Text>
                 <TextInput
                   style={styles.textInput}
-                  value={String(item.quantity)}
-                  onChangeText={(text) => updateItem(item.id, { quantity: parseQty(text) })}
+                  value={qtyTextFor(item)}
+                  onChangeText={(text) => handleQtyChange(item.id, text)}
+                  onBlur={() => commitQty(item.id)}
                   placeholder="1"
                   placeholderTextColor={AppTheme.textFaint}
                   keyboardType="decimal-pad"
+                  selectTextOnFocus
+                  accessibilityLabel={`Quantity multiplier for ${item.name}`}
                 />
               </View>
             </View>
@@ -235,7 +304,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   qtyCol: {
-    width: 72,
+    width: 88,
   },
   macroRow: {
     flexDirection: 'row',

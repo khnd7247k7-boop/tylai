@@ -59,12 +59,29 @@ function typeStyles(type: ToastType | undefined) {
   }
 }
 
+function isEphemeral(item: AppNotificationPayload): boolean {
+  return !item.persistent && !(item.actions && item.actions.length > 0);
+}
+
+function sameBanner(a: AppNotificationPayload, b: AppNotificationPayload): boolean {
+  return (
+    (a.title ?? '') === (b.title ?? '') &&
+    (a.lines ?? []).join('\n') === (b.lines ?? []).join('\n') &&
+    (a.type ?? 'info') === (b.type ?? 'info')
+  );
+}
+
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const insets = useSafeAreaInsets();
   const [queue, setQueue] = useState<ActiveNotification[]>([]);
   const [active, setActive] = useState<ActiveNotification | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idCounter = useRef(0);
+  const activeRef = useRef<ActiveNotification | null>(null);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -96,19 +113,41 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const id = `notice-${Date.now()}-${idCounter.current++}`;
       const entry: ActiveNotification = { ...payload, id };
       void recordNotificationCenterEntry(id, payload);
-      setQueue((prev) => [...prev, entry]);
+
+      if (isEphemeral(payload)) {
+        clearTimer();
+        const current = activeRef.current;
+        // Replace the visible auto-toast immediately — do not enqueue another copy.
+        if (current && isEphemeral(current)) {
+          setActive(entry);
+          setQueue((prev) => prev.filter((item) => !isEphemeral(item)));
+          return id;
+        }
+        setQueue((prev) => {
+          const kept = prev.filter((item) => !isEphemeral(item));
+          if (kept.some((item) => sameBanner(item, payload))) return kept;
+          return [...kept, entry];
+        });
+        return id;
+      }
+
+      setQueue((prev) => {
+        // Avoid identical interactive banners piling up from double taps.
+        if (prev.some((item) => sameBanner(item, payload))) return prev;
+        if (activeRef.current && sameBanner(activeRef.current, payload)) return prev;
+        return [...prev, entry];
+      });
       return id;
     },
-    []
+    [clearTimer]
   );
 
   const showToast = useCallback(
-    (message: string, type: ToastType = 'info', durationMs: number = 2500) => {
+    (message: string, type: ToastType = 'info', durationMs: number = 2200) => {
       showNotification({
         lines: message.split('\n').filter(Boolean),
         type,
         durationMs,
-        actions: [{ label: 'OK' }],
       });
     },
     [showNotification]
@@ -130,11 +169,14 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     clearTimer();
     if (!active) return;
 
-    const autoDismiss = !active.persistent && active.durationMs != null && active.durationMs > 0;
+    const autoDismiss =
+      !active.persistent &&
+      ((active.durationMs != null && active.durationMs > 0) || isEphemeral(active));
     if (autoDismiss) {
+      const ms = active.durationMs != null && active.durationMs > 0 ? active.durationMs : 2400;
       timerRef.current = setTimeout(
         () => dismissNotification(active.id, { invokeOnDismiss: true }),
-        active.durationMs
+        ms
       );
     }
     return clearTimer;
@@ -164,7 +206,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           pointerEvents="box-none"
           style={[styles.host, { paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 8 : 12) }]}
         >
-          <View style={[styles.card, palette.card]}>
+          <View style={[styles.card, palette.card]} pointerEvents="auto">
             <View style={[styles.accentBar, { backgroundColor: palette.accent }]} />
             <View style={styles.content}>
               <View style={styles.headerRow}>

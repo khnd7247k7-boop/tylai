@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState, useDeferredValue } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useDeferredValue, memo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,7 +13,9 @@ import {
   Pressable,
 } from 'react-native';
 import { AppTextInput as TextInput } from './src/components/AppTextInput';
-import DraggableFlatList, {
+import {
+  NestableDraggableFlatList,
+  NestableScrollContainer,
   type RenderItemParams,
   ScaleDecorator,
 } from 'react-native-draggable-flatlist';
@@ -21,7 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { WorkoutProgram, Exercise, WorkoutSession } from './data/workoutPrograms';
 import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
-import { exerciseDatabase, ExerciseData } from './src/data/exerciseDatabase';
+import { exerciseDatabase } from './src/data/exerciseDatabase';
 import { useSmallWins } from './src/context/SmallWinsContext';
 import { AppTheme } from './src/theme/appVisualTheme';
 import {
@@ -38,6 +40,14 @@ import {
   sortWeeklyTrainingDays,
   scheduleModeDescription,
 } from './src/utils/customWorkoutPlan';
+import {
+  buildSupersetLetterMap,
+  cleanupSingletonSupersets,
+  formatSupersetTag,
+  groupExercisesAsSuperset,
+  normalizeSupersetContiguity,
+  ungroupExercises,
+} from './src/utils/workoutSupersets';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
 
@@ -49,6 +59,7 @@ interface BuildYourOwnWorkoutScreenProps {
 }
 
 const MAX_PROGRAM_WEEKS = 12;
+const EXERCISE_ROW_HEIGHT = 56;
 
 const DAYS_OF_WEEK = [
   'Monday',
@@ -59,6 +70,34 @@ const DAYS_OF_WEEK = [
   'Saturday',
   'Sunday',
 ];
+
+type ExerciseLibraryRowProps = {
+  name: string;
+  selected: boolean;
+  onToggle: (name: string) => void;
+};
+
+const ExerciseLibraryRow = memo(function ExerciseLibraryRow({
+  name,
+  selected,
+  onToggle,
+}: ExerciseLibraryRowProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.exerciseItem, selected && styles.exerciseItemSelected]}
+      onPress={() => onToggle(name)}
+      activeOpacity={0.7}
+    >
+      <Text
+        style={[styles.exerciseItemText, selected && styles.exerciseItemTextSelected]}
+        numberOfLines={1}
+      >
+        {name}
+      </Text>
+      {selected ? <Text style={styles.checkmark}>✓</Text> : null}
+    </TouchableOpacity>
+  );
+});
 
 export default function BuildYourOwnWorkoutScreen({
   onBack,
@@ -87,6 +126,8 @@ export default function BuildYourOwnWorkoutScreen({
   const deferredExerciseSearchQuery = useDeferredValue(exerciseSearchQuery);
   const [showCustomExerciseInput, setShowCustomExerciseInput] = useState(false);
   const [customExerciseName, setCustomExerciseName] = useState('');
+  /** Local draft so typing the workout name doesn't re-render the exercise list every keystroke. */
+  const [dayNameDraft, setDayNameDraft] = useState('');
   
   // Exercise configuration
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
@@ -96,6 +137,12 @@ export default function BuildYourOwnWorkoutScreen({
   const [configReps, setConfigReps] = useState('10');
   const [configWeight, setConfigWeight] = useState('0');
   const [configRestTime, setConfigRestTime] = useState('60');
+  /** 'reps' = sets × reps logging; 'timed' = timed hold(s). */
+  const [configLoggingMode, setConfigLoggingMode] = useState<'reps' | 'timed'>('reps');
+  const [configDurationSeconds, setConfigDurationSeconds] = useState('45');
+  /** Exercise ids selected for creating / ungrouping a superset. */
+  const [supersetPickIds, setSupersetPickIds] = useState<string[]>([]);
+  const [showMoreCommonExercises, setShowMoreCommonExercises] = useState(false);
   
   const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
 
@@ -180,27 +227,59 @@ export default function BuildYourOwnWorkoutScreen({
     setRenameDraft('');
   };
 
-  const updateCurrentDayWorkoutName = (name: string) => {
-    if (currentWeekIndex < 0 || currentDayIndex < 0) return;
-    setProgramWeeks((prev) => {
-      const next = [...prev];
-      const days = [...next[currentWeekIndex].dayWorkouts];
-      days[currentDayIndex] = { ...days[currentDayIndex], workoutName: name };
-      next[currentWeekIndex] = { ...next[currentWeekIndex], dayWorkouts: days };
-      return next;
-    });
-  };
+  const updateCurrentDayWorkoutName = useCallback(
+    (name: string) => {
+      if (currentWeekIndex < 0 || currentDayIndex < 0) return;
+      setProgramWeeks((prev) => {
+        const next = [...prev];
+        const days = [...next[currentWeekIndex].dayWorkouts];
+        days[currentDayIndex] = { ...days[currentDayIndex], workoutName: name };
+        next[currentWeekIndex] = { ...next[currentWeekIndex], dayWorkouts: days };
+        return next;
+      });
+    },
+    [currentWeekIndex, currentDayIndex]
+  );
 
   const filteredExercises = useMemo(() => {
     const q = deferredExerciseSearchQuery.trim().toLowerCase();
     const matched = q
       ? exerciseDatabase.filter((ex) => ex.name.toLowerCase().includes(q))
       : exerciseDatabase;
-    // Avoid rendering hundreds of rows in a clipped box; search narrows the list.
-    return matched.slice(0, q ? 80 : 40);
-  }, [deferredExerciseSearchQuery]);
+    if (q) return matched.slice(0, 120);
+    return matched.slice(0, showMoreCommonExercises ? 60 : 8);
+  }, [deferredExerciseSearchQuery, showMoreCommonExercises]);
 
   const exerciseSearchActive = deferredExerciseSearchQuery.trim().length > 0;
+  const commonExercisesTotal = useMemo(() => {
+    if (exerciseSearchActive) return filteredExercises.length;
+    return Math.min(60, exerciseDatabase.length);
+  }, [exerciseSearchActive, filteredExercises.length]);
+
+  const selectedExerciseNames = useMemo(
+    () => new Set(currentDayExercises.map((ex) => ex.name)),
+    [currentDayExercises]
+  );
+
+  /** Single source write for the day's exercise list (avoids double setState). */
+  const commitDayExercises = useCallback(
+    (updated: CustomExercise[]) => {
+      const cleaned = cleanupSingletonSupersets(updated);
+      setCurrentDayExercises(cleaned);
+      setSupersetPickIds((prev) => prev.filter((id) => cleaned.some((ex) => ex.id === id)));
+      if (currentWeekIndex < 0 || currentDayIndex < 0) return;
+      setProgramWeeks((prev) => {
+        const next = [...prev];
+        const week = next[currentWeekIndex];
+        if (!week) return prev;
+        const days = [...week.dayWorkouts];
+        days[currentDayIndex] = { ...days[currentDayIndex], exercises: cleaned };
+        next[currentWeekIndex] = { ...week, dayWorkouts: days };
+        return next;
+      });
+    },
+    [currentWeekIndex, currentDayIndex]
+  );
 
   const handleToggleDay = (day: string) => {
     if (trainingDays.includes(day)) {
@@ -253,36 +332,23 @@ export default function BuildYourOwnWorkoutScreen({
     setCurrentDayIndex(0);
     setCurrentDayExercises([]);
     setExerciseSearchQuery('');
+    setDayNameDraft(weeks[0]?.dayWorkouts[0]?.workoutName ?? '');
   };
 
-  const updateCurrentDayInPlan = (patch: Partial<DayWorkout>) => {
-    if (currentWeekIndex < 0 || currentDayIndex < 0) return;
-    setProgramWeeks((prev) => {
-      const next = [...prev];
-      const days = [...next[currentWeekIndex].dayWorkouts];
-      const merged = { ...days[currentDayIndex], ...patch };
-      days[currentDayIndex] = merged;
-      next[currentWeekIndex] = { ...next[currentWeekIndex], dayWorkouts: days };
-      if (patch.exercises) {
-        setCurrentDayExercises(patch.exercises);
-      }
-      return next;
-    });
-  };
-
-  const handleAddExerciseToCurrentDay = (exerciseName: string) => {
-    const newExercise: CustomExercise = {
-      id: `exercise-${Date.now()}-${Math.random()}`,
-      name: exerciseName,
-      sets: '3',
-      reps: '10',
-      weight: 0,
-      restTime: 60,
-    };
-    const updated = [...currentDayExercises, newExercise];
-    setCurrentDayExercises(updated);
-    updateCurrentDayInPlan({ exercises: updated });
-  };
+  const handleAddExerciseToCurrentDay = useCallback(
+    (exerciseName: string) => {
+      const newExercise: CustomExercise = {
+        id: `exercise-${Date.now()}-${Math.random()}`,
+        name: exerciseName,
+        sets: '3',
+        reps: '10',
+        weight: 0,
+        restTime: 60,
+      };
+      commitDayExercises([...currentDayExercises, newExercise]);
+    },
+    [commitDayExercises, currentDayExercises]
+  );
 
   const handleAddCustomExercise = () => {
     if (!customExerciseName.trim()) {
@@ -294,128 +360,218 @@ export default function BuildYourOwnWorkoutScreen({
     setShowCustomExerciseInput(false);
   };
 
-  const handleRemoveExercise = (exerciseId: string) => {
-    const updated = currentDayExercises.filter((ex) => ex.id !== exerciseId);
-    setCurrentDayExercises(updated);
-    updateCurrentDayInPlan({ exercises: updated });
-  };
+  const handleRemoveExercise = useCallback(
+    (exerciseId: string) => {
+      commitDayExercises(currentDayExercises.filter((ex) => ex.id !== exerciseId));
+    },
+    [commitDayExercises, currentDayExercises]
+  );
+
+  const handleToggleLibraryExercise = useCallback(
+    (exerciseName: string) => {
+      const existing = currentDayExercises.find((ex) => ex.name === exerciseName);
+      if (existing) {
+        commitDayExercises(currentDayExercises.filter((ex) => ex.id !== existing.id));
+      } else {
+        const newExercise: CustomExercise = {
+          id: `exercise-${Date.now()}-${Math.random()}`,
+          name: exerciseName,
+          sets: '3',
+          reps: '10',
+          weight: 0,
+          restTime: 60,
+        };
+        commitDayExercises([...currentDayExercises, newExercise]);
+      }
+    },
+    [commitDayExercises, currentDayExercises]
+  );
 
   const handleReorderExercises = useCallback(
     (data: CustomExercise[]) => {
-      setCurrentDayExercises(data);
-      if (currentWeekIndex >= 0 && currentDayIndex >= 0) {
-        setProgramWeeks((prev) => {
-          const next = [...prev];
-          const days = [...next[currentWeekIndex].dayWorkouts];
-          days[currentDayIndex] = { ...days[currentDayIndex], exercises: data };
-          next[currentWeekIndex] = { ...next[currentWeekIndex], dayWorkouts: days };
-          return next;
-        });
-      }
+      commitDayExercises(normalizeSupersetContiguity(data));
     },
-    [currentWeekIndex, currentDayIndex]
+    [commitDayExercises]
   );
 
-  const handleOpenExerciseConfig = (index: number) => {
-    const exercise = currentDayExercises[index];
-    setEditingExerciseIndex(index);
-    setConfigExerciseName(exercise.name);
-    setConfigSets(exercise.sets);
-    setConfigReps(exercise.reps);
-    setConfigWeight(exercise.weight.toString());
-    setConfigRestTime(exercise.restTime.toString());
-    setShowExerciseConfigModal(true);
-  };
+  const toggleSupersetPick = useCallback((exerciseId: string) => {
+    setSupersetPickIds((prev) =>
+      prev.includes(exerciseId) ? prev.filter((id) => id !== exerciseId) : [...prev, exerciseId]
+    );
+  }, []);
+
+  const handleCreateSuperset = useCallback(() => {
+    if (supersetPickIds.length < 2) {
+      Alert.alert('Superset', 'Select at least 2 exercises to group into a superset.');
+      return;
+    }
+    commitDayExercises(groupExercisesAsSuperset(currentDayExercises, supersetPickIds));
+    setSupersetPickIds([]);
+  }, [commitDayExercises, currentDayExercises, supersetPickIds]);
+
+  const handleUngroupSuperset = useCallback(() => {
+    if (supersetPickIds.length === 0) {
+      Alert.alert('Superset', 'Select exercises in a superset to ungroup.');
+      return;
+    }
+    commitDayExercises(ungroupExercises(currentDayExercises, supersetPickIds));
+    setSupersetPickIds([]);
+  }, [commitDayExercises, currentDayExercises, supersetPickIds]);
+
+  const handleOpenExerciseConfig = useCallback(
+    (index: number) => {
+      const exercise = currentDayExercises[index];
+      if (!exercise) return;
+      setEditingExerciseIndex(index);
+      setConfigExerciseName(exercise.name);
+      setConfigSets(exercise.sets);
+      setConfigReps(exercise.reps);
+      setConfigWeight(exercise.weight.toString());
+      setConfigRestTime(exercise.restTime.toString());
+      const timed = (exercise.durationSeconds ?? 0) > 0;
+      setConfigLoggingMode(timed ? 'timed' : 'reps');
+      setConfigDurationSeconds(String(timed ? exercise.durationSeconds : 45));
+      setShowExerciseConfigModal(true);
+    },
+    [currentDayExercises]
+  );
 
   const handleSaveExerciseConfig = () => {
     if (editingExerciseIndex === null) return;
-    
-    // Validate sets and reps (allow ranges like "4-6" or "6-10")
+
     const setsPattern = /^(\d+(-\d+)?)$/;
     const repsPattern = /^(\d+(-\d+)?)$/;
-    
+    const restTime = parseInt(configRestTime, 10) || 60;
+
+    if (configLoggingMode === 'timed') {
+      const duration = parseInt(configDurationSeconds.trim(), 10);
+      if (!Number.isFinite(duration) || duration < 5 || duration > 600) {
+        Alert.alert('Invalid Duration', 'Enter a time between 5 and 600 seconds.');
+        return;
+      }
+      if (!setsPattern.test(configSets.trim())) {
+        Alert.alert('Invalid Format', 'Rounds must be a number (e.g., "1" or "3") or range (e.g., "2-3")');
+        return;
+      }
+      const updatedExercises = [...currentDayExercises];
+      updatedExercises[editingExerciseIndex] = {
+        ...updatedExercises[editingExerciseIndex],
+        sets: configSets.trim(),
+        reps: String(duration),
+        weight: 0,
+        restTime,
+        durationSeconds: duration,
+      };
+      commitDayExercises(updatedExercises);
+      setShowExerciseConfigModal(false);
+      setEditingExerciseIndex(null);
+      return;
+    }
+
     if (!setsPattern.test(configSets.trim())) {
       Alert.alert('Invalid Format', 'Sets must be a number (e.g., "4") or range (e.g., "4-6")');
       return;
     }
-    
+
     if (!repsPattern.test(configReps.trim())) {
       Alert.alert('Invalid Format', 'Reps must be a number (e.g., "10") or range (e.g., "6-10")');
       return;
     }
-    
-    const weight = parseFloat(configWeight) || 0;
-    const restTime = parseInt(configRestTime) || 60;
 
+    const weight = parseFloat(configWeight) || 0;
     const updatedExercises = [...currentDayExercises];
+    const { durationSeconds: _removed, ...rest } = updatedExercises[editingExerciseIndex];
     updatedExercises[editingExerciseIndex] = {
-      ...updatedExercises[editingExerciseIndex],
+      ...rest,
       sets: configSets.trim(),
       reps: configReps.trim(),
       weight,
       restTime,
     };
-    setCurrentDayExercises(updatedExercises);
-    updateCurrentDayInPlan({ exercises: updatedExercises });
+    commitDayExercises(updatedExercises);
     setShowExerciseConfigModal(false);
     setEditingExerciseIndex(null);
   };
 
+  const supersetLetterByIndex = useMemo(
+    () => buildSupersetLetterMap(currentDayExercises),
+    [currentDayExercises]
+  );
+
   const renderConfiguredExercise = useCallback(
     ({ item, drag, isActive, getIndex }: RenderItemParams<CustomExercise>) => {
       const index = getIndex() ?? 0;
+      const picked = supersetPickIds.includes(item.id);
+      const tag = formatSupersetTag(
+        supersetLetterByIndex.get(index),
+        item.supersetOrder ?? (item.supersetId ? 0 : undefined)
+      );
       return (
         <ScaleDecorator>
           <View
             style={[
-              styles.exerciseConfigCard,
-              isActive && styles.exerciseConfigCardActive,
+              styles.selectedCompactRow,
+              isActive && styles.selectedCompactRowActive,
+              item.supersetId ? styles.selectedCompactRowSuperset : null,
+              picked ? styles.selectedCompactRowPicked : null,
             ]}
           >
-            <View style={styles.exerciseConfigHeader}>
-              <Pressable
-                onLongPress={drag}
-                delayLongPress={150}
-                style={styles.dragHandle}
-                accessibilityRole="button"
-                accessibilityLabel={`Reorder ${item.name}`}
-                accessibilityHint="Hold and drag to change exercise order"
-              >
-                <Text style={styles.dragHandleText}>☰</Text>
-              </Pressable>
-              <Text style={styles.exerciseConfigNumber}>{index + 1}</Text>
-              <Text style={styles.exerciseConfigName}>{item.name}</Text>
-              <TouchableOpacity
-                style={styles.removeExerciseButton}
-                onPress={() => handleRemoveExercise(item.id)}
-              >
-                <Text style={styles.removeExerciseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.exerciseConfigDetails}>
-              <Text style={styles.exerciseConfigDetailText}>
-                {item.sets} sets × {item.reps} reps
-              </Text>
-              {item.weight > 0 && (
-                <Text style={styles.exerciseConfigDetailText}>
-                  @ {item.weight} lbs
-                </Text>
-              )}
-              <Text style={styles.exerciseConfigDetailText}>
-                {item.restTime}s rest
-              </Text>
-            </View>
             <TouchableOpacity
-              style={styles.configureButton}
-              onPress={() => handleOpenExerciseConfig(index)}
+              style={[styles.supersetPickHit, picked && styles.supersetPickHitOn]}
+              onPress={() => toggleSupersetPick(item.id)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: picked }}
+              accessibilityLabel={`Select ${item.name} for superset`}
             >
-              <Text style={styles.configureButtonText}>Configure</Text>
+              <Text style={styles.supersetPickMark}>{picked ? '✓' : ''}</Text>
+            </TouchableOpacity>
+            <Pressable
+              onLongPress={drag}
+              delayLongPress={120}
+              style={styles.dragHandleCompact}
+              accessibilityRole="button"
+              accessibilityLabel={`Reorder ${item.name}`}
+              accessibilityHint="Hold and drag to change exercise order"
+            >
+              <Text style={styles.dragHandleCompactText}>☰</Text>
+            </Pressable>
+            <TouchableOpacity
+              style={styles.selectedCompactMain}
+              onPress={() => handleOpenExerciseConfig(index)}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.selectedCompactIndex}>
+                {tag ?? String(index + 1)}
+              </Text>
+              <Text style={styles.selectedCompactName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              <Text style={styles.selectedCompactMeta}>
+                {(item.durationSeconds ?? 0) > 0
+                  ? `${item.sets}×${item.durationSeconds}s`
+                  : `${item.sets}×${item.reps}`}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.selectedCompactRemoveBtn}
+              onPress={() => handleRemoveExercise(item.id)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${item.name}`}
+            >
+              <Text style={styles.selectedCompactRemove}>×</Text>
             </TouchableOpacity>
           </View>
         </ScaleDecorator>
       );
     },
-    [handleOpenExerciseConfig, handleRemoveExercise]
+    [
+      handleOpenExerciseConfig,
+      handleRemoveExercise,
+      supersetPickIds,
+      supersetLetterByIndex,
+      toggleSupersetPick,
+    ]
   );
 
   const handleCompleteCurrentDay = () => {
@@ -429,6 +585,7 @@ export default function BuildYourOwnWorkoutScreen({
     days[currentDayIndex] = {
       ...days[currentDayIndex],
       exercises: [...currentDayExercises],
+      workoutName: dayNameDraft.trim() || days[currentDayIndex].workoutName,
       completed: true,
     };
     updatedWeeks[currentWeekIndex] = {
@@ -446,7 +603,10 @@ export default function BuildYourOwnWorkoutScreen({
       const nextDay = currentDayIndex + 1;
       setCurrentDayIndex(nextDay);
       setCurrentDayExercises([...days[nextDay].exercises]);
+      setSupersetPickIds([]);
+      setDayNameDraft(days[nextDay].workoutName || '');
       setExerciseSearchQuery('');
+      setShowMoreCommonExercises(false);
       return;
     }
 
@@ -463,7 +623,10 @@ export default function BuildYourOwnWorkoutScreen({
       setCurrentWeekIndex(nextWeekIndex);
       setCurrentDayIndex(0);
       setCurrentDayExercises([...copiedDays[0].exercises]);
+      setSupersetPickIds([]);
+      setDayNameDraft(copiedDays[0].workoutName || '');
       setExerciseSearchQuery('');
+      setShowMoreCommonExercises(false);
       Alert.alert(
         'New week',
         `Exercises were copied from "${completedWeekName}" so you can adjust sets and reps for this phase.`,
@@ -480,7 +643,10 @@ export default function BuildYourOwnWorkoutScreen({
     setCurrentWeekIndex(weekIndex);
     setCurrentDayIndex(dayIndex);
     setCurrentDayExercises([...programWeeks[weekIndex].dayWorkouts[dayIndex].exercises]);
+    setSupersetPickIds([]);
+    setDayNameDraft(programWeeks[weekIndex].dayWorkouts[dayIndex].workoutName || '');
     setExerciseSearchQuery('');
+    setShowMoreCommonExercises(false);
   };
 
   const handleReorderReviewExercises = useCallback(
@@ -488,7 +654,10 @@ export default function BuildYourOwnWorkoutScreen({
       setProgramWeeks((prev) => {
         const next = [...prev];
         const days = [...next[weekIndex].dayWorkouts];
-        days[dayIndex] = { ...days[dayIndex], exercises: data };
+        days[dayIndex] = {
+          ...days[dayIndex],
+          exercises: normalizeSupersetContiguity(data),
+        };
         next[weekIndex] = { ...next[weekIndex], dayWorkouts: days };
         return next;
       });
@@ -514,6 +683,12 @@ export default function BuildYourOwnWorkoutScreen({
         weight: ex.weight,
         restTime: ex.restTime,
         category: 'strength' as const,
+        ...(ex.durationSeconds != null && ex.durationSeconds > 0
+          ? { durationSeconds: ex.durationSeconds }
+          : {}),
+        ...(ex.supersetId
+          ? { supersetId: ex.supersetId, supersetOrder: ex.supersetOrder ?? 0 }
+          : {}),
       };
     });
 
@@ -922,7 +1097,6 @@ export default function BuildYourOwnWorkoutScreen({
     const currentDay = trainingDays[currentDayIndex];
     const currentWeek = programWeeks[currentWeekIndex];
     const currentDayPlan = currentWeek.dayWorkouts[currentDayIndex];
-    const isExerciseSelected = (name: string) => currentDayExercises.some(ex => ex.name === name);
 
     return (
       <SafeAreaView style={styles.container}>
@@ -939,6 +1113,7 @@ export default function BuildYourOwnWorkoutScreen({
             days[currentDayIndex] = {
               ...days[currentDayIndex],
               exercises: [...currentDayExercises],
+              workoutName: dayNameDraft.trim() || days[currentDayIndex].workoutName,
             };
             updatedWeeks[currentWeekIndex] = {
               ...updatedWeeks[currentWeekIndex],
@@ -950,6 +1125,7 @@ export default function BuildYourOwnWorkoutScreen({
               const prev = currentDayIndex - 1;
               setCurrentDayIndex(prev);
               setCurrentDayExercises([...days[prev].exercises]);
+              setDayNameDraft(days[prev].workoutName || '');
             } else if (currentWeekIndex > 0) {
               const prevWeek = currentWeekIndex - 1;
               const prevDays = updatedWeeks[prevWeek].dayWorkouts;
@@ -957,10 +1133,12 @@ export default function BuildYourOwnWorkoutScreen({
               setCurrentWeekIndex(prevWeek);
               setCurrentDayIndex(lastDay);
               setCurrentDayExercises([...prevDays[lastDay].exercises]);
+              setDayNameDraft(prevDays[lastDay].workoutName || '');
             } else {
               setCurrentWeekIndex(-1);
               setCurrentDayIndex(-1);
               setCurrentDayExercises([]);
+              setDayNameDraft('');
             }
           }}
           >
@@ -982,8 +1160,12 @@ export default function BuildYourOwnWorkoutScreen({
             <Text style={styles.workoutNameEditLabel}>Workout name</Text>
             <TextInput
               style={styles.workoutNameEditInput}
-              value={currentDayPlan.workoutName}
-              onChangeText={updateCurrentDayWorkoutName}
+              value={dayNameDraft}
+              onChangeText={setDayNameDraft}
+              onBlur={() => updateCurrentDayWorkoutName(dayNameDraft.trim() || currentDayPlan.workoutName)}
+              onFocus={() => {
+                if (!dayNameDraft) setDayNameDraft(currentDayPlan.workoutName || '');
+              }}
               placeholder={`${currentDay} workout`}
               placeholderTextColor="#666"
             />
@@ -992,7 +1174,7 @@ export default function BuildYourOwnWorkoutScreen({
               onPress={() =>
                 openRenameModal(
                   { kind: 'workout', weekIndex: currentWeekIndex, dayIndex: currentDayIndex },
-                  currentDayPlan.workoutName
+                  dayNameDraft || currentDayPlan.workoutName
                 )
               }
             >
@@ -1005,15 +1187,14 @@ export default function BuildYourOwnWorkoutScreen({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
         >
-          <ScrollView
+          <NestableScrollContainer
             style={styles.buildDayScroll}
             contentContainerStyle={styles.buildDayScrollContent}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
+            showsVerticalScrollIndicator
           >
-            <View style={styles.section}>
+            <View style={styles.libraryChrome}>
               <Text style={styles.label}>Add Exercises for {currentDay}</Text>
               <Text style={styles.hint}>
                 Search the library, tap to add, or create a custom exercise
@@ -1025,7 +1206,10 @@ export default function BuildYourOwnWorkoutScreen({
                   placeholder="Search exercises..."
                   placeholderTextColor="#666"
                   value={exerciseSearchQuery}
-                  onChangeText={setExerciseSearchQuery}
+                  onChangeText={(text) => {
+                    setExerciseSearchQuery(text);
+                    if (text.trim()) setShowMoreCommonExercises(false);
+                  }}
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoComplete="off"
@@ -1033,19 +1217,16 @@ export default function BuildYourOwnWorkoutScreen({
                   textContentType="none"
                   clearButtonMode="while-editing"
                   onSubmitEditing={() => {
-                    if (
-                      exerciseSearchQuery.trim() &&
-                      filteredExercises.length === 0 &&
-                      !isExerciseSelected(exerciseSearchQuery.trim())
-                    ) {
-                      handleAddExerciseToCurrentDay(exerciseSearchQuery.trim());
+                    const q = exerciseSearchQuery.trim();
+                    if (q && filteredExercises.length === 0 && !selectedExerciseNames.has(q)) {
+                      handleAddExerciseToCurrentDay(q);
                       setExerciseSearchQuery('');
                     }
                   }}
                 />
                 {exerciseSearchQuery.trim() &&
                   filteredExercises.length === 0 &&
-                  !isExerciseSelected(exerciseSearchQuery.trim()) && (
+                  !selectedExerciseNames.has(exerciseSearchQuery.trim()) && (
                     <TouchableOpacity
                       style={styles.addSearchResultButton}
                       onPress={() => {
@@ -1059,52 +1240,9 @@ export default function BuildYourOwnWorkoutScreen({
                     </TouchableOpacity>
                   )}
               </View>
+            </View>
 
-              {!exerciseSearchActive && (
-                <Text style={styles.exerciseBrowseHint}>
-                  Showing common exercises — type to search the full library
-                </Text>
-              )}
-
-              <ScrollView
-                style={styles.exerciseList}
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator
-              >
-                {filteredExercises.map((exercise) => {
-                  const selected = isExerciseSelected(exercise.name);
-                  return (
-                    <TouchableOpacity
-                      key={exercise.name}
-                      style={[
-                        styles.exerciseItem,
-                        selected && styles.exerciseItemSelected,
-                      ]}
-                      onPress={() => {
-                        if (selected) {
-                          handleRemoveExercise(
-                            currentDayExercises.find((ex) => ex.name === exercise.name)!.id
-                          );
-                        } else {
-                          handleAddExerciseToCurrentDay(exercise.name);
-                        }
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.exerciseItemText,
-                          selected && styles.exerciseItemTextSelected,
-                        ]}
-                      >
-                        {exercise.name}
-                      </Text>
-                      {selected && <Text style={styles.checkmark}>✓</Text>}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
+            <View style={styles.buildDaySelectedBlock}>
               <TouchableOpacity
                 style={styles.addCustomExerciseBtn}
                 onPress={() => setShowCustomExerciseInput((v) => !v)}
@@ -1131,41 +1269,128 @@ export default function BuildYourOwnWorkoutScreen({
                   </View>
                 </View>
               )}
+
+              {currentDayExercises.length > 0 && (
+                <View style={styles.selectedExercisesPanel}>
+                  <View style={styles.selectedExercisesHeader}>
+                    <Text style={styles.selectedExercisesTitle}>
+                      Selected ({currentDayExercises.length})
+                    </Text>
+                    <Text style={styles.selectedExercisesHint}>
+                      Check 2+ · Superset · tap name to configure · ☰ reorder
+                    </Text>
+                  </View>
+                  {supersetPickIds.length > 0 ? (
+                    <View style={styles.supersetActionsRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.supersetActionBtn,
+                          supersetPickIds.length < 2 && styles.supersetActionBtnDisabled,
+                        ]}
+                        onPress={handleCreateSuperset}
+                        disabled={supersetPickIds.length < 2}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.supersetActionBtnText}>
+                          Create superset ({supersetPickIds.length})
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.supersetActionBtnSecondary}
+                        onPress={handleUngroupSuperset}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.supersetActionBtnSecondaryText}>Ungroup</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setSupersetPickIds([])}
+                        hitSlop={10}
+                      >
+                        <Text style={styles.supersetClearPick}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  <NestableDraggableFlatList
+                    data={currentDayExercises}
+                    keyExtractor={(item) => item.id}
+                    onDragEnd={({ data }) => handleReorderExercises(data)}
+                    renderItem={renderConfiguredExercise}
+                    scrollEnabled={false}
+                    activationDistance={12}
+                  />
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.completeDayButton,
+                  currentDayExercises.length === 0 && styles.completeDayButtonDisabled,
+                ]}
+                onPress={() => {
+                  if (dayNameDraft.trim()) {
+                    updateCurrentDayWorkoutName(dayNameDraft.trim());
+                  }
+                  handleCompleteCurrentDay();
+                }}
+                disabled={currentDayExercises.length === 0}
+              >
+                <Text style={styles.completeDayButtonText}>
+                  {currentDayIndex < trainingDays.length - 1
+                    ? `Complete ${dayNameDraft || currentDayPlan.workoutName || currentDay} & continue`
+                    : currentWeekIndex < programWeeks.length - 1
+                      ? `Finish week — start ${programWeeks[currentWeekIndex + 1]?.name || 'next week'}`
+                      : 'Finish & review program'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
-            {currentDayExercises.length > 0 && (
-              <View style={styles.section}>
-                <Text style={styles.label}>
-                  Your exercises ({currentDayExercises.length})
-                </Text>
-                <Text style={styles.reorderHint}>Hold ☰ and drag to reorder</Text>
-                <DraggableFlatList
-                  data={currentDayExercises}
-                  keyExtractor={(item) => item.id}
-                  onDragEnd={({ data }) => handleReorderExercises(data)}
-                  renderItem={renderConfiguredExercise}
-                  scrollEnabled={false}
-                />
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={[
-                styles.completeDayButton,
-                currentDayExercises.length === 0 && styles.completeDayButtonDisabled,
-              ]}
-              onPress={handleCompleteCurrentDay}
-              disabled={currentDayExercises.length === 0}
-            >
-              <Text style={styles.completeDayButtonText}>
-                {currentDayIndex < trainingDays.length - 1
-                  ? `Complete ${currentDayPlan.workoutName || currentDay} & continue`
-                  : currentWeekIndex < programWeeks.length - 1
-                    ? `Finish week — start ${programWeeks[currentWeekIndex + 1]?.name || 'next week'}`
-                    : 'Finish & review program'}
+            <View style={styles.exerciseBrowseSection}>
+              <Text style={styles.exerciseBrowseSectionTitle}>
+                {exerciseSearchActive ? 'Search results' : 'Common exercises'}
               </Text>
-            </TouchableOpacity>
-          </ScrollView>
+              {!exerciseSearchActive && (
+                <Text style={styles.exerciseBrowseHint}>
+                  Showing {filteredExercises.length} of {commonExercisesTotal} — type to search the full library
+                </Text>
+              )}
+
+              <View style={styles.exerciseListEmbedded}>
+                {filteredExercises.length === 0 ? (
+                  <Text style={styles.exerciseBrowseHint}>No matches — add as custom above</Text>
+                ) : (
+                  filteredExercises.map((item) => (
+                    <ExerciseLibraryRow
+                      key={item.name}
+                      name={item.name}
+                      selected={selectedExerciseNames.has(item.name)}
+                      onToggle={handleToggleLibraryExercise}
+                    />
+                  ))
+                )}
+              </View>
+
+              {!exerciseSearchActive && filteredExercises.length < commonExercisesTotal ? (
+                <TouchableOpacity
+                  style={styles.showMoreExercisesBtn}
+                  onPress={() => setShowMoreCommonExercises(true)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.showMoreExercisesBtnText}>
+                    Show more common exercises
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {!exerciseSearchActive && showMoreCommonExercises ? (
+                <TouchableOpacity
+                  style={styles.showMoreExercisesBtn}
+                  onPress={() => setShowMoreCommonExercises(false)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.showMoreExercisesBtnText}>Show fewer</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </NestableScrollContainer>
         </KeyboardAvoidingView>
 
         {/* Exercise Configuration Modal */}
@@ -1197,45 +1422,119 @@ export default function BuildYourOwnWorkoutScreen({
                   <Text style={styles.modalLabel}>Exercise: {configExerciseName}</Text>
                 </View>
 
-                <View style={styles.modalRow}>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Sets</Text>
-                    <Text style={styles.modalHint}>e.g., 4 or 4-6</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="3 or 4-6"
-                      placeholderTextColor="#666"
-                      keyboardType="default"
-                      value={configSets}
-                      onChangeText={setConfigSets}
-                    />
-                  </View>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Reps</Text>
-                    <Text style={styles.modalHint}>e.g., 10 or 6-10</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="10 or 6-10"
-                      placeholderTextColor="#666"
-                      keyboardType="default"
-                      value={configReps}
-                      onChangeText={setConfigReps}
-                    />
+                <View style={styles.modalSection}>
+                  <Text style={styles.modalLabel}>Logging type</Text>
+                  <Text style={styles.modalHint}>
+                    Choose sets & reps for strength moves, or timed for planks, holds, and carries.
+                  </Text>
+                  <View style={styles.loggingModeRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.loggingModeChip,
+                        configLoggingMode === 'reps' && styles.loggingModeChipOn,
+                      ]}
+                      onPress={() => setConfigLoggingMode('reps')}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.loggingModeChipText,
+                          configLoggingMode === 'reps' && styles.loggingModeChipTextOn,
+                        ]}
+                      >
+                        Sets & reps
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.loggingModeChip,
+                        configLoggingMode === 'timed' && styles.loggingModeChipOn,
+                      ]}
+                      onPress={() => setConfigLoggingMode('timed')}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.loggingModeChipText,
+                          configLoggingMode === 'timed' && styles.loggingModeChipTextOn,
+                        ]}
+                      >
+                        Timed
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
-                <View style={styles.modalRow}>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Weight (lbs)</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="0"
-                      placeholderTextColor="#666"
-                      keyboardType="numeric"
-                      value={configWeight}
-                      onChangeText={setConfigWeight}
-                    />
+                {configLoggingMode === 'timed' ? (
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Rounds</Text>
+                      <Text style={styles.modalHint}>e.g., 1 or 3</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="1"
+                        placeholderTextColor="#666"
+                        keyboardType="default"
+                        value={configSets}
+                        onChangeText={setConfigSets}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Seconds</Text>
+                      <Text style={styles.modalHint}>hold / work time</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="45"
+                        placeholderTextColor="#666"
+                        keyboardType="number-pad"
+                        value={configDurationSeconds}
+                        onChangeText={setConfigDurationSeconds}
+                      />
+                    </View>
                   </View>
+                ) : (
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Sets</Text>
+                      <Text style={styles.modalHint}>e.g., 4 or 4-6</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="3 or 4-6"
+                        placeholderTextColor="#666"
+                        keyboardType="default"
+                        value={configSets}
+                        onChangeText={setConfigSets}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Reps</Text>
+                      <Text style={styles.modalHint}>e.g., 10 or 6-10</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="10 or 6-10"
+                        placeholderTextColor="#666"
+                        keyboardType="default"
+                        value={configReps}
+                        onChangeText={setConfigReps}
+                      />
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.modalRow}>
+                  {configLoggingMode === 'reps' ? (
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Weight (lbs)</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="0"
+                        placeholderTextColor="#666"
+                        keyboardType="numeric"
+                        value={configWeight}
+                        onChangeText={setConfigWeight}
+                      />
+                    </View>
+                  ) : null}
                   <View style={styles.modalField}>
                     <Text style={styles.modalLabel}>Rest (seconds)</Text>
                     <TextInput
@@ -1290,7 +1589,12 @@ export default function BuildYourOwnWorkoutScreen({
         <View style={styles.placeholder} />
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <NestableScrollContainer
+        style={styles.scrollView}
+        contentContainerStyle={styles.reviewScrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.section}>
           <View style={styles.reviewProgramNameRow}>
             <Text style={styles.reviewProgramName}>{workoutName}</Text>
@@ -1357,7 +1661,7 @@ export default function BuildYourOwnWorkoutScreen({
                   {dayWorkout.exercises.length > 1 ? (
                     <Text style={styles.reorderHint}>Hold ☰ and drag to reorder</Text>
                   ) : null}
-                  <DraggableFlatList
+                  <NestableDraggableFlatList
                     scrollEnabled={false}
                     data={dayWorkout.exercises}
                     keyExtractor={(item) => item.id}
@@ -1366,12 +1670,18 @@ export default function BuildYourOwnWorkoutScreen({
                     }
                     renderItem={({ item, drag, isActive, getIndex }) => {
                       const exIndex = getIndex() ?? 0;
+                      const letters = buildSupersetLetterMap(dayWorkout.exercises);
+                      const tag = formatSupersetTag(
+                        letters.get(exIndex),
+                        item.supersetOrder ?? (item.supersetId ? 0 : undefined)
+                      );
                       return (
                         <ScaleDecorator>
                           <View
                             style={[
                               styles.reviewExerciseItem,
                               isActive && styles.reviewExerciseItemActive,
+                              item.supersetId ? styles.reviewExerciseItemSuperset : null,
                             ]}
                           >
                             {dayWorkout.exercises.length > 1 ? (
@@ -1388,12 +1698,15 @@ export default function BuildYourOwnWorkoutScreen({
                             ) : null}
                             <View style={styles.reviewExerciseTextCol}>
                               <Text style={styles.reviewExerciseName}>
-                                {exIndex + 1}. {item.name}
+                                {tag ? `${tag} · ` : `${exIndex + 1}. `}{item.name}
                               </Text>
                               <Text style={styles.reviewExerciseDetails}>
-                                {item.sets} sets × {item.reps} reps
+                                {(item.durationSeconds ?? 0) > 0
+                                  ? `${item.sets} × ${item.durationSeconds}s`
+                                  : `${item.sets} sets × ${item.reps} reps`}
                                 {item.weight > 0 && ` @ ${item.weight} lbs`}
                                 {' • '}{item.restTime}s rest
+                                {item.supersetId ? ' • alternate sets' : ''}
                               </Text>
                             </View>
                           </View>
@@ -1417,7 +1730,7 @@ export default function BuildYourOwnWorkoutScreen({
             </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
+      </NestableScrollContainer>
       {renameModal}
     </SafeAreaView>
   );
@@ -1474,7 +1787,198 @@ const styles = StyleSheet.create({
   },
   buildDayScrollContent: {
     paddingHorizontal: 20,
+    paddingBottom: 28,
+    flexGrow: 1,
+  },
+  libraryChrome: {
+    paddingBottom: 8,
+  },
+  buildDaySelectedBlock: {
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: AppTheme.border,
+  },
+  exerciseBrowseSection: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  exerciseBrowseSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: AppTheme.textSecondary,
+    marginBottom: 4,
+  },
+  exerciseListEmbedded: {
+    marginBottom: 8,
+  },
+  showMoreExercisesBtn: {
+    marginTop: 2,
+    marginBottom: 8,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+    backgroundColor: '#121212',
+  },
+  showMoreExercisesBtnText: {
+    color: AppTheme.accent,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  selectedExercisesPanel: {
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  selectedExercisesHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 6,
+  },
+  selectedExercisesTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: AppTheme.textSecondary,
+  },
+  selectedExercisesHint: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 11,
+    color: AppTheme.textFaint,
+  },
+  reviewScrollContent: {
     paddingBottom: 32,
+  },
+  selectedCompactRow: {
+    height: 40,
+    marginBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    paddingRight: 6,
+  },
+  selectedCompactRowActive: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0,255,136,0.08)',
+  },
+  selectedCompactRowSuperset: {
+    borderColor: 'rgba(0,255,136,0.35)',
+    backgroundColor: 'rgba(0,255,136,0.05)',
+  },
+  selectedCompactRowPicked: {
+    borderColor: AppTheme.accent,
+  },
+  supersetPickHit: {
+    width: 28,
+    height: 28,
+    marginLeft: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#555',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111',
+  },
+  supersetPickHitOn: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0,255,136,0.15)',
+  },
+  supersetPickMark: {
+    color: AppTheme.accent,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  supersetActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  supersetActionBtn: {
+    backgroundColor: AppTheme.accent,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  supersetActionBtnDisabled: {
+    opacity: 0.4,
+  },
+  supersetActionBtnText: {
+    color: '#000',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  supersetActionBtnSecondary: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  supersetActionBtnSecondaryText: {
+    color: '#ddd',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  supersetClearPick: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dragHandleCompact: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  dragHandleCompactText: {
+    color: '#777',
+    fontSize: 14,
+    lineHeight: 16,
+  },
+  selectedCompactMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    minWidth: 0,
+  },
+  selectedCompactIndex: {
+    width: 22,
+    fontSize: 12,
+    fontWeight: '700',
+    color: AppTheme.accent,
+  },
+  selectedCompactName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: AppTheme.textPrimary,
+    minWidth: 0,
+  },
+  selectedCompactMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: AppTheme.textMuted,
+    marginRight: 4,
+  },
+  selectedCompactRemoveBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedCompactRemove: {
+    color: '#ff6b6b',
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   step1Hint: {
     color: AppTheme.textMuted,
@@ -1490,10 +1994,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   addCustomExerciseBtn: {
-    marginTop: 4,
-    marginBottom: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
+    marginTop: 2,
+    marginBottom: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: AppTheme.border,
     alignItems: 'center',
@@ -1501,7 +2005,7 @@ const styles = StyleSheet.create({
   },
   addCustomExerciseBtnText: {
     color: AppTheme.accent,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
   scrollView: {
@@ -1826,15 +2330,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-  exerciseList: {
-    maxHeight: 320,
-    marginBottom: 12,
-  },
   exerciseItem: {
+    height: EXERCISE_ROW_HEIGHT - 8,
+    marginBottom: 8,
     backgroundColor: '#121212',
     borderRadius: 8,
-    padding: 15,
-    marginBottom: 8,
+    paddingHorizontal: 15,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1951,10 +2452,11 @@ const styles = StyleSheet.create({
   },
   completeDayButton: {
     backgroundColor: '#4ADE80',
-    padding: 18,
-    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 4,
   },
   completeDayButtonDisabled: {
     backgroundColor: '#333',
@@ -1962,7 +2464,7 @@ const styles = StyleSheet.create({
   },
   completeDayButtonText: {
     color: '#0f2517',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   reviewDayCard: {
@@ -2028,6 +2530,10 @@ const styles = StyleSheet.create({
   reviewExerciseItemActive: {
     backgroundColor: 'rgba(0, 255, 136, 0.08)',
     borderTopColor: AppTheme.accent,
+  },
+  reviewExerciseItemSuperset: {
+    borderLeftWidth: 3,
+    borderLeftColor: AppTheme.accent,
   },
   reviewExerciseTextCol: {
     flex: 1,
@@ -2130,6 +2636,32 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 8,
     fontStyle: 'italic',
+  },
+  loggingModeRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 4,
+  },
+  loggingModeChip: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: '#121212',
+    alignItems: 'center',
+  },
+  loggingModeChipOn: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0,255,136,0.1)',
+  },
+  loggingModeChipText: {
+    color: AppTheme.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  loggingModeChipTextOn: {
+    color: AppTheme.accent,
   },
   modalInput: {
     backgroundColor: '#121212',

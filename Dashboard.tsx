@@ -41,6 +41,8 @@ import {
 interface DashboardProps {
   onLogout: () => void;
   onNavigateToFitness: () => void;
+  /** Jump straight into today's workout on the active plan. */
+  onStartTodayWorkout: () => void;
   onNavigateToLogFood: () => void;
   onNavigateToHistory: () => void;
   onNavigateToMental: () => void;
@@ -149,6 +151,7 @@ function getTodayWorkoutLabel(
 export default function Dashboard({
   onLogout: _onLogout,
   onNavigateToFitness,
+  onStartTodayWorkout,
   onNavigateToLogFood,
   onNavigateToHistory,
   onNavigateToMental,
@@ -492,7 +495,7 @@ export default function Dashboard({
             style={[styles.gridTile, styles.tileGreen]}
             ref={startTodayRef}
             onPress={() => {
-              onNavigateToFitness();
+              onStartTodayWorkout();
               fireTourTargetIfNeeded(TOUR_TARGET_IDS.startToday);
             }}
             activeOpacity={0.85}
@@ -588,7 +591,7 @@ export default function Dashboard({
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.mentalLink} onPress={onNavigateToMental} activeOpacity={0.7}>
-          <Text style={styles.mentalLinkText}>Open Mental performance tab</Text>
+          <Text style={styles.mentalLinkText}>Open mental exercises</Text>
         </TouchableOpacity>
         </ScrollView>
       </View>

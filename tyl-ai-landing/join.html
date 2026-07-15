@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Subscribe to TYL Premium — $10/month or $99/year. AI coaching, workouts, and nutrition on TestFlight."
+    />
+    <title>Pricing — TYL</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=17" />
+  </head>
+  <body class="page-join" data-page="join.html">
+    <div class="wrap">
+      <header class="site-header">
+        <a class="logo" href="index.html" aria-label="TYL home">
+          <img src="app-icon.png" alt="TYL" width="52" height="52" />
+        </a>
+        <ul class="nav-center" id="navMenu">
+          <li><a href="features.html">Features</a></li>
+          <li><a href="index.html#app-preview">App Preview</a></li>
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="join.html">Pricing</a></li>
+          <li><a href="index.html#faq">FAQ</a></li>
+        </ul>
+        <div class="nav-right">
+          <button type="button" class="menu-toggle" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">☰</button>
+          <a class="nav-download" href="join.html#pricing">Get Premium</a>
+        </div>
+      </header>
+
+      <main class="page-main page-main-pricing">
+        <section class="pricing-section" id="pricing">
+          <p class="eyebrow" id="pricingEyebrow">Founding Member · first 50 only</p>
+          <h1>Get Premium on TestFlight</h1>
+          <p class="pricing-lead">
+            Full Premium access. Use the <strong>same email</strong> at checkout and when you sign in to the app.
+          </p>
+
+          <p class="pricing-scarcity" id="pricingScarcity">
+            This rate is limited to the <strong>first 50 members</strong>. When spots fill, pricing moves to
+            <strong>$19.99/month</strong> and <strong>$199.99/year</strong>.
+          </p>
+
+          <div class="pricing-row">
+            <article class="pricing-card pricing-card-featured">
+              <h2 class="pricing-plan-name" id="yearlyPlanName">Yearly</h2>
+              <p class="pricing-price" id="yearlyPrice">$99<span>/year</span></p>
+              <p class="pricing-tagline pricing-tagline-save" id="yearlyTagline">Save $21 vs monthly · ~$8.25/mo</p>
+              <ul class="pricing-features" id="yearlyFeatures">
+                <li>AI coach &amp; custom workout plans</li>
+                <li>Nutrition logging &amp; smart food search</li>
+                <li>Tracking, trends &amp; mindset tools</li>
+              </ul>
+              <a
+                href="https://buy.stripe.com/4gM5kC40u4uu1WN1IU4wM00"
+                id="stripeYearlyLink"
+                class="btn-solid pricing-btn"
+                target="_blank"
+                rel="noopener noreferrer"
+              >Subscribe — $99/yr</a>
+            </article>
+
+            <article class="pricing-card">
+              <h2 class="pricing-plan-name" id="monthlyPlanName">Monthly</h2>
+              <p class="pricing-price" id="monthlyPrice">$10<span>/month</span></p>
+              <p class="pricing-tagline" id="monthlyTagline">Flexible · cancel anytime</p>
+              <ul class="pricing-features" id="monthlyFeatures">
+                <li>Same Premium features as yearly</li>
+                <li>AI coach &amp; custom workout plans</li>
+                <li>Nutrition logging &amp; smart food search</li>
+              </ul>
+              <a
+                href="https://buy.stripe.com/7sYcN4dB4d1044VgDO4wM01"
+                id="stripeMonthlyLink"
+                class="btn-solid pricing-btn"
+                target="_blank"
+                rel="noopener noreferrer"
+              >Subscribe — $10/mo</a>
+            </article>
+          </div>
+
+          <p class="pricing-footnote">
+            Pay on Stripe → install TestFlight → sign in with the same email. Premium unlocks automatically.
+            <a href="#" id="contactOpen">Questions?</a>
+          </p>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-grid">
+          <div class="footer-brand"><strong>TYL</strong><p>Transform Your Life LLC</p></div>
+          <div class="footer-links">
+            <a href="legal.html#privacy-policy">Privacy</a>
+            <a href="legal.html#terms-of-service">Terms</a>
+            <a href="#" id="contactOpenFooter">Contact</a>
+          </div>
+        </div>
+        <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved. Transform Your Life LLC owns the TYL app, apparel, and all related products and content.</p>
+      </footer>
+    </div>
+
+    <div class="modal-overlay" id="contactModal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+      <div class="modal modal-wide">
+        <button type="button" class="modal-close" id="contactClose" aria-label="Close">×</button>
+        <h3 id="contactModalTitle">Contact us</h3>
+        <p>Send us a message — we'll get back to you at the email you provide.</p>
+        <form id="contactForm" class="join-form" novalidate>
+          <div class="form-field">
+            <label for="contactName">Name</label>
+            <input type="text" id="contactName" name="name" autocomplete="name" required placeholder="Your name" />
+          </div>
+          <div class="form-field">
+            <label for="contactEmail">Email</label>
+            <input type="email" id="contactEmail" name="email" autocomplete="email" required placeholder="you@example.com" />
+          </div>
+          <div class="form-field">
+            <label for="contactMessage">Message</label>
+            <textarea id="contactMessage" name="message" required placeholder="How can we help?"></textarea>
+          </div>
+          <button type="submit" class="btn-solid" style="width: 100%">Send message</button>
+          <p class="form-success" id="contactSuccess" role="status">Message received. We'll reply soon.</p>
+        </form>
+        <p class="modal-email-hint">Or email directly: <a href="mailto:travis@tyl-ai.com">travis@tyl-ai.com</a></p>
+      </div>
+    </div>
+
+    <script src="site.js?v=17"></script>
+  </body>
+</html>

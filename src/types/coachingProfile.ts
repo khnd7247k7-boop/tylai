@@ -1,5 +1,7 @@
 /** Unified coaching profile — single source of truth from onboarding wizard. */
 
+import type { CustomPlanScheduleMode } from '../utils/customWorkoutPlan';
+
 export type PrimaryGoal =
   | 'fat_loss'
   | 'muscle_gain'
@@ -36,6 +38,10 @@ export interface ScheduleProfile {
   daysPerWeek: number | null;
   sessionLengthMinutes: number | null;
   bestTimeOfDay: BestTimeOfDay | null;
+  /** Weekly calendar split vs flexible workout rotation. */
+  scheduleMode: CustomPlanScheduleMode | null;
+  /** Weekday names (weekly) or Workout 1…N labels (flexible). */
+  trainingDays: string[] | null;
 }
 
 export interface ExperienceProfile {
@@ -84,6 +90,36 @@ export interface NutritionBodyProfile {
   unitPreference: 'imperial' | 'metric';
 }
 
+export type {
+  NutritionPreferencesProfile,
+  AdvancedNutritionProfile,
+  FoodAllergy,
+  FoodIntolerance,
+  NutritionPrimaryGoal,
+  EatingStyle,
+  NutritionHelpMode,
+  ProactiveCoachingLevel,
+} from './nutritionQuestionnaire';
+
+export {
+  createEmptyNutritionPreferencesProfile,
+  createEmptyAdvancedNutritionProfile,
+  migrateNutritionPreferencesProfile,
+  isInitialNutritionSetupComplete,
+  shouldLaunchAdvancedNutritionQuestionnaire,
+  isAdvancedNutritionSetupComplete,
+  formatNutritionPreferencesSummary,
+  FOOD_ALLERGY_LABELS,
+  FOOD_INTOLERANCE_LABELS,
+  NUTRITION_PRIMARY_GOAL_LABELS,
+  EATING_STYLE_LABELS,
+  NUTRITION_HELP_MODE_LABELS,
+  PROACTIVE_COACHING_LABELS,
+} from './nutritionQuestionnaire';
+
+import type { NutritionPreferencesProfile } from './nutritionQuestionnaire';
+import { createEmptyNutritionPreferencesProfile, isInitialNutritionSetupComplete } from './nutritionQuestionnaire';
+
 export interface CoachingProfile {
   version: 1;
   completedAt?: string;
@@ -98,6 +134,7 @@ export interface CoachingProfile {
   constraintProfile: ConstraintProfile;
   adherenceProfile: AdherenceProfile;
   nutritionBodyProfile: NutritionBodyProfile;
+  nutritionPreferencesProfile: NutritionPreferencesProfile;
 }
 
 export const PRIMARY_GOAL_LABELS: Record<PrimaryGoal, string> = {
@@ -109,7 +146,11 @@ export const PRIMARY_GOAL_LABELS: Record<PrimaryGoal, string> = {
   athletic_performance: 'Athletic performance',
 };
 
-export const ONBOARDING_TOTAL_STEPS = 11;
+export const ONBOARDING_TOTAL_STEPS = 12;
+
+export function isNutritionPreferencesAnswered(prefs: NutritionPreferencesProfile): boolean {
+  return isInitialNutritionSetupComplete(prefs);
+}
 
 export function createEmptyCoachingProfile(): CoachingProfile {
   return {
@@ -123,6 +164,8 @@ export function createEmptyCoachingProfile(): CoachingProfile {
       daysPerWeek: null,
       sessionLengthMinutes: null,
       bestTimeOfDay: null,
+      scheduleMode: null,
+      trainingDays: null,
     },
     experienceProfile: { level: null },
     equipmentProfile: { access: null },
@@ -141,6 +184,7 @@ export function createEmptyCoachingProfile(): CoachingProfile {
       weightKg: null,
       unitPreference: 'imperial',
     },
+    nutritionPreferencesProfile: createEmptyNutritionPreferencesProfile(),
   };
 }
 

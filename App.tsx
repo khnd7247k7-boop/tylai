@@ -18,6 +18,7 @@ import Dashboard from './Dashboard';
 import WorkoutScreen from './WorkoutScreen';
 import FitnessScreen from './FitnessScreen';
 import MentalScreen from './MentalScreen';
+import ProgressScreen from './ProgressScreen';
 import EmotionalScreen from './EmotionalScreen';
 import AIComponent from './AIComponent';
 import SettingsScreen from './SettingsScreen';
@@ -66,11 +67,18 @@ import MedicalDisclaimerGate, {
   MEDICAL_DISCLAIMER_DEVICE_KEY,
 } from './src/components/MedicalDisclaimerGate';
 import OnboardingWizard from './src/components/onboarding/OnboardingWizard';
+import NutritionQuestionnaireWizard from './src/components/onboarding/NutritionQuestionnaireWizard';
+import AdvancedNutritionQuestionnaireWizard from './src/components/onboarding/AdvancedNutritionQuestionnaireWizard';
 import NutritionBodyProfilePrompt from './src/components/NutritionBodyProfilePrompt';
 import PlatformAppGuide from './src/tour/PlatformAppGuide';
 import type { TourNavHandlers, TourFitnessIntent, TourLogFoodIntent } from './src/tour/types';
 import { shouldShowAppGuide } from './src/utils/appGuide';
-import { shouldShowOnboardingWizard, isPendingFirstWorkoutPlan, shouldShowNutritionBodyProfilePrompt } from './src/services/CoachingProfileService';
+import { shouldShowOnboardingWizard, isPendingFirstWorkoutPlan, shouldShowNutritionBodyProfilePrompt, loadCoachingProfile } from './src/services/CoachingProfileService';
+import {
+  isInitialNutritionSetupComplete,
+  shouldLaunchAdvancedNutritionQuestionnaire,
+  type NutritionPreferencesProfile,
+} from './src/types/nutritionQuestionnaire';
 import {
   applyPendingNutritionSuggestion,
   dismissPendingNutritionSuggestion,
@@ -79,6 +87,7 @@ import {
   type PendingNutritionSuggestion,
 } from './src/services/NutritionSuggestionService';
 import { AppErrorBoundary } from './src/components/AppErrorBoundary';
+import AppBootScreen from './src/components/AppBootScreen';
 import { SettingsProvider } from './SettingsProvider';
 import { SubscriptionProvider } from './src/context/SubscriptionContext';
 import { firebaseEnvConfigured } from './firebaseConfig';
@@ -88,6 +97,7 @@ type LoggedInScreen =
   | 'workout'
   | 'fitness'
   | 'mental'
+  | 'progress'
   | 'emotional'
   | 'ai'
   | 'settings'
@@ -104,6 +114,7 @@ const MORE_MENU_CHILD_SCREENS: LoggedInScreen[] = [
   'appleHealthData',
   'spiritual',
   'emotional',
+  'mental',
   'workout',
   'nutritionSearch',
 ];
@@ -128,11 +139,19 @@ function AppInner() {
   const [resetEmail, setResetEmail] = useState('');
   const [resetMethod, setResetMethod] = useState<'email' | null>(null);
   const [medicalDisclaimerGate, setMedicalDisclaimerGate] = useState(false);
+  const [medicalDisclaimerResolved, setMedicalDisclaimerResolved] = useState(false);
   const [onboardingWizardVisible, setOnboardingWizardVisible] = useState(false);
   const [onboardingWizardMode, setOnboardingWizardMode] = useState<'onboarding' | 'edit'>('onboarding');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'profile' | 'interface' | 'settings' | 'legal'
+  >('profile');
+  const onboardingWizardUserOpenedRef = useRef(false);
   const [onboardingGateResolved, setOnboardingGateResolved] = useState(false);
   const [initialPlanSetupPending, setInitialPlanSetupPending] = useState(false);
   const [nutritionBodyPromptVisible, setNutritionBodyPromptVisible] = useState(false);
+  const [nutritionQuestionnaireVisible, setNutritionQuestionnaireVisible] = useState(false);
+  const [advancedNutritionQuestionnaireVisible, setAdvancedNutritionQuestionnaireVisible] =
+    useState(false);
   const [pendingNutritionSuggestion, setPendingNutritionSuggestion] =
     useState<PendingNutritionSuggestion | null>(null);
   const [appGuideVisible, setAppGuideVisible] = useState(false);
@@ -140,6 +159,7 @@ function AppInner() {
   const [tourLogFoodIntent, setTourLogFoodIntent] = useState<TourLogFoodIntent | null>(null);
   const [tourFitnessIntent, setTourFitnessIntent] = useState<TourFitnessIntent | null>(null);
   const [rememberPassword, setRememberPassword] = useState(false);
+  const [authBootstrapped, setAuthBootstrapped] = useState(false);
   /** True when the current sub-screen was opened from MoreMenuScreen (not dashboard shortcuts). */
   const openedFromMoreMenuRef = useRef(false);
 
@@ -172,7 +192,9 @@ function AppInner() {
   useEffect(() => {
     if (!isLoggedIn) {
       setMedicalDisclaimerGate(false);
+      setMedicalDisclaimerResolved(false);
       setOnboardingWizardVisible(false);
+      onboardingWizardUserOpenedRef.current = false;
       setOnboardingGateResolved(false);
       setInitialPlanSetupPending(false);
       setNutritionBodyPromptVisible(false);
@@ -190,9 +212,13 @@ function AppInner() {
           (await AsyncStorage.getItem(MEDICAL_DISCLAIMER_DEVICE_KEY)) === 'true';
         if (!cancelled && acceptedUser !== true && !acceptedDevice) {
           setMedicalDisclaimerGate(true);
+        } else if (!cancelled) {
+          setMedicalDisclaimerGate(false);
         }
       } catch {
         if (!cancelled) setMedicalDisclaimerGate(true);
+      } finally {
+        if (!cancelled) setMedicalDisclaimerResolved(true);
       }
     })();
     return () => {
@@ -201,7 +227,7 @@ function AppInner() {
   }, [isLoggedIn]);
 
   useEffect(() => {
-    if (!isLoggedIn || medicalDisclaimerGate) {
+    if (!isLoggedIn || !medicalDisclaimerResolved || medicalDisclaimerGate) {
       setOnboardingGateResolved(false);
       return;
     }
@@ -213,13 +239,18 @@ function AppInner() {
         if (show) {
           setAppGuideVisible(false);
           setOnboardingWizardMode('onboarding');
+          onboardingWizardUserOpenedRef.current = false;
           setOnboardingWizardVisible(true);
-        } else {
+        } else if (!onboardingWizardUserOpenedRef.current) {
           setOnboardingWizardVisible(false);
         }
         const pendingPlan = await isPendingFirstWorkoutPlan();
         if (!cancelled) {
           setInitialPlanSetupPending(pendingPlan);
+          if (pendingPlan && !show) {
+            setCurrentScreen('workout');
+            setNavigationHistory(['dashboard', 'workout']);
+          }
         }
       } catch {
         if (!cancelled) {
@@ -236,7 +267,19 @@ function AppInner() {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn, medicalDisclaimerGate]);
+  }, [isLoggedIn, medicalDisclaimerGate, medicalDisclaimerResolved]);
+
+  // Safety: never keep the onboarding wizard interactive under the medical disclaimer overlay.
+  useEffect(() => {
+    if (
+      medicalDisclaimerGate &&
+      onboardingWizardVisible &&
+      onboardingWizardMode === 'onboarding' &&
+      !onboardingWizardUserOpenedRef.current
+    ) {
+      setOnboardingWizardVisible(false);
+    }
+  }, [medicalDisclaimerGate, onboardingWizardVisible, onboardingWizardMode]);
 
   useEffect(() => {
     if (
@@ -270,7 +313,7 @@ function AppInner() {
   ]);
 
   useEffect(() => {
-    if (!isLoggedIn || medicalDisclaimerGate || !onboardingGateResolved) {
+    if (!isLoggedIn || !medicalDisclaimerResolved || medicalDisclaimerGate || !onboardingGateResolved) {
       return;
     }
     if (onboardingWizardVisible || initialPlanSetupPending || nutritionBodyPromptVisible) {
@@ -298,6 +341,7 @@ function AppInner() {
   }, [
     isLoggedIn,
     medicalDisclaimerGate,
+    medicalDisclaimerResolved,
     onboardingGateResolved,
     onboardingWizardVisible,
     initialPlanSetupPending,
@@ -436,6 +480,7 @@ function AppInner() {
         console.error('[App] Auth is not properly initialized, skipping auth state listener');
         setIsLoggedIn(false);
         setCurrentScreen('login');
+        setAuthBootstrapped(true);
         return;
       }
       
@@ -477,32 +522,19 @@ function AppInner() {
             console.error('[App] Error initializing user data:', error);
           }
           
-          // Request health permissions on first login to sync watch data
+          // Request HealthKit access so TYLAI appears under Health → Sharing → Apps.
+          // Safe to call every launch: iOS only shows the sheet when status is not determined.
           try {
-            const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
-            const healthPermissionsRequested = await loadUserData<boolean>('healthPermissionsRequested');
-            
-            if (!healthPermissionsRequested) {
-              const { isAnyExpoHealthMetricEnabled } = await import(
-                './src/utils/healthDataPermissions'
-              );
-              if (!(await isAnyExpoHealthMetricEnabled())) {
-                await saveUserData('healthPermissionsRequested', true);
+            const { isAnyExpoHealthMetricEnabled } = await import(
+              './src/utils/healthDataPermissions'
+            );
+            if (await isAnyExpoHealthMetricEnabled()) {
+              console.log('[App] Requesting health permissions for Apple Health sync');
+              const hasPermissions = await HealthService.requestPermissions();
+              if (hasPermissions) {
+                console.log('[App] HealthKit authorization flow completed');
               } else {
-                console.log('[App] Requesting health permissions for watch data sync');
-                const hasPermissions = await HealthService.requestPermissions();
-
-                if (hasPermissions) {
-                  console.log('[App] Health permissions granted - watch data can now sync');
-                  showToast(
-                    'Watch data sync enabled! Your smartwatch data will automatically sync to the app.',
-                    'success'
-                  );
-                } else {
-                  console.log('[App] Health permissions not granted or not available');
-                }
-
-                await saveUserData('healthPermissionsRequested', true);
+                console.log('[App] Health permissions not available (Expo Go or HealthKit off)');
               }
             }
           } catch (error) {
@@ -516,11 +548,13 @@ function AppInner() {
           setCurrentScreen('login');
           UserDataInitializer.reset();
         }
+        setAuthBootstrapped(true);
       }, (error) => {
         console.error('[App] Firebase Auth error:', error);
         // Continue without auth if there's an error
         setIsLoggedIn(false);
         setCurrentScreen('login');
+        setAuthBootstrapped(true);
       });
 
       return () => unsubscribe();
@@ -529,6 +563,7 @@ function AppInner() {
       // Continue without auth if there's an error
       setIsLoggedIn(false);
       setCurrentScreen('login');
+      setAuthBootstrapped(true);
     }
   }, []);
 
@@ -887,10 +922,20 @@ function AppInner() {
     navigateToScreen('fitness');
   };
 
+  const handleStartTodayWorkout = () => {
+    setTourLogFoodIntent({ id: Date.now(), open: false });
+    setTourFitnessIntent({ id: Date.now(), startTodayWorkout: true });
+    setFitnessSyncedTab('workouts');
+    setFitnessSurfaceNonce((n) => n + 1);
+    navigateToScreen('fitness');
+  };
+
   const handleNavigateToLogFood = () => {
+    setTourFitnessIntent({ id: Date.now(), closeAll: true });
     setFitnessSyncedTab('nutrition');
     setFitnessSurfaceNonce((n) => n + 1);
     navigateToScreen('fitness');
+    setTourLogFoodIntent({ id: Date.now(), open: true });
   };
 
   const handleNavigateToFitnessHistory = () => {
@@ -909,12 +954,59 @@ function AppInner() {
   }, []);
 
   const handleOpenCoachingQuestionnaireEdit = useCallback(() => {
+    onboardingWizardUserOpenedRef.current = true;
     setOnboardingWizardMode('edit');
     setOnboardingWizardVisible(true);
   }, []);
 
+  const openAdvancedNutritionIfNeeded = useCallback(async () => {
+    const profile = await loadCoachingProfile();
+    const prefs = profile.nutritionPreferencesProfile;
+    if (
+      shouldLaunchAdvancedNutritionQuestionnaire(prefs) &&
+      !prefs.advancedProfile?.completedAt
+    ) {
+      setAdvancedNutritionQuestionnaireVisible(true);
+    }
+  }, []);
+
+  const handleOpenNutritionQuestionnaire = useCallback(() => {
+    void (async () => {
+      const profile = await loadCoachingProfile();
+      const prefs = profile.nutritionPreferencesProfile;
+      if (
+        isInitialNutritionSetupComplete(prefs) &&
+        shouldLaunchAdvancedNutritionQuestionnaire(prefs) &&
+        !prefs.advancedProfile?.completedAt
+      ) {
+        setAdvancedNutritionQuestionnaireVisible(true);
+        return;
+      }
+      setNutritionQuestionnaireVisible(true);
+    })();
+  }, []);
+
+  const handleNutritionQuestionnaireClose = useCallback(() => {
+    setNutritionQuestionnaireVisible(false);
+  }, []);
+
+  const handleNutritionQuestionnaireSaved = useCallback(
+    (prefs: NutritionPreferencesProfile) => {
+      setNutritionQuestionnaireVisible(false);
+      if (shouldLaunchAdvancedNutritionQuestionnaire(prefs) && !prefs.advancedProfile?.completedAt) {
+        setAdvancedNutritionQuestionnaireVisible(true);
+      }
+    },
+    []
+  );
+
+  const handleAdvancedNutritionQuestionnaireClose = useCallback(() => {
+    setAdvancedNutritionQuestionnaireVisible(false);
+  }, []);
+
   const handleOnboardingWizardComplete = useCallback(() => {
     const wasEdit = onboardingWizardMode === 'edit';
+    onboardingWizardUserOpenedRef.current = false;
     setOnboardingWizardVisible(false);
     setOnboardingWizardMode('onboarding');
     setAppGuideVisible(false);
@@ -924,10 +1016,12 @@ function AppInner() {
     void isPendingFirstWorkoutPlan().then((pending) => {
       setInitialPlanSetupPending(pending);
     });
+    void openAdvancedNutritionIfNeeded();
     navigateToScreen('workout');
-  }, [onboardingWizardMode]);
+  }, [onboardingWizardMode, openAdvancedNutritionIfNeeded]);
 
   const handleOnboardingWizardCancel = useCallback(() => {
+    onboardingWizardUserOpenedRef.current = false;
     setOnboardingWizardVisible(false);
     setOnboardingWizardMode('onboarding');
   }, []);
@@ -1114,6 +1208,10 @@ function AppInner() {
     navigateToScreen(screen);
   };
 
+  if (!authBootstrapped) {
+    return <AppBootScreen />;
+  }
+
   if (isLoggedIn) {
     const handleFitnessSwipeBack = () => {
       const internalHandler = (FitnessScreen as any).internalBackHandler;
@@ -1130,8 +1228,13 @@ function AppInner() {
           return 'dashboard';
         case 'fitness':
           return fitnessSyncedTab === 'nutrition' ? 'nutrition' : 'workouts';
-        case 'mental':
-          return 'mindset';
+        case 'progress':
+          return 'progress';
+        case 'mental': {
+          const mentalIdx = navigationHistory.lastIndexOf('mental');
+          const prev = mentalIdx > 0 ? navigationHistory[mentalIdx - 1] : null;
+          return prev === 'moreHub' ? 'more' : 'dashboard';
+        }
         case 'moreHub':
           return 'more';
         case 'workout':
@@ -1168,8 +1271,9 @@ function AppInner() {
           setFitnessSurfaceNonce((n) => n + 1);
           navigateToScreen('fitness');
           break;
-        case 'mindset':
-          navigateToScreen('mental');
+        case 'progress':
+          openedFromMoreMenuRef.current = false;
+          navigateToScreen('progress');
           break;
         case 'more':
           openedFromMoreMenuRef.current = false;
@@ -1182,6 +1286,7 @@ function AppInner() {
       <Dashboard
         onLogout={handleLogout}
         onNavigateToFitness={handleNavigateToFitness}
+        onStartTodayWorkout={handleStartTodayWorkout}
         onNavigateToLogFood={handleNavigateToLogFood}
         onNavigateToHistory={handleNavigateToFitnessHistory}
         onNavigateToMental={handleNavigateToMental}
@@ -1199,7 +1304,11 @@ function AppInner() {
         body = (
           <SmoothTransition isVisible={true} direction="slideInRight">
             <SwipeNavigation onSwipeBack={handleGoBack}>
-              <WorkoutScreen onBack={handleGoBack} onPlanSetupComplete={handleInitialPlanSaved} />
+              <WorkoutScreen
+                onBack={handleGoBack}
+                onPlanSetupComplete={handleInitialPlanSaved}
+                initialSetupPending={initialPlanSetupPending}
+              />
             </SwipeNavigation>
           </SmoothTransition>
         );
@@ -1214,13 +1323,22 @@ function AppInner() {
                 fitnessSurfaceNonce={fitnessSurfaceNonce}
                 tourLogFoodIntent={tourLogFoodIntent}
                 tourFitnessIntent={tourFitnessIntent}
+                onTourFitnessIntentConsumed={() => setTourFitnessIntent(null)}
                 onFitnessTabChange={setFitnessSyncedTab}
                 onNavigateToNutritionTrends={handleNavigateToNutritionTrends}
+                onOpenNutritionQuestionnaire={handleOpenNutritionQuestionnaire}
                 onCompleteTask={(taskTitle: string) => {
                   console.log('Task completed:', taskTitle);
                 }}
               />
             </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'progress':
+        body = (
+          <SmoothTransition isVisible={true} direction="fadeIn">
+            <ProgressScreen />
           </SmoothTransition>
         );
         break;
@@ -1271,8 +1389,9 @@ function AppInner() {
               <SettingsScreen
                 onBack={handleGoBack}
                 onLogout={handleLogout}
-                onOpenAppGuide={openAppGuide}
                 onEditCoachingQuestionnaire={handleOpenCoachingQuestionnaireEdit}
+                initialTab={settingsInitialTab}
+                standaloneSection
               />
             </SwipeNavigation>
           </SmoothTransition>
@@ -1320,7 +1439,20 @@ function AppInner() {
             <MoreMenuScreen
               onOpen={(target) => {
                 switch (target) {
+                  case 'profile':
+                    setSettingsInitialTab('profile');
+                    openScreenFromMoreMenu('settings');
+                    break;
                   case 'settings':
+                    setSettingsInitialTab('settings');
+                    openScreenFromMoreMenu('settings');
+                    break;
+                  case 'interface':
+                    setSettingsInitialTab('interface');
+                    openScreenFromMoreMenu('settings');
+                    break;
+                  case 'legal':
+                    setSettingsInitialTab('legal');
                     openScreenFromMoreMenu('settings');
                     break;
                   case 'health':
@@ -1331,6 +1463,9 @@ function AppInner() {
                     break;
                   case 'emotional':
                     openScreenFromMoreMenu('emotional');
+                    break;
+                  case 'mental':
+                    openScreenFromMoreMenu('mental');
                     break;
                   case 'workout':
                     openScreenFromMoreMenu('workout');
@@ -1377,6 +1512,7 @@ function AppInner() {
             bottom: 0,
             zIndex: 100000,
             elevation: 100000,
+            opacity: blockMainChrome ? 0 : 1,
           }}
         >
           <MainBottomTabBar activeTab={mainBottomActiveTab} onTabPress={handleMainBottomTabPress} />
@@ -1390,6 +1526,15 @@ function AppInner() {
           mode={onboardingWizardMode}
           onComplete={handleOnboardingWizardComplete}
           onCancel={handleOnboardingWizardCancel}
+        />
+        <NutritionQuestionnaireWizard
+          visible={nutritionQuestionnaireVisible}
+          onClose={handleNutritionQuestionnaireClose}
+          onSaved={handleNutritionQuestionnaireSaved}
+        />
+        <AdvancedNutritionQuestionnaireWizard
+          visible={advancedNutritionQuestionnaireVisible}
+          onClose={handleAdvancedNutritionQuestionnaireClose}
         />
         <NutritionBodyProfilePrompt
           visible={nutritionBodyPromptVisible}

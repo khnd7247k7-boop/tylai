@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions, Pressable } from 'react-native';
 import { AppTheme } from '../theme/appVisualTheme';
 import type { HistoryLinePoint } from '../utils/workoutHistoryChartData';
 
@@ -15,9 +15,18 @@ export type HistoryLineChartOptions = {
 type Props = {
   series: HistoryLinePoint[];
   options: HistoryLineChartOptions;
+  /** Highlight the closest point to this date (YYYY-MM-DD or ISO). */
+  highlightDate?: string | null;
+  /** Called when a chart point is pressed — enables graph ↔ photo sync. */
+  onSelectDate?: (date: string) => void;
 };
 
-export default function HistoryLineChart({ series, options: opts }: Props) {
+export default function HistoryLineChart({
+  series,
+  options: opts,
+  highlightDate,
+  onSelectDate,
+}: Props) {
   const { width: windowWidth } = useWindowDimensions();
 
   if (series.length === 0) {
@@ -71,6 +80,21 @@ export default function HistoryLineChart({ series, options: opts }: Props) {
     const y = padY + (1 - yNorm) * innerH;
     return { x, y, value: entry.value, date: entry.date };
   });
+
+  const highlightKey = highlightDate ? highlightDate.slice(0, 10) : null;
+  let highlightIndex = -1;
+  if (highlightKey) {
+    let bestDist = Infinity;
+    const target = new Date(`${highlightKey}T12:00:00`).getTime();
+    points.forEach((p, i) => {
+      const pk = p.date.slice(0, 10);
+      const dist = Math.abs(new Date(`${pk}T12:00:00`).getTime() - target);
+      if (dist < bestDist) {
+        bestDist = dist;
+        highlightIndex = i;
+      }
+    });
+  }
 
   const lineSegments: { x1: number; y1: number; x2: number; y2: number }[] = [];
   for (let i = 0; i < points.length - 1; i++) {
@@ -143,21 +167,29 @@ export default function HistoryLineChart({ series, options: opts }: Props) {
               />
             );
           })}
-          {points.map((point, index) => (
-            <View
-              key={`point-${index}`}
-              style={[
-                styles.point,
-                {
-                  left: point.x - pointRadius,
-                  top: point.y - pointRadius,
-                  width: pointRadius * 2,
-                  height: pointRadius * 2,
-                  backgroundColor: opts.lineColor,
-                },
-              ]}
-            />
-          ))}
+          {points.map((point, index) => {
+            const isHighlight = index === highlightIndex;
+            const radius = isHighlight ? pointRadius + 3 : pointRadius;
+            const PointWrap = onSelectDate ? Pressable : View;
+            return (
+              <PointWrap
+                key={`point-${index}`}
+                onPress={onSelectDate ? () => onSelectDate(point.date) : undefined}
+                style={[
+                  styles.point,
+                  {
+                    left: point.x - radius,
+                    top: point.y - radius,
+                    width: radius * 2,
+                    height: radius * 2,
+                    backgroundColor: isHighlight ? AppTheme.accent : opts.lineColor,
+                    borderWidth: isHighlight ? 2 : 0,
+                    borderColor: '#fff',
+                  },
+                ]}
+              />
+            );
+          })}
         </View>
         <View style={styles.xAxisRow}>
           <Text style={styles.xLabelStart} numberOfLines={1}>

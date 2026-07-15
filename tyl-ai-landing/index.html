@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="TYL — Personalized coaching, intelligent programming, and daily structure built around your life."
+    />
+    <title>TYL — Your coach. Your rhythm.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=19" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="site-header">
+        <a class="logo" href="index.html" aria-label="TYL home">
+          <img src="app-icon.png" alt="TYL" width="52" height="52" />
+        </a>
+        <ul class="nav-center" id="navMenu">
+          <li><a href="features.html">Features</a></li>
+          <li><a href="index.html#app-preview">App Preview</a></li>
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="join.html">Pricing</a></li>
+          <li><a href="index.html#faq">FAQ</a></li>
+        </ul>
+        <div class="nav-right">
+          <button type="button" class="menu-toggle" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">☰</button>
+          <a class="nav-download" href="join.html#pricing">Get Premium</a>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Training that adapts to you</p>
+            <h1>
+              <span class="line1">Your coach.</span>
+              <span class="line2">Your rhythm.</span>
+            </h1>
+            <p class="hero-lead">
+              Personalized coaching and intelligent programming — built around your goals, your schedule,
+              and your life.
+            </p>
+            <div class="hero-actions">
+              <a class="btn-solid" href="join.html#pricing">Get Premium</a>
+              <a class="btn-outline" href="#app-preview">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+                Watch Preview
+              </a>
+            </div>
+          </div>
+
+          <div class="hero-visual" id="app-preview">
+            <p class="preview-label">App preview</p>
+            <img
+              class="app-preview-image"
+              src="tylai-dashboard-mockup.png"
+              alt="TYL app dashboard — today's focus, workouts, and AI coach"
+              width="680"
+              height="1200"
+              loading="eager"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </div>
+        </section>
+
+        <section class="features" id="features">
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v2M12 19v2M3 12h2M19 12h2" />
+              </svg>
+            </div>
+            <h3>Personalized Coaching</h3>
+            <p>Workouts tailored to your goals, experience, and equipment. Adaptive by design.</p>
+            <a class="feature-link" href="features.html">Learn more →</a>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 19V5M4 19h16M8 17V11M12 17V7M16 17v-4" stroke-linecap="round" />
+              </svg>
+            </div>
+            <h3>Track Progress</h3>
+            <p>Monitor performance, visualize trends, and celebrate momentum that keeps you moving.</p>
+            <a class="feature-link" href="how-it-works.html">Learn more →</a>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <rect x="4" y="5" width="16" height="15" rx="1" />
+                <path d="M8 3v4M16 3v4M4 10h16" stroke-linecap="round" />
+              </svg>
+            </div>
+            <h3>Built Around You</h3>
+            <p>Flexible scheduling, smart reminders, and coaching that fits real life — not the other way around.</p>
+            <a class="feature-link" href="why-tyl-works.html">Learn more →</a>
+          </article>
+        </section>
+
+        <section class="faq-section" id="faq">
+          <p class="section-title">FAQ</p>
+          <p class="faq-intro">Quick answers about TYL, Premium, and how coaching works.</p>
+          <div class="faq-list">
+            <details class="faq-item" id="about">
+              <summary>What is TYL?</summary>
+              <p>
+                A training app with personalized workouts, nutrition tracking, and AI coaching — built to
+                keep you consistent, not overwhelmed.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Who is it for?</summary>
+              <p>
+                Beginners building habits, experienced lifters, and busy people who want structure without
+                complexity.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>How much does Premium cost?</summary>
+              <p>
+                <strong>$10/month</strong> or <strong>$99/year</strong>.
+                <a href="join.html#pricing">See pricing →</a>
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>How do I get access after paying?</summary>
+              <p>
+                Use the <strong>same email</strong> at Stripe checkout and when you sign in to the app.
+                Premium unlocks on TestFlight automatically.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Do I need a gym?</summary>
+              <p>No — plans adapt to a full gym, home setup, or bodyweight only.</p>
+            </details>
+            <details class="faq-item">
+              <summary>How does the AI coach work?</summary>
+              <p>
+                Your coach uses your goals, logs, and profile to suggest workouts and nutrition — not
+                one-size-fits-all templates.
+              </p>
+            </details>
+          </div>
+          <p class="faq-foot">
+            <a class="feature-link" href="why-tyl-works.html">Our eight principles →</a>
+          </p>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <strong>TYL</strong>
+            <p>Transform Your Life LLC</p>
+          </div>
+          <div class="footer-links">
+            <a href="legal.html#privacy-policy">Privacy</a>
+            <a href="legal.html#terms-of-service">Terms</a>
+            <a href="legal.html#fitness-disclaimer">Fitness Disclaimer</a>
+            <a href="#" id="contactOpen">Contact</a>
+            <a href="apparel.html">Apparel</a>
+          </div>
+        </div>
+        <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved. Transform Your Life LLC owns the TYL app, apparel, and all related products and content.</p>
+      </footer>
+    </div>
+
+    <div class="modal-overlay" id="contactModal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+      <div class="modal modal-wide">
+        <button type="button" class="modal-close" id="contactClose" aria-label="Close">×</button>
+        <h3 id="contactModalTitle">Contact us</h3>
+        <p>Reach Transform Your Life LLC. We'll respond to the email you provide.</p>
+        <form id="contactForm" class="join-form" novalidate>
+          <div class="form-field">
+            <label for="contactName">Name</label>
+            <input type="text" id="contactName" name="name" autocomplete="name" required placeholder="Your name" />
+          </div>
+          <div class="form-field">
+            <label for="contactEmail">Email</label>
+            <input type="email" id="contactEmail" name="email" autocomplete="email" required placeholder="you@example.com" />
+          </div>
+          <div class="form-field">
+            <label for="contactMessage">Message</label>
+            <textarea id="contactMessage" name="message" required placeholder="How can we help?"></textarea>
+          </div>
+          <button type="submit" class="btn-solid" style="width: 100%">Send message</button>
+          <p class="form-success" id="contactSuccess" role="status">Message received. We'll reply soon.</p>
+        </form>
+        <p style="margin-top: 1rem; font-size: 0.8rem; color: var(--gray-dim)">
+          <a href="mailto:travis@tyl-ai.com" style="color: var(--white)">travis@tyl-ai.com</a>
+          · Utah, USA
+        </p>
+      </div>
+    </div>
+
+    <script src="site.js?v=19"></script>
+  </body>
+</html>

@@ -19,6 +19,12 @@ export interface CustomExercise {
   reps: string;
   weight: number;
   restTime: number;
+  /** When set (>0), exercise is logged by timed holds instead of weight × reps. */
+  durationSeconds?: number;
+  /** Exercises sharing this id alternate sets (superset). */
+  supersetId?: string;
+  /** Order within the superset (0 = first). */
+  supersetOrder?: number;
 }
 
 export interface DayWorkout {
@@ -51,6 +57,9 @@ export type SavedPlanWeek = {
       weight: number;
       restTime: number;
       category: 'strength';
+      durationSeconds?: number;
+      supersetId?: string;
+      supersetOrder?: number;
     }>;
     duration: number;
   }>;
@@ -187,6 +196,12 @@ export function dayWorkoutsToSavedWeekDays(
         weight: ex.weight,
         restTime: ex.restTime,
         category: 'strength' as const,
+        ...(ex.durationSeconds != null && ex.durationSeconds > 0
+          ? { durationSeconds: ex.durationSeconds }
+          : {}),
+        ...(ex.supersetId
+          ? { supersetId: ex.supersetId, supersetOrder: ex.supersetOrder ?? 0 }
+          : {}),
       };
     }),
     duration: dw.exercises.length * 5,
@@ -241,6 +256,12 @@ function savedExerciseToCustom(ex: SavedPlanWeek['weekDays'][0]['exercises'][0])
     reps: String(ex.reps),
     weight: ex.weight ?? 0,
     restTime: ex.restTime ?? 60,
+    ...(ex.durationSeconds != null && ex.durationSeconds > 0
+      ? { durationSeconds: ex.durationSeconds }
+      : {}),
+    ...(ex.supersetId
+      ? { supersetId: ex.supersetId, supersetOrder: ex.supersetOrder ?? 0 }
+      : {}),
   };
 }
 

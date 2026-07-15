@@ -11,7 +11,6 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Platform,
-  Linking,
 } from 'react-native';
 import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import * as FileSystem from 'expo-file-system';
@@ -27,28 +26,30 @@ import {
 import { updateNotificationSchedule } from './src/utils/notifications';
 import { NOTICE_CONTENT, LICENSE_CONTENT, LICENSING_SUMMARY_CONTENT, THIRD_PARTY_CONTENT } from './src/constants/legalDocuments';
 import {
+  PRIVACY_POLICY_CONTENT,
+  TERMS_OF_SERVICE_CONTENT,
+  FITNESS_DISCLAIMER_CONTENT,
+  AI_DISCLAIMER_CONTENT,
+} from './src/constants/legalPolicies';
+import {
   MEDICAL_DISCLAIMER_SHORT,
   APPLE_HEALTH_PRIVACY_SUMMARY,
   WORKOUT_LIABILITY_WAIVER_SHORT,
+  AI_DISCLAIMER_SHORT,
+  PRIVACY_SUMMARY_SHORT,
   LOCAL_DATA_DELETION_FOOTNOTE,
 } from './src/constants/complianceDisclosures';
+import { scheduleSummaryLine } from './src/utils/trainingSchedule';
+import { COPYRIGHT_NOTICE } from './src/constants/copyright';
+import { LEGAL_COMPANY_NAME, LEGAL_EFFECTIVE_DATE } from './src/constants/legalMeta';
 import { AppTheme } from './src/theme/appVisualTheme';
 import { getStayLoggedInPreference, setStayLoggedInPreference } from './src/utils/stayLoggedIn';
 import { KeyboardSafeView } from './src/keyboard';
 import type { Auth } from 'firebase/auth';
-import {
-  DEFAULT_HEALTH_DATA_PERMISSIONS,
-  EXPO_HEALTH_METRIC_KEYS,
-  HEALTH_METRIC_ORDER,
-  HEALTH_METRIC_COPY,
-  loadHealthDataPermissions,
-  saveHealthDataPermissions,
-  type HealthDataPermissions,
-  type HealthMetricKey,
-} from './src/utils/healthDataPermissions';
 import { useUserSettings } from './SettingsProvider';
 import { useSubscription } from './src/context/SubscriptionContext';
 import { tierLabel } from './src/constants/featureTiers';
+import { formatStripePlanLabel } from './src/services/betaAccessService';
 import {
   loadCoachingProfile,
   saveCoachingProfileDraft,
@@ -106,15 +107,25 @@ interface InterfaceSettings {
 interface SettingsScreenProps {
   onBack: () => void;
   onLogout: () => void;
-  onOpenAppGuide?: () => void;
   onEditCoachingQuestionnaire?: () => void;
+  initialTab?: 'profile' | 'interface' | 'settings' | 'legal';
+  /** When true, show only the section matching initialTab (opened from More menu). */
+  standaloneSection?: boolean;
 }
+
+const SECTION_HEADERS: Record<'profile' | 'interface' | 'settings' | 'legal', string> = {
+  profile: 'Profile',
+  interface: 'Interface',
+  settings: 'Settings',
+  legal: 'Legal',
+};
 
 export default function SettingsScreen({
   onBack,
   onLogout,
-  onOpenAppGuide,
   onEditCoachingQuestionnaire,
+  initialTab = 'profile',
+  standaloneSection = false,
 }: SettingsScreenProps) {
   const { showPredictiveWeight, enableMacroPreview, autoRestTimer, setPreference } = useUserSettings();
   const {
@@ -125,8 +136,14 @@ export default function SettingsScreen({
     setDevPremiumOverride,
     basicFeatures,
     premiumFeatures,
+    stripeStatus,
+    manageBilling,
   } = useSubscription();
-  const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings' | 'legal'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'interface' | 'settings' | 'legal'>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
   const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
   const [documentContent, setDocumentContent] = useState<string>('');
   const [profile, setProfile] = useState<UserProfile>({
@@ -159,9 +176,6 @@ export default function SettingsScreen({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDocumentModal, setShowDocumentModal] = useState(false);
   const [stayLoggedIn, setStayLoggedIn] = useState(true);
-  const [healthDataPerms, setHealthDataPerms] = useState<HealthDataPermissions>(
-    DEFAULT_HEALTH_DATA_PERMISSIONS
-  );
   const [coachMockHealth, setCoachMockHealth] = useState<CoachMockHealthSettings>(DEFAULT_COACH_MOCK_HEALTH);
   const [coachingProfile, setCoachingProfile] = useState<CoachingProfile | null>(null);
 
@@ -185,6 +199,22 @@ export default function SettingsScreen({
       case 'THIRD_PARTY':
         title = 'Third Party Notices - TypeScript';
         content = THIRD_PARTY_CONTENT;
+        break;
+      case 'PRIVACY_POLICY':
+        title = 'Privacy Policy';
+        content = PRIVACY_POLICY_CONTENT;
+        break;
+      case 'TERMS_OF_SERVICE':
+        title = 'Terms of Service';
+        content = TERMS_OF_SERVICE_CONTENT;
+        break;
+      case 'FITNESS_DISCLAIMER':
+        title = 'Fitness & Wellness Disclaimer';
+        content = FITNESS_DISCLAIMER_CONTENT;
+        break;
+      case 'AI_DISCLAIMER':
+        title = 'AI Disclaimer';
+        content = AI_DISCLAIMER_CONTENT;
         break;
       default:
         return;
@@ -215,7 +245,6 @@ export default function SettingsScreen({
       if (savedInterfaceSettings) {
         setInterfaceSettings(savedInterfaceSettings);
       }
-      setHealthDataPerms(await loadHealthDataPermissions());
       setStayLoggedIn(await getStayLoggedInPreference());
       const savedMock = await loadUserData<Partial<CoachMockHealthSettings>>(COACH_MOCK_HEALTH_KEY);
       if (savedMock) {
@@ -301,80 +330,78 @@ export default function SettingsScreen({
     }
   };
 
-  const renderProfileTab = () => (
-    <View style={styles.tabContent}>
-      {onOpenAppGuide ? (
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.guideReplayRow}
-            onPress={onOpenAppGuide}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Open app guide"
-          >
-            <View style={styles.settingLabelContainer}>
-              <Text style={styles.settingLabel}>App guide</Text>
-              <Text style={styles.settingDescription}>
-                Quick tour — what each main button does.
-              </Text>
-            </View>
-            <Text style={styles.guideReplayChevron}>▶</Text>
-          </TouchableOpacity>
-        </View>
+  const renderSubscriptionSection = () => (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Subscription</Text>
+      <View style={styles.subscriptionStatusRow}>
+        <Text style={styles.settingLabel}>Current plan</Text>
+        <Text style={[styles.subscriptionTierPill, isPremium && styles.subscriptionTierPillPremium]}>
+          {tierLabel(tier)}
+        </Text>
+      </View>
+      <Text style={styles.settingDescription}>
+        Basic includes workout tracking, your plans, nutrition & macros, and all trends. Premium adds Gemini AI
+        Coach, Food coach, and AI Workout builder.
+      </Text>
+      {stripeStatus?.active && formatStripePlanLabel(stripeStatus.plan) ? (
+        <Text style={styles.settingDescription}>
+          Stripe plan: {formatStripePlanLabel(stripeStatus.plan)}
+          {stripeStatus.cancelAtPeriodEnd ? ' · Cancels at period end' : ''}
+        </Text>
       ) : null}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Subscription</Text>
-        <View style={styles.subscriptionStatusRow}>
-          <Text style={styles.settingLabel}>Current plan</Text>
-          <Text style={[styles.subscriptionTierPill, isPremium && styles.subscriptionTierPillPremium]}>
-            {tierLabel(tier)}
-          </Text>
-        </View>
-        <Text style={styles.settingDescription}>
-          Basic includes workout tracking, your plans, nutrition & macros, and all trends. Premium adds Gemini AI
-          Coach, Food coach, and AI Workout builder.
-        </Text>
-
-        {!isPremium ? (
-          <TouchableOpacity style={styles.subscriptionPrimaryBtn} onPress={presentUpgrade} activeOpacity={0.88}>
-            <Text style={styles.subscriptionPrimaryBtnText}>Upgrade to Premium</Text>
-          </TouchableOpacity>
-        ) : null}
-
-        <TouchableOpacity style={styles.subscriptionSecondaryBtn} onPress={() => restorePurchases()} activeOpacity={0.7}>
-          <Text style={styles.subscriptionSecondaryBtnText}>Restore purchases</Text>
+      {!isPremium ? (
+        <TouchableOpacity style={styles.subscriptionPrimaryBtn} onPress={presentUpgrade} activeOpacity={0.88}>
+          <Text style={styles.subscriptionPrimaryBtnText}>Upgrade to Premium</Text>
         </TouchableOpacity>
+      ) : null}
 
-        <Text style={[styles.settingDescription, { marginTop: 14, marginBottom: 6 }]}>Included with Basic</Text>
-        {basicFeatures.slice(0, 6).map((f) => (
-          <Text key={f.id} style={styles.subscriptionFeatureLine}>
-            • {f.label}
-          </Text>
-        ))}
-        <Text style={[styles.settingDescription, { marginTop: 10, marginBottom: 6 }]}>Premium (Gemini)</Text>
-        {premiumFeatures.map((f) => (
-          <Text key={f.id} style={styles.subscriptionFeatureLine}>
-            • {f.label}
-          </Text>
-        ))}
+      {stripeStatus?.active ? (
+        <TouchableOpacity
+          style={styles.subscriptionPrimaryBtn}
+          onPress={() => void manageBilling()}
+          activeOpacity={0.88}
+        >
+          <Text style={styles.subscriptionPrimaryBtnText}>Manage billing</Text>
+        </TouchableOpacity>
+      ) : null}
 
-        {__DEV__ ? (
-          <View style={[styles.settingRow, { marginTop: 16 }]}>
-            <View style={styles.settingLabelContainer}>
-              <Text style={styles.settingLabel}>Premium (dev override)</Text>
-              <Text style={styles.settingDescription}>Simulate an active subscription for testing gates.</Text>
-            </View>
-            <Switch
-              value={isPremium}
-              onValueChange={(v) => void setDevPremiumOverride(v)}
-              trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
-              thumbColor={isPremium ? '#fff' : '#888'}
-            />
+      <TouchableOpacity style={styles.subscriptionSecondaryBtn} onPress={() => restorePurchases()} activeOpacity={0.7}>
+        <Text style={styles.subscriptionSecondaryBtnText}>Restore purchases</Text>
+      </TouchableOpacity>
+
+      <Text style={[styles.settingDescription, { marginTop: 14, marginBottom: 6 }]}>Included with Basic</Text>
+      {basicFeatures.slice(0, 6).map((f) => (
+        <Text key={f.id} style={styles.subscriptionFeatureLine}>
+          • {f.label}
+        </Text>
+      ))}
+      <Text style={[styles.settingDescription, { marginTop: 10, marginBottom: 6 }]}>Premium (Gemini)</Text>
+      {premiumFeatures.map((f) => (
+        <Text key={f.id} style={styles.subscriptionFeatureLine}>
+          • {f.label}
+        </Text>
+      ))}
+
+      {__DEV__ ? (
+        <View style={[styles.settingRow, { marginTop: 16 }]}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Premium (dev override)</Text>
+            <Text style={styles.settingDescription}>Simulate an active subscription for testing gates.</Text>
           </View>
-        ) : null}
-      </View>
+          <Switch
+            value={isPremium}
+            onValueChange={(v) => void setDevPremiumOverride(v)}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={isPremium ? '#fff' : '#888'}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
 
+  const renderProfileTab = () => (
+    <View style={styles.tabContent}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
         
@@ -470,9 +497,7 @@ export default function SettingsScreen({
                 : '—'}
             </Text>
             <Text style={styles.coachingReadonlyLine}>
-              Schedule: {coachingProfile.scheduleProfile.daysPerWeek} days ×{' '}
-              {coachingProfile.scheduleProfile.sessionLengthMinutes} min (
-              {coachingProfile.scheduleProfile.bestTimeOfDay})
+              Schedule: {scheduleSummaryLine(coachingProfile.scheduleProfile)}
             </Text>
             <Text style={styles.coachingReadonlyLine}>
               Experience: {coachingProfile.experienceProfile.level}
@@ -614,6 +639,8 @@ export default function SettingsScreen({
 
   const renderSettingsTab = () => (
     <View style={styles.tabContent}>
+      {renderSubscriptionSection()}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Notifications</Text>
         
@@ -651,24 +678,6 @@ export default function SettingsScreen({
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>App Preferences</Text>
-
-        {onOpenAppGuide ? (
-          <TouchableOpacity
-            style={styles.guideReplayRow}
-            onPress={onOpenAppGuide}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Replay app guide"
-          >
-            <View style={styles.settingLabelContainer}>
-              <Text style={styles.settingLabel}>App guide</Text>
-              <Text style={styles.settingDescription}>
-                Short tap tour — what each main button does.
-              </Text>
-            </View>
-            <Text style={styles.guideReplayChevron}>▶</Text>
-          </TouchableOpacity>
-        ) : null}
 
         <View style={styles.settingRow}>
           <View style={styles.settingLabelContainer}>
@@ -774,20 +783,6 @@ export default function SettingsScreen({
         </View>
 
         <View style={styles.settingRow}>
-          <Text style={styles.settingLabel}>Dark Mode</Text>
-          <Switch
-            value={settings.darkMode}
-            onValueChange={(value) => {
-              const newSettings = { ...settings, darkMode: value };
-              setSettings(newSettings);
-              saveSettings(newSettings);
-            }}
-            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
-            thumbColor={settings.darkMode ? '#fff' : '#888'}
-          />
-        </View>
-
-        <View style={styles.settingRow}>
           <Text style={styles.settingLabel}>Auto Backup Data</Text>
           <Switch
             value={settings.autoBackup}
@@ -800,111 +795,6 @@ export default function SettingsScreen({
             thumbColor={settings.autoBackup ? '#fff' : '#888'}
           />
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Permissions</Text>
-        
-        <View style={styles.settingRow}>
-          <View style={styles.settingLabelContainer}>
-            <Text style={styles.settingLabel}>Watch & Apple Health sync</Text>
-            <Text style={styles.settingDescription}>
-              On iPhone, allow the app to read metrics from Apple Health, your Apple Watch, and other
-              apps that write to Apple Health. On Android, similar data may come from Google Fit.
-            </Text>
-          </View>
-          <Switch
-            value={settings.healthDataSyncEnabled}
-            onValueChange={async (value) => {
-              const newSettings = { ...settings, healthDataSyncEnabled: value };
-              setSettings(newSettings);
-              await saveSettings(newSettings);
-              
-              // If enabling, request permissions if not already granted
-              if (value) {
-                try {
-                  const HealthService = await import('./src/services/HealthService');
-                  const hasPermissions = await HealthService.default.requestPermissions();
-                  
-                  if (hasPermissions) {
-                    Alert.alert(
-                      'Health Data Sync Enabled',
-                      'Health data sync is now enabled. Go to the Fitness tab → Health section and tap Refresh to load your data.',
-                      [{ text: 'OK' }]
-                    );
-                  }
-                } catch (error) {
-                  console.error('Error requesting health permissions:', error);
-                }
-              } else {
-                Alert.alert(
-                  'Sync disabled',
-                  'The app will no longer read workout or activity metrics from Apple Health or connected services.',
-                  [{ text: 'OK' }]
-                );
-              }
-            }}
-            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
-            thumbColor={settings.healthDataSyncEnabled ? '#fff' : '#888'}
-          />
-        </View>
-
-        <Text style={styles.healthCategoriesIntro}>
-          Choose which types of data the app may read from Apple Health (iOS), Google Fit (Android),
-          and wearables. Turning a category off stops this app from using that data. System controls in
-          Apple Health (Data Access & Devices) still apply separately.
-        </Text>
-
-        {Platform.OS === 'ios' && (
-          <TouchableOpacity
-            style={styles.secondaryActionButton}
-            onPress={() => Linking.openSettings()}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.secondaryActionButtonText}>Open iPhone Settings</Text>
-            <Text style={styles.secondaryActionButtonSubtext}>
-              Then Apple Health → Data Access & Devices → TYLAI to adjust what Apple Health shares
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {HEALTH_METRIC_ORDER.map((key: HealthMetricKey) => {
-          const copy = HEALTH_METRIC_COPY[key];
-          const isExpoMetric = (EXPO_HEALTH_METRIC_KEYS as readonly HealthMetricKey[]).includes(key);
-          return (
-            <View key={key} style={styles.settingRow}>
-              <View style={styles.settingLabelContainer}>
-                <Text style={styles.settingLabel}>{copy.title}</Text>
-                <Text style={styles.settingDescription}>{copy.description}</Text>
-                {!isExpoMetric && (
-                  <Text style={styles.settingDescriptionMuted}>
-                    Not used by in-app Fitness charts in this build; your choice is saved for privacy
-                    and future Health features.
-                  </Text>
-                )}
-              </View>
-              <Switch
-                value={healthDataPerms[key]}
-                disabled={!settings.healthDataSyncEnabled}
-                onValueChange={async (value) => {
-                  const next: HealthDataPermissions = { ...healthDataPerms, [key]: value };
-                  setHealthDataPerms(next);
-                  await saveHealthDataPermissions(next);
-                  if (value && settings.healthDataSyncEnabled && isExpoMetric) {
-                    try {
-                      const HealthService = (await import('./src/services/HealthService')).default;
-                      await HealthService.requestPermissions();
-                    } catch (e) {
-                      console.warn('Health permission request after category enable:', e);
-                    }
-                  }
-                }}
-                trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
-                thumbColor={healthDataPerms[key] ? '#fff' : '#888'}
-              />
-            </View>
-          );
-        })}
       </View>
 
       <View style={styles.section}>
@@ -1226,19 +1116,76 @@ export default function SettingsScreen({
   const renderLegalTab = () => (
     <View style={styles.tabContent}>
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Privacy & safety</Text>
-        <Text style={styles.complianceHeading}>Medical disclaimer</Text>
+        <Text style={styles.sectionTitle}>Copyright</Text>
+        <Text style={styles.complianceBlock}>{COPYRIGHT_NOTICE}</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Policies & disclaimers</Text>
+        <Text style={styles.sectionDescription}>
+          Full legal documents for {LEGAL_COMPANY_NAME}. Effective {LEGAL_EFFECTIVE_DATE}.
+        </Text>
+      </View>
+
+      <View style={styles.section}>
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('PRIVACY_POLICY')}
+        >
+          <Text style={styles.documentButtonTitle}>Privacy Policy</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Data collection, use, rights, and third-party services
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('TERMS_OF_SERVICE')}
+        >
+          <Text style={styles.documentButtonTitle}>Terms of Service</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Eligibility, billing, acceptable use, and governing law
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('FITNESS_DISCLAIMER')}
+        >
+          <Text style={styles.documentButtonTitle}>Fitness Disclaimer</Text>
+          <Text style={styles.documentButtonSubtext}>
+            Not medical advice; exercise risks and physician consultation
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.documentButton}
+          onPress={() => loadDocument('AI_DISCLAIMER')}
+        >
+          <Text style={styles.documentButtonTitle}>AI Disclaimer</Text>
+          <Text style={styles.documentButtonSubtext}>
+            AI accuracy limits; not for medical or emergency use
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Summaries</Text>
+        <Text style={styles.complianceBlock}>{PRIVACY_SUMMARY_SHORT}</Text>
+        <Text style={styles.complianceHeading}>Fitness & wellness</Text>
         <Text style={styles.complianceBlock}>{MEDICAL_DISCLAIMER_SHORT}</Text>
-        <Text style={styles.complianceHeading}>Apple Health & HealthKit</Text>
+        <Text style={styles.complianceHeading}>Apple Health & connected data</Text>
         <Text style={styles.complianceBlock}>{APPLE_HEALTH_PRIVACY_SUMMARY}</Text>
+        <Text style={styles.complianceHeading}>AI features</Text>
+        <Text style={styles.complianceBlock}>{AI_DISCLAIMER_SHORT}</Text>
         <Text style={styles.complianceHeading}>Workouts & liability</Text>
         <Text style={styles.complianceBlock}>{WORKOUT_LIABILITY_WAIVER_SHORT}</Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Legal documents</Text>
+        <Text style={styles.sectionTitle}>Open-source & licenses</Text>
         <Text style={styles.sectionDescription}>
-          Licenses, notices, and third-party information for this application.
+          Third-party software notices and license texts.
         </Text>
       </View>
 
@@ -1301,11 +1248,13 @@ export default function SettingsScreen({
         >
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={styles.headerTitle}>
+          {standaloneSection ? SECTION_HEADERS[activeTab] : 'Settings'}
+        </Text>
         <View style={styles.placeholder} />
       </View>
 
-      {/* Tabs */}
+      {!standaloneSection ? (
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tabButton, activeTab === 'profile' && styles.tabButtonActive]}
@@ -1332,6 +1281,7 @@ export default function SettingsScreen({
           <Text style={[styles.tabButtonText, activeTab === 'legal' && styles.tabButtonTextActive]}>Legal</Text>
         </TouchableOpacity>
       </View>
+      ) : null}
 
       {/* Content */}
       <ScrollView

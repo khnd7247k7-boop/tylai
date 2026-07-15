@@ -67,7 +67,7 @@ Most dependencies use the MIT License, which is very permissive:
 - Platform APIs (HealthKit, Google Fit) are covered by platform licenses
 
 ## Copyright
-- **Your code**: You own the copyright (or should verify ownership)
+- **TYL app, apparel, and brand**: Transform Your Life LLC (Copyright © 2024–2026 Transform Your Life LLC. All rights reserved.)
 - **Third-party code**: Copyrighted by respective authors (listed in NOTICE)
 - **TypeScript**: Includes third-party code (see ThirdPartyNoticeText.txt)
 
@@ -184,7 +184,7 @@ Most dependencies use the MIT License, which is very permissive:
 
 ---
 
-Last Updated: 2024
+Last Updated: 2026
 For questions, refer to NOTICE file or contact legal counsel.
 
 

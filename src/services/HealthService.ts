@@ -1,29 +1,22 @@
 /**
- * Health Service for Smartwatch Integration
+ * Health Service for Smartwatch / Apple Health integration.
  *
- * Provides access to health data from Apple Watch (HealthKit) and Android wearables (Google Fit)
- * using expo-health package.
+ * iOS uses the native HealthKit bridge (`HealthKitBridge` → `HealthKitManager`).
+ * Expo Go has no HealthKit — use a dev client / TestFlight / App Store build.
  */
-
-// Note: This service uses expo-health which needs to be installed
-// Run: npx expo install expo-health
 
 import {
   isAnyExpoHealthMetricEnabled,
   isHealthMetricEnabled,
 } from '../utils/healthDataPermissions';
-import { isRunningInExpoGo } from '../utils/expoGo';
-
-type ExpoHealthModule = typeof import('expo-health');
-
-async function loadExpoHealth(): Promise<ExpoHealthModule | null> {
-  if (isRunningInExpoGo()) return null;
-  try {
-    return await import('expo-health');
-  } catch {
-    return null;
-  }
-}
+import {
+  fetchQuantitySamplesNative,
+  hasHealthKitAuthFlowCompletedNative,
+  isHealthDataAvailableNative,
+  isHealthKitBridgeAvailable,
+  requestHealthKitAuthorizationNative,
+  type HealthKitQuantityMetric,
+} from '../native/healthKitBridge';
 
 export interface HealthMetrics {
   averageHeartRate?: number;
@@ -70,7 +63,9 @@ class HealthService {
   }
 
   /**
-   * Request health data permissions from the user
+   * Request health data permissions from the user.
+   * Shows the system Health sheet (first time) and registers TYLAI under
+   * Settings → Health → Data Access & Devices.
    */
   async requestPermissions(): Promise<boolean> {
     try {
@@ -80,42 +75,29 @@ class HealthService {
       if (!(await isAnyExpoHealthMetricEnabled())) {
         return false;
       }
-
-      const Health = await loadExpoHealth();
-      if (!Health) return false;
-
-      const toRequest: string[] = [];
-      if (await isHealthMetricEnabled('heartRate')) toRequest.push('heartRate');
-      if (await isHealthMetricEnabled('activeEnergy')) toRequest.push('activeEnergy');
-      if (await isHealthMetricEnabled('steps')) toRequest.push('steps');
-      if (await isHealthMetricEnabled('distance')) toRequest.push('distance');
-      if (await isHealthMetricEnabled('bodyMass')) toRequest.push('bodyMass');
-
-      if (toRequest.length === 0) {
+      if (!isHealthKitBridgeAvailable()) {
+        console.warn(
+          '[HealthService] HealthKit bridge unavailable (Expo Go or missing native module). Use a device build.'
+        );
+        return false;
+      }
+      if (!(await isHealthDataAvailableNative())) {
         return false;
       }
 
-      const permissions = await Health.requestPermissionsAsync({
-        permissions: toRequest,
-      });
-
-      const p = permissions.permissions;
-      const granted = (key: string) => p?.[key] === 'granted';
-
-      this.hasPermissions =
-        permissions.status === 'granted' ||
-        toRequest.some((key) => granted(key));
-
-      return this.hasPermissions;
+      const ok = await requestHealthKitAuthorizationNative();
+      this.hasPermissions = ok;
+      return ok;
     } catch (error) {
       console.warn('Health permissions not available:', error);
-      console.warn('Install expo-health: npx expo install expo-health');
       return false;
     }
   }
 
   /**
-   * Check if health permissions have been granted
+   * Check if health permissions have been granted.
+   * Apple does not reliably expose per-type *read* grants, so we treat a completed
+   * auth flow as sufficient to attempt reads.
    */
   async checkPermissions(): Promise<boolean> {
     if (!(await isAnyExpoHealthMetricEnabled())) {
@@ -126,33 +108,32 @@ class HealthService {
     if (this.hasPermissions) return true;
 
     try {
-      const Health = await loadExpoHealth();
-      if (!Health) {
+      if (!isHealthKitBridgeAvailable()) {
         this.hasPermissions = false;
         return false;
       }
-      const permissions = await Health.getPermissionsAsync();
-
-      const p = permissions.permissions;
-      const needHr = await isHealthMetricEnabled('heartRate');
-      const needEnergy = await isHealthMetricEnabled('activeEnergy');
-      const needSteps = await isHealthMetricEnabled('steps');
-      const needDist = await isHealthMetricEnabled('distance');
-
-      const okFor = (needed: boolean, key: string) =>
-        !needed || p?.[key] === 'granted';
-
-      this.hasPermissions =
-        permissions.status === 'granted' ||
-        (okFor(needHr, 'heartRate') &&
-          okFor(needEnergy, 'activeEnergy') &&
-          okFor(needSteps, 'steps') &&
-          okFor(needDist, 'distance'));
-
-      return this.hasPermissions;
-    } catch (error) {
+      if (!(await isHealthDataAvailableNative())) {
+        this.hasPermissions = false;
+        return false;
+      }
+      const completed = await hasHealthKitAuthFlowCompletedNative();
+      this.hasPermissions = completed;
+      return completed;
+    } catch {
       return false;
     }
+  }
+
+  private async readQuantitySamples(
+    metric: HealthKitQuantityMetric,
+    startTime: Date,
+    endTime: Date
+  ): Promise<Array<{ value: number; timestamp: Date }>> {
+    const samples = await fetchQuantitySamplesNative(metric, startTime, endTime);
+    return samples.map((s) => ({
+      value: s.value,
+      timestamp: new Date(s.dateMs),
+    }));
   }
 
   /**
@@ -174,21 +155,7 @@ class HealthService {
         return [];
       }
 
-      const Health = await loadExpoHealth();
-      if (!Health) return [];
-      const heartRateData = await Health.getHeartRateAsync({
-        startDate: startTime,
-        endDate: endTime,
-      });
-
-      if (!heartRateData || heartRateData.length === 0) {
-        return [];
-      }
-
-      return heartRateData.map((point: any) => ({
-        value: point.value || 0,
-        timestamp: new Date(point.startDate || point.timestamp),
-      }));
+      return this.readQuantitySamples('heartRate', startTime, endTime);
     } catch (error) {
       console.error('Error fetching heart rate data:', error);
       return [];
@@ -214,21 +181,8 @@ class HealthService {
         return 0;
       }
 
-      const Health = await loadExpoHealth();
-      if (!Health) return 0;
-      const caloriesData = await Health.getActiveEnergyAsync({
-        startDate: startTime,
-        endDate: endTime,
-      });
-
-      if (!caloriesData || caloriesData.length === 0) {
-        return 0;
-      }
-
-      // Sum all calories in the time range
-      return caloriesData.reduce((total: number, entry: any) => {
-        return total + (entry.value || 0);
-      }, 0);
+      const samples = await this.readQuantitySamples('activeEnergy', startTime, endTime);
+      return samples.reduce((total, entry) => total + (entry.value || 0), 0);
     } catch (error) {
       console.error('Error fetching calories:', error);
       return 0;
@@ -254,21 +208,8 @@ class HealthService {
         return 0;
       }
 
-      const Health = await loadExpoHealth();
-      if (!Health) return 0;
-      const stepsData = await Health.getStepsAsync({
-        startDate: startTime,
-        endDate: endTime,
-      });
-
-      if (!stepsData || stepsData.length === 0) {
-        return 0;
-      }
-
-      // Sum all steps in the time range
-      return stepsData.reduce((total: number, entry: any) => {
-        return total + (entry.value || 0);
-      }, 0);
+      const samples = await this.readQuantitySamples('steps', startTime, endTime);
+      return samples.reduce((total, entry) => total + (entry.value || 0), 0);
     } catch (error) {
       console.error('Error fetching steps:', error);
       return 0;
@@ -294,21 +235,8 @@ class HealthService {
         return 0;
       }
 
-      const Health = await loadExpoHealth();
-      if (!Health) return 0;
-      const distanceData = await Health.getDistanceAsync({
-        startDate: startTime,
-        endDate: endTime,
-      });
-
-      if (!distanceData || distanceData.length === 0) {
-        return 0;
-      }
-
-      // Sum all distance in the time range (already in meters)
-      return distanceData.reduce((total: number, entry: any) => {
-        return total + (entry.value || 0);
-      }, 0);
+      const samples = await this.readQuantitySamples('distance', startTime, endTime);
+      return samples.reduce((total, entry) => total + (entry.value || 0), 0);
     } catch (error) {
       console.error('Error fetching distance:', error);
       return 0;
@@ -508,34 +436,29 @@ class HealthService {
   /**
    * Get calories burned grouped by day
    */
+  private groupSamplesByDay(
+    samples: Array<{ value: number; timestamp: Date }>
+  ): Array<{ date: Date; value: number }> {
+    const daily = new Map<string, number>();
+    samples.forEach((entry) => {
+      const date = entry.timestamp;
+      const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      daily.set(dateKey, (daily.get(dateKey) || 0) + (entry.value || 0));
+    });
+    return Array.from(daily.entries()).map(([dateKey, value]) => ({
+      date: new Date(`${dateKey}T12:00:00`),
+      value: Math.round(value),
+    }));
+  }
+
   private async getCaloriesBurnedByDay(
     startDate: Date,
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await loadExpoHealth();
-      if (!Health) return [];
-      const caloriesData = await Health.getActiveEnergyAsync({
-        startDate,
-        endDate,
-      });
-
-      if (!caloriesData || caloriesData.length === 0) {
-        return [];
-      }
-
-      // Group by day
-      const dailyCalories = new Map<string, number>();
-      caloriesData.forEach((entry: any) => {
-        const date = new Date(entry.startDate || entry.timestamp);
-        const dateKey = date.toISOString().split('T')[0];
-        dailyCalories.set(dateKey, (dailyCalories.get(dateKey) || 0) + (entry.value || 0));
-      });
-
-      return Array.from(dailyCalories.entries()).map(([dateKey, value]) => ({
-        date: new Date(dateKey),
-        value: Math.round(value),
-      }));
+      if (!(await isHealthMetricEnabled('activeEnergy'))) return [];
+      const samples = await this.readQuantitySamples('activeEnergy', startDate, endDate);
+      return this.groupSamplesByDay(samples);
     } catch (error) {
       console.error('Error fetching daily calories:', error);
       return [];
@@ -550,29 +473,9 @@ class HealthService {
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await loadExpoHealth();
-      if (!Health) return [];
-      const stepsData = await Health.getStepsAsync({
-        startDate,
-        endDate,
-      });
-
-      if (!stepsData || stepsData.length === 0) {
-        return [];
-      }
-
-      // Group by day
-      const dailySteps = new Map<string, number>();
-      stepsData.forEach((entry: any) => {
-        const date = new Date(entry.startDate || entry.timestamp);
-        const dateKey = date.toISOString().split('T')[0];
-        dailySteps.set(dateKey, (dailySteps.get(dateKey) || 0) + (entry.value || 0));
-      });
-
-      return Array.from(dailySteps.entries()).map(([dateKey, value]) => ({
-        date: new Date(dateKey),
-        value: Math.round(value),
-      }));
+      if (!(await isHealthMetricEnabled('steps'))) return [];
+      const samples = await this.readQuantitySamples('steps', startDate, endDate);
+      return this.groupSamplesByDay(samples);
     } catch (error) {
       console.error('Error fetching daily steps:', error);
       return [];
@@ -587,29 +490,9 @@ class HealthService {
     endDate: Date
   ): Promise<Array<{ date: Date; value: number }>> {
     try {
-      const Health = await loadExpoHealth();
-      if (!Health) return [];
-      const distanceData = await Health.getDistanceAsync({
-        startDate,
-        endDate,
-      });
-
-      if (!distanceData || distanceData.length === 0) {
-        return [];
-      }
-
-      // Group by day
-      const dailyDistance = new Map<string, number>();
-      distanceData.forEach((entry: any) => {
-        const date = new Date(entry.startDate || entry.timestamp);
-        const dateKey = date.toISOString().split('T')[0];
-        dailyDistance.set(dateKey, (dailyDistance.get(dateKey) || 0) + (entry.value || 0));
-      });
-
-      return Array.from(dailyDistance.entries()).map(([dateKey, value]) => ({
-        date: new Date(dateKey),
-        value: Math.round(value),
-      }));
+      if (!(await isHealthMetricEnabled('distance'))) return [];
+      const samples = await this.readQuantitySamples('distance', startDate, endDate);
+      return this.groupSamplesByDay(samples);
     } catch (error) {
       console.error('Error fetching daily distance:', error);
       return [];

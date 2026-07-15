@@ -17,6 +17,7 @@ import AIService, { ProgramAdaptation } from './AIService';
 import { useSmallWins } from './src/context/SmallWinsContext';
 import { useToast } from './src/components/ToastProvider';
 import { getProgramWeeksFromSavedPlan, inferScheduleMode, scheduleModeDescription, getSuggestedFlexibleRotation, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
+import { buildSupersetLetterMap, formatSupersetTag } from './src/utils/workoutSupersets';
 import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
@@ -211,17 +212,89 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
     setSelectedDayIndex(dayIndex);
   };
 
+  const launchSingleWorkoutPlan = () => {
+    if (!currentPlan.exercises?.length) return;
+    const program: WorkoutProgram = {
+      id: currentPlan.id,
+      name: currentPlan.name,
+      description: currentPlan.description || 'Custom workout',
+      duration: currentPlan.duration || currentPlan.exercises.length * 5,
+      frequency: currentPlan.daysPerWeek || 1,
+      level: currentPlan.level || 'intermediate',
+      category: 'strength',
+      exercises: currentPlan.exercises,
+      focus: currentPlan.focus || 'Custom workout',
+      equipment: [],
+    };
+    setSelectedProgram(program);
+  };
+
+  const getAutoStartDayIndices = (): { weekIndex: number; dayIndex: number } | null => {
+    if (isFlexiblePlan && suggestedRotation) {
+      return { weekIndex: suggestedRotation.weekIndex, dayIndex: suggestedRotation.dayIndex };
+    }
+
+    const hasStructuredDays = planWeeks.some((w) => (w.weekDays?.length ?? 0) > 0);
+    if (!hasStructuredDays) return null;
+
+    const weekIndex = Math.max(
+      0,
+      Math.min(planWeeks.length - 1, (currentPlan.activeProgramWeek ?? 1) - 1)
+    );
+    const days = planWeeks[weekIndex]?.weekDays ?? currentPlan?.weeklyPlan?.weekDays;
+    if (!days?.length) return null;
+
+    if (days.length === 1) {
+      return { weekIndex, dayIndex: 0 };
+    }
+
+    const weekdayNames = [
+      'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+    ];
+    const todayName = weekdayNames[new Date().getDay()];
+    let dayIndex = days.findIndex(
+      (d: any) => d.dayName && String(d.dayName).toLowerCase() === todayName.toLowerCase()
+    );
+    if (dayIndex < 0) {
+      dayIndex = days.findIndex((d: any) => {
+        const n = Number(d.day);
+        return n >= 1 && n <= 7 && weekdayNames[n % 7] === todayName;
+      });
+    }
+    return dayIndex >= 0 ? { weekIndex, dayIndex } : null;
+  };
+
   useEffect(() => {
-    if (!autoStartSuggested || autoStartHandled || !isFlexiblePlan || !suggestedRotation || !historyLoaded) return;
-    setAutoStartHandled(true);
-    launchWorkoutForDay(suggestedRotation.weekIndex, suggestedRotation.dayIndex);
+    if (!autoStartSuggested || autoStartHandled || !historyLoaded) return;
+
+    const structuredDay = getAutoStartDayIndices();
+    if (structuredDay) {
+      setAutoStartHandled(true);
+      launchWorkoutForDay(structuredDay.weekIndex, structuredDay.dayIndex);
+      return;
+    }
+
+    const hasStructuredDays = planWeeks.some((w) => (w.weekDays?.length ?? 0) > 0);
+    if (!hasStructuredDays && currentPlan.exercises?.length) {
+      setAutoStartHandled(true);
+      launchSingleWorkoutPlan();
+    }
   }, [
     autoStartSuggested,
     autoStartHandled,
-    isFlexiblePlan,
     historyLoaded,
+    isFlexiblePlan,
     suggestedRotation?.weekIndex,
     suggestedRotation?.dayIndex,
+    currentPlan.id,
+    currentPlan.exercises,
+    planWeeks.length,
   ]);
 
   const handleStartWorkout = (weekIndex?: number, dayIndex?: number) => {
@@ -745,6 +818,7 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => setSelectedDayIndex(null)}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
@@ -800,6 +874,7 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
         <TouchableOpacity
           style={styles.backButton}
           onPress={onBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
@@ -927,21 +1002,36 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
                       </View>
                       {isExpanded && (
                         <View style={styles.exercisesList}>
-                          {dayWorkout.exercises.map((exercise: any, exIndex: number) => (
+                          {(() => {
+                            const letters = buildSupersetLetterMap(dayWorkout.exercises);
+                            return dayWorkout.exercises.map((exercise: any, exIndex: number) => {
+                            const ssTag = formatSupersetTag(
+                              letters.get(exIndex),
+                              exercise.supersetOrder ?? (exercise.supersetId ? 0 : undefined)
+                            );
+                            return (
                             <View
                               key={`day-${weekIndex}-${dayIndex}-ex-${exIndex}-${exercise.id || exercise.name}`}
-                              style={styles.exerciseItem}
+                              style={[
+                                styles.exerciseItem,
+                                !!exercise.supersetId && styles.exerciseItemSuperset,
+                              ]}
                             >
                               <Text style={styles.exerciseName}>
-                                {exIndex + 1}. {exercise.name}
+                                {ssTag ? `${ssTag} · ` : `${exIndex + 1}. `}{exercise.name}
                               </Text>
                               <Text style={styles.exerciseDetails}>
-                                {exercise.sets} sets × {exercise.reps} reps
+                                {(exercise.durationSeconds ?? 0) > 0
+                                  ? `${exercise.sets} × ${exercise.durationSeconds}s`
+                                  : `${exercise.sets} sets × ${exercise.reps} reps`}
                                 {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
                                 {' • '}{exercise.restTime}s rest
+                                {exercise.supersetId ? ' • superset' : ''}
                               </Text>
                             </View>
-                          ))}
+                            );
+                            });
+                          })()}
                         </View>
                       )}
                     </View>
@@ -987,18 +1077,36 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
             </TouchableOpacity>
             {expandedDays.has(0) && (
               <View style={styles.exercisesList}>
-                {currentPlan.exercises.map((exercise: any, index: number) => (
-                  <View key={exercise.id || `single-plan-ex-${index}-${exercise.name}`} style={styles.exerciseItem}>
+                {(() => {
+                  const letters = buildSupersetLetterMap(currentPlan.exercises);
+                  return currentPlan.exercises.map((exercise: any, index: number) => {
+                  const ssTag = formatSupersetTag(
+                    letters.get(index),
+                    exercise.supersetOrder ?? (exercise.supersetId ? 0 : undefined)
+                  );
+                  return (
+                  <View
+                    key={exercise.id || `single-plan-ex-${index}-${exercise.name}`}
+                    style={[
+                      styles.exerciseItem,
+                      !!exercise.supersetId && styles.exerciseItemSuperset,
+                    ]}
+                  >
                     <Text style={styles.exerciseName}>
-                      {index + 1}. {exercise.name}
+                      {ssTag ? `${ssTag} · ` : `${index + 1}. `}{exercise.name}
                     </Text>
                     <Text style={styles.exerciseDetails}>
-                      {exercise.sets} sets × {exercise.reps} reps
+                      {(exercise.durationSeconds ?? 0) > 0
+                        ? `${exercise.sets} × ${exercise.durationSeconds}s`
+                        : `${exercise.sets} sets × ${exercise.reps} reps`}
                       {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
                       {' • '}{exercise.restTime || 60}s rest
+                      {exercise.supersetId ? ' • superset' : ''}
                     </Text>
                   </View>
-                ))}
+                  );
+                  });
+                })()}
               </View>
             )}
           </View>
@@ -1467,6 +1575,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#333',
+  },
+  exerciseItemSuperset: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#00ff88',
+    paddingLeft: 10,
   },
   exerciseName: {
     fontSize: 16,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -18,8 +18,19 @@ import { useSmallWins } from './src/context/SmallWinsContext';
 import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exerciseDatabase';
 import ExerciseVideoPlayer from './src/components/ExerciseVideoPlayer';
 import RestTimerModal, { REST_TIMER_ENABLED_STORAGE_KEY } from './src/components/RestTimerModal';
+import StretchHoldTracker from './src/components/StretchHoldTracker';
 import { prefillNumericSetFromPrevious } from './src/utils/setLoggingPrefill';
-import { hasWearableCoverageForSession } from './src/utils/wearableSessionSignals';
+import {
+  formatStretchProtocolLabel,
+  getStretchProtocol,
+  isStretchLoggingExercise,
+} from './src/utils/stretchLogging';
+import {
+  buildSupersetLetterMap,
+  findNextSupersetCursor,
+  formatSupersetTag,
+  getSupersetGroupIndices,
+} from './src/utils/workoutSupersets';
 // HealthService is imported dynamically to avoid errors if expo-health isn't installed
 let HealthService: any;
 try {
@@ -58,11 +69,8 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   }>>([]);
   const [notes, setNotes] = useState('');
   const [startTime, setStartTime] = useState<Date>(new Date());
-  const [showPostWorkoutQuestions, setShowPostWorkoutQuestions] = useState(false);
-  const [sorenessLevel, setSorenessLevel] = useState<number | null>(null);
-  const [energyLevel, setEnergyLevel] = useState<number | null>(null);
-  const [motivationLevel, setMotivationLevel] = useState<number | null>(null);
-  const [pendingSession, setPendingSession] = useState<WorkoutSession | null>(null);
+  const [isFinishingWorkout, setIsFinishingWorkout] = useState(false);
+  const finishingWorkoutRef = useRef(false);
   const [showSubstitutionModal, setShowSubstitutionModal] = useState(false);
   const [substitutionExerciseIndex, setSubstitutionExerciseIndex] = useState<number | null>(null);
   const [substitutionAlternatives, setSubstitutionAlternatives] = useState<ExerciseData[]>([]);
@@ -365,6 +373,102 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   };
 
 
+  const isWorkoutFullyDone = useCallback(
+    (
+      data: Array<{
+        skipped?: boolean;
+        sets: Array<{ completed: boolean }>;
+      }>
+    ) =>
+      data.length > 0 &&
+      data.every((exercise) => exercise.skipped || exercise.sets.every((set) => set.completed)),
+    []
+  );
+
+  /** Save once and leave — no forced check-in or confirmation dialogs. */
+  const finishWorkout = useCallback(
+    async (
+      data: Array<{
+        exerciseId: string;
+        name: string;
+        skipped?: boolean;
+        sets: Array<{
+          setNumber: number;
+          reps: number;
+          weight: number;
+          restTime: number;
+          completed: boolean;
+          rir?: number;
+        }>;
+      }>,
+      workoutNotes: string
+    ) => {
+      if (finishingWorkoutRef.current) return;
+      finishingWorkoutRef.current = true;
+      setIsFinishingWorkout(true);
+
+      try {
+        const endTime = new Date();
+        const duration = Math.max(
+          1,
+          Math.round((endTime.getTime() - startTime.getTime()) / 1000 / 60)
+        );
+
+        const completedExercises = data
+          .filter((exercise) => exercise.skipped || exercise.sets.some((set) => set.completed))
+          .map((exercise) => ({
+            exerciseId: exercise.exerciseId,
+            name: exercise.name,
+            sets: exercise.skipped ? [] : exercise.sets.filter((set) => set.completed),
+          }));
+
+        let healthMetrics;
+        if (healthMetricsEnabled && HealthService) {
+          try {
+            healthMetrics = await HealthService.getWorkoutMetrics(startTime, endTime);
+          } catch (error) {
+            console.error('Error fetching health metrics:', error);
+          }
+        }
+
+        const session: WorkoutSession = {
+          id: Date.now().toString(),
+          programId: currentProgram.id,
+          programName: currentProgram.name,
+          date: startTime.toISOString(),
+          duration,
+          exercises: completedExercises,
+          notes: workoutNotes,
+          completed: true,
+          healthMetrics,
+        };
+
+        try {
+          const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
+          const existingHistory =
+            (await loadUserData<WorkoutSession[]>('workoutHistory')) || [];
+          await saveUserData('workoutHistory', [session, ...existingHistory]);
+        } catch (error) {
+          console.error('Error saving workout history:', error);
+        }
+
+        try {
+          await onWorkoutSessionSaved(session);
+        } catch (e) {
+          console.warn('Small wins hook:', e);
+        }
+
+        onComplete(session);
+      } catch (error) {
+        console.error('Error finishing workout:', error);
+        finishingWorkoutRef.current = false;
+        setIsFinishingWorkout(false);
+        Alert.alert('Could not save workout', 'Please try Finish Workout again.');
+      }
+    },
+    [currentProgram, healthMetricsEnabled, onComplete, onWorkoutSessionSaved, startTime]
+  );
+
   const handleSetComplete = (
     exerciseIndex: number,
     setIndex: number,
@@ -372,6 +476,8 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
     reps: number,
     rir?: number
   ) => {
+    if (finishingWorkoutRef.current) return;
+
     const newData = [...exerciseData];
     newData[exerciseIndex].sets[setIndex] = {
       ...newData[exerciseIndex].sets[setIndex],
@@ -380,51 +486,107 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       completed: true,
       ...(rir != null && Number.isFinite(rir) ? { rir } : {}),
     };
-    const currentExercise = newData[exerciseIndex];
-    const lastExerciseIdx = currentProgram.exercises.length - 1;
-    const isLastSetOfWorkout =
-      exerciseIndex === lastExerciseIdx && setIndex === currentExercise.sets.length - 1;
-    const restSec = Math.max(0, newData[exerciseIndex].sets[setIndex].restTime ?? 90);
+    const restSec = isStretchLoggingExercise(currentProgram.exercises[exerciseIndex] ?? {})
+      ? 0
+      : Math.max(0, newData[exerciseIndex].sets[setIndex].restTime ?? 90);
 
-    // Auto-advance to next set if available
-    if (setIndex < currentExercise.sets.length - 1) {
-      const nextSetIndex = setIndex + 1;
-      newData[exerciseIndex] = {
-        ...newData[exerciseIndex],
-        sets: prefillNumericSetFromPrevious(newData[exerciseIndex].sets, nextSetIndex),
+    const next = findNextSupersetCursor(
+      currentProgram.exercises,
+      newData,
+      exerciseIndex,
+      setIndex
+    );
+
+    if (next) {
+      newData[next.exerciseIndex] = {
+        ...newData[next.exerciseIndex],
+        sets: prefillNumericSetFromPrevious(newData[next.exerciseIndex].sets, next.setIndex),
       };
       setExerciseData(newData);
-      setCurrentSetIndex(nextSetIndex);
+      setCurrentExerciseIndex(next.exerciseIndex);
+      setCurrentSetIndex(next.setIndex);
     } else {
       setExerciseData(newData);
-      // All sets completed for this exercise, move to next exercise
-      if (exerciseIndex < currentProgram.exercises.length - 1) {
-        setCurrentExerciseIndex(exerciseIndex + 1);
-        setCurrentSetIndex(0);
-      }
     }
 
-    if (restTimerEnabled && !isLastSetOfWorkout && restSec > 0) {
+    if (isWorkoutFullyDone(newData)) {
+      void finishWorkout(newData, notes);
+      return;
+    }
+
+    if (restTimerEnabled && next != null && restSec > 0) {
       setRestModalSeconds(restSec);
       setRestModalVisible(true);
     }
   };
 
   const handleExerciseComplete = () => {
-    // Check if all sets are completed for current exercise
     const currentExerciseSets = exerciseData[currentExerciseIndex]?.sets || [];
-    const allSetsCompleted = currentExerciseSets.every(set => set.completed);
-    
+    const allSetsCompleted = currentExerciseSets.every((set) => set.completed);
+    const ssId = currentProgram.exercises[currentExerciseIndex]?.supersetId;
+
+    if (ssId) {
+      const group = getSupersetGroupIndices(currentProgram.exercises, currentExerciseIndex);
+      const groupDone = group.every((gi) =>
+        (exerciseData[gi]?.sets || []).every((s) => s.completed)
+      );
+      if (!groupDone) {
+        Alert.alert(
+          'Finish the superset',
+          'Complete one set of each exercise in the superset (round-robin) before moving on.'
+        );
+        return;
+      }
+      const after = group[group.length - 1] + 1;
+      if (after < currentProgram.exercises.length) {
+        setCurrentExerciseIndex(after);
+        setCurrentSetIndex(0);
+      } else if (isWorkoutFullyDone(exerciseData)) {
+        void finishWorkout(exerciseData, notes);
+      }
+      return;
+    }
+
     if (!allSetsCompleted) {
       Alert.alert('Complete All Sets', 'Please complete all sets for this exercise before moving to the next one.');
       return;
     }
-    
+
     if (currentExerciseIndex < currentProgram.exercises.length - 1) {
       setCurrentExerciseIndex(currentExerciseIndex + 1);
-      // Reset inputs for the next exercise
       resetInputsForNextExercise();
+    } else if (isWorkoutFullyDone(exerciseData)) {
+      void finishWorkout(exerciseData, notes);
     }
+  };
+
+  const handleFinishWorkoutPress = () => {
+    if (finishingWorkoutRef.current) return;
+    const hasProgress = exerciseData.some(
+      (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
+    );
+    if (!hasProgress) {
+      Alert.alert('Nothing to log', 'Complete or skip at least one exercise first.');
+      return;
+    }
+    if (isWorkoutFullyDone(exerciseData)) {
+      void finishWorkout(exerciseData, notes);
+      return;
+    }
+    Alert.alert(
+      'Finish workout?',
+      'Remaining incomplete exercises will not be logged as complete sets.',
+      [
+        { text: 'Keep going', style: 'cancel' },
+        {
+          text: 'Log workout',
+          style: 'default',
+          onPress: () => {
+            void finishWorkout(exerciseData, notes);
+          },
+        },
+      ]
+    );
   };
 
   const goToSet = (exerciseIndex: number, setIndex: number) => {
@@ -499,146 +661,39 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
               skipped: true,
             };
             setExerciseData(newData);
-            
-            // Move to next exercise if available
+
+            if (isWorkoutFullyDone(newData)) {
+              void finishWorkout(newData, notes);
+              return;
+            }
+
+            // Move within / past superset when possible
             if (currentExerciseIndex < currentProgram.exercises.length - 1) {
-              setCurrentExerciseIndex(currentExerciseIndex + 1);
-              setCurrentSetIndex(0);
+              const next = findNextSupersetCursor(
+                currentProgram.exercises,
+                newData,
+                currentExerciseIndex,
+                Math.max(0, (newData[currentExerciseIndex]?.sets?.length ?? 1) - 1)
+              );
+              if (next) {
+                setCurrentExerciseIndex(next.exerciseIndex);
+                setCurrentSetIndex(next.setIndex);
+              } else {
+                const group = getSupersetGroupIndices(
+                  currentProgram.exercises,
+                  currentExerciseIndex
+                );
+                const after = group[group.length - 1] + 1;
+                if (after < currentProgram.exercises.length) {
+                  setCurrentExerciseIndex(after);
+                  setCurrentSetIndex(0);
+                }
+              }
             }
           },
         },
       ]
     );
-  };
-
-  /** Shared wrap-up after history is saved (with or without subjective check-in fields). */
-  const finishWorkoutUi = async (
-    finalSession: WorkoutSession,
-    usedWearableSignals: boolean
-  ) => {
-    try {
-      await onWorkoutSessionSaved(finalSession);
-    } catch (e) {
-      console.warn('Small wins hook:', e);
-    }
-    setShowPostWorkoutQuestions(false);
-    setSorenessLevel(null);
-    setEnergyLevel(null);
-    setMotivationLevel(null);
-    setPendingSession(null);
-    onComplete(finalSession);
-    const base = `Great job! You completed ${currentProgram.name} in ${finalSession.duration} minutes.`;
-    Alert.alert(
-      'Workout Complete!',
-      usedWearableSignals
-        ? `${base} We found workout data from your wearable or Apple Health for this session, so the quick check-in questions were skipped.`
-        : base
-    );
-  };
-
-  const handleWorkoutComplete = async () => {
-    const endTime = new Date();
-    const duration = Math.round((endTime.getTime() - startTime.getTime()) / 1000 / 60); // in minutes
-
-    // Include all exercises - completed ones with sets, and skipped ones with empty sets
-    const completedExercises = exerciseData
-      .filter(
-        (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
-      )
-      .map((exercise) => ({
-        exerciseId: exercise.exerciseId,
-        name: exercise.name,
-        sets: exercise.skipped ? [] : exercise.sets.filter((set) => set.completed),
-      }));
-
-    // Fetch health metrics if enabled
-    let healthMetrics;
-    if (healthMetricsEnabled && HealthService) {
-      try {
-        healthMetrics = await HealthService.getWorkoutMetrics(startTime, endTime);
-      } catch (error) {
-        console.error('Error fetching health metrics:', error);
-      }
-    }
-
-    const session: WorkoutSession = {
-      id: Date.now().toString(),
-      programId: currentProgram.id,
-      programName: currentProgram.name,
-      date: startTime.toISOString(),
-      duration,
-      exercises: completedExercises,
-      notes,
-      completed: true,
-      healthMetrics,
-    };
-
-    setPendingSession(session);
-
-    const skipSubjectiveCheckIn =
-      healthMetricsEnabled &&
-      HealthService &&
-      hasWearableCoverageForSession(healthMetrics);
-
-    // Save to history immediately (before optional questions)
-    try {
-      const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
-      const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
-      const updatedHistory = [session, ...existingHistory];
-      await saveUserData('workoutHistory', updatedHistory);
-      console.log('Workout session saved to history immediately');
-    } catch (error) {
-      console.error('Error saving workout history:', error);
-    }
-
-    if (skipSubjectiveCheckIn) {
-      await finishWorkoutUi(session, true);
-    } else {
-      setShowPostWorkoutQuestions(true);
-    }
-  };
-
-  const handleSubmitPostWorkoutQuestions = async () => {
-    if (sorenessLevel === null || energyLevel === null || motivationLevel === null) {
-      Alert.alert('Please Answer All Questions', 'Please rate all three questions before continuing.');
-      return;
-    }
-
-    if (!pendingSession) return;
-
-    // Add the responses to the session
-    const finalSession: WorkoutSession = {
-      ...pendingSession,
-      sorenessLevel,
-      energyLevel,
-      motivationLevel,
-    };
-
-    console.log('Workout session being saved with post-workout data:', finalSession);
-    console.log('Exercises with sets:', finalSession.exercises.map(ex => ({
-      name: ex.name,
-      sets: ex.sets.map(s => `Set ${s.setNumber}: ${s.weight}lbs × ${s.reps} reps`)
-    })));
-
-    // Update the session in history with post-workout data
-    try {
-      const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
-      const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
-      // Find and update the session we just saved
-      const sessionIndex = existingHistory.findIndex(s => s.id === finalSession.id);
-      if (sessionIndex >= 0) {
-        existingHistory[sessionIndex] = finalSession;
-      } else {
-        // If not found, add it (shouldn't happen, but safety check)
-        existingHistory.unshift(finalSession);
-      }
-      await saveUserData('workoutHistory', existingHistory);
-      console.log('Workout session updated in history with post-workout data');
-    } catch (error) {
-      console.error('Error updating workout history:', error);
-    }
-
-    await finishWorkoutUi(finalSession, false);
   };
 
   const getCompletionRate = () => {
@@ -756,7 +811,22 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
               </TouchableOpacity>
             </View>
           </View>
-          {currentExercise.durationSeconds != null && currentExercise.durationSeconds > 0 && (
+          {currentExercise.supersetId ? (
+            <Text style={styles.supersetBanner}>
+              {(() => {
+                const letters = buildSupersetLetterMap(currentProgram.exercises);
+                const tag = formatSupersetTag(
+                  letters.get(currentExerciseIndex),
+                  currentExercise.supersetOrder ?? 0
+                );
+                const group = getSupersetGroupIndices(currentProgram.exercises, currentExerciseIndex);
+                return `Superset ${tag ?? ''} · set ${currentSetIndex + 1} · ${group.length} moves (alternate)`;
+              })()}
+            </Text>
+          ) : null}
+          {currentExercise.durationSeconds != null &&
+            currentExercise.durationSeconds > 0 &&
+            !isStretchLoggingExercise(currentExercise) && (
             <Text style={styles.warmupDurationHint}>
               {currentExercise.durationSeconds} sec — go slow, feel the muscles engage
             </Text>
@@ -764,6 +834,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
           {currentExercise.instructions && (
           <Text style={styles.exerciseInstructions}>{currentExercise.instructions}</Text>
           )}
+          {!isStretchLoggingExercise(currentExercise) && (
           <View style={styles.restTimerRow}>
             <Text style={styles.restTimerLabel}>Rest timer</Text>
             <Switch
@@ -776,6 +847,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
               thumbColor={restTimerEnabled ? '#00ff88' : '#888'}
             />
           </View>
+          )}
           
           {/* Show only current set */}
           {currentExerciseData?.skipped ? (
@@ -799,6 +871,44 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
           ) : currentExerciseData?.sets && currentExerciseData.sets.length > 0 ? (
             <>
               {currentSetIndex < currentExerciseData.sets.length ? (
+                (() => {
+                  const stretchProtocol = getStretchProtocol(currentExercise);
+                  if (stretchProtocol) {
+                    return (
+                      <StretchHoldTracker
+                        key={`stretch-${currentExerciseIndex}-${currentSetIndex}`}
+                        protocol={stretchProtocol}
+                        roundIndex={currentSetIndex}
+                        completed={Boolean(currentExerciseData.sets[currentSetIndex]?.completed)}
+                        onComplete={() => {
+                          const loggedSecs =
+                            stretchProtocol.kind === 'hold'
+                              ? stretchProtocol.holdSeconds
+                              : stretchProtocol.workSeconds;
+                          handleSetComplete(
+                            currentExerciseIndex,
+                            currentSetIndex,
+                            0,
+                            loggedSecs
+                          );
+                        }}
+                        onEdit={() => handleEditSet(currentExerciseIndex, currentSetIndex)}
+                        onPrevious={() => {
+                          if (currentSetIndex > 0) {
+                            goToSet(currentExerciseIndex, currentSetIndex - 1);
+                          }
+                        }}
+                        onNext={() => {
+                          if (currentSetIndex < currentExerciseData.sets.length - 1) {
+                            goToSet(currentExerciseIndex, currentSetIndex + 1);
+                          }
+                        }}
+                        canGoPrevious={currentSetIndex > 0}
+                        canGoNext={currentSetIndex < currentExerciseData.sets.length - 1}
+                      />
+                    );
+                  }
+                  return (
                 <SetTracker
                   key={currentSetIndex}
                   set={currentExerciseData.sets[currentSetIndex]}
@@ -822,10 +932,12 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                   canGoNext={currentSetIndex < currentExerciseData.sets.length - 1}
                   previousSetData={previousWorkoutData.get(currentExerciseData.name)?.find(s => s.setNumber === currentExerciseData.sets[currentSetIndex].setNumber)}
                 />
+                  );
+                })()
               ) : null}
               
-              {/* Set Navigation */}
-              {currentExerciseData.sets.length > 1 && (
+              {/* Set Navigation — strength only (stretch has its own round nav) */}
+              {currentExerciseData.sets.length > 1 && !isStretchLoggingExercise(currentExercise) && (
                 <View style={styles.setNavigation}>
                   <TouchableOpacity
                     style={[styles.setNavButton, !(currentSetIndex > 0) && styles.setNavButtonDisabled]}
@@ -856,14 +968,19 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
               {(() => {
                 const completedSets = currentExerciseData.sets.filter(set => set.completed).length;
                 const allSetsCompleted = currentExerciseData.sets.every(set => set.completed);
+                const stretch = isStretchLoggingExercise(currentExercise);
                 
                 return (
                   <View style={styles.exerciseProgressInfo}>
                     <Text style={styles.exerciseProgressText}>
-                      {completedSets} of {currentExerciseData.sets.length} sets completed
+                      {stretch
+                        ? `${completedSets} of ${currentExerciseData.sets.length} holds completed`
+                        : `${completedSets} of ${currentExerciseData.sets.length} sets completed`}
                     </Text>
                     {allSetsCompleted && (
-                      <Text style={styles.allSetsCompletedText}>✓ All sets completed!</Text>
+                      <Text style={styles.allSetsCompletedText}>
+                        {stretch ? '✓ Stretch complete!' : '✓ All sets completed!'}
+                      </Text>
                     )}
                   </View>
                 );
@@ -871,45 +988,57 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
             </>
           ) : null}
 
-          {/* Next Exercise Button - only show when all sets are completed */}
+          {/* Nav / finish actions */}
           {(() => {
             const currentExerciseSets = exerciseData[currentExerciseIndex]?.sets || [];
-            const allSetsCompleted = currentExerciseSets.every(set => set.completed);
+            const allSetsCompleted = currentExerciseSets.every((set) => set.completed);
             const hasSets = currentExerciseSets.length > 0;
             const isLastExercise = currentExerciseIndex >= currentProgram.exercises.length - 1;
-            
-            // Check if all exercises are completed or skipped
-            const allExercisesCompleted = exerciseData.every(exercise => 
-              exercise.skipped || exercise.sets.every(set => set.completed)
+            const allExercisesCompleted = isWorkoutFullyDone(exerciseData);
+            const hasProgress = exerciseData.some(
+              (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
             );
-            
-            // Check if at least one exercise has been completed or skipped
-            const hasProgress = exerciseData.some(exercise => 
-              exercise.skipped || exercise.sets.some(set => set.completed)
-            );
-            
-            if (allExercisesCompleted && hasProgress) {
-              // Show "Done" button when all exercises are completed or skipped
+
+            if (isFinishingWorkout) {
               return (
-                <TouchableOpacity
-                  style={styles.doneWorkoutButton}
-                  onPress={handleWorkoutComplete}
-                >
-                  <Text style={styles.doneWorkoutButtonText}>Done</Text>
-                </TouchableOpacity>
-              );
-            } else if ((allSetsCompleted && hasSets && !isLastExercise) || exerciseData[currentExerciseIndex]?.skipped) {
-              // Show "Next Exercise" button for non-last exercises
-              return (
-          <TouchableOpacity
-            style={styles.nextExerciseButton}
-            onPress={handleExerciseComplete}
-          >
-                  <Text style={styles.nextExerciseButtonText}>Next Exercise</Text>
-          </TouchableOpacity>
+                <View style={styles.doneWorkoutButton}>
+                  <Text style={styles.doneWorkoutButtonText}>Saving workout…</Text>
+                </View>
               );
             }
-            return null;
+
+            const showNext =
+              (allSetsCompleted && hasSets && !isLastExercise) ||
+              !!exerciseData[currentExerciseIndex]?.skipped;
+
+            return (
+              <>
+                {allExercisesCompleted && hasProgress ? (
+                  <TouchableOpacity
+                    style={styles.doneWorkoutButton}
+                    onPress={handleFinishWorkoutPress}
+                  >
+                    <Text style={styles.doneWorkoutButtonText}>Finish Workout</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {showNext ? (
+                  <TouchableOpacity
+                    style={styles.nextExerciseButton}
+                    onPress={handleExerciseComplete}
+                  >
+                    <Text style={styles.nextExerciseButtonText}>Next Exercise</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {hasProgress && !allExercisesCompleted ? (
+                  <TouchableOpacity
+                    style={styles.finishWorkoutButton}
+                    onPress={handleFinishWorkoutPress}
+                  >
+                    <Text style={styles.finishWorkoutButtonText}>Finish Workout</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </>
+            );
           })()}
 
           {/* Skip Exercise Button */}
@@ -927,11 +1056,17 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         <View style={styles.exerciseList}>
           <Text style={styles.exerciseListTitle}>All Exercises</Text>
           <Text style={styles.exerciseListHint}>Tap any exercise to navigate to it</Text>
-          {currentProgram?.exercises?.map((exercise, index) => {
+          {(() => {
+            const letters = buildSupersetLetterMap(currentProgram?.exercises ?? []);
+            return currentProgram?.exercises?.map((exercise, index) => {
             const exerciseSets = exerciseData[index]?.sets || [];
             const completedSets = exerciseSets.filter(set => set.completed).length;
             const allSetsCompleted = exerciseSets.length > 0 && exerciseSets.every(set => set.completed);
             const isSkipped = exerciseData[index]?.skipped || false;
+            const ssTag = formatSupersetTag(
+              letters.get(index),
+              exercise.supersetOrder ?? (exercise.supersetId ? 0 : undefined)
+            );
             
             return (
               <TouchableOpacity
@@ -939,14 +1074,15 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                 style={[
                   styles.exerciseItem,
                   index === currentExerciseIndex && styles.exerciseItemCurrent,
-                  isSkipped && styles.exerciseItemSkipped
+                  isSkipped && styles.exerciseItemSkipped,
+                  !!exercise.supersetId && styles.exerciseItemSuperset,
                 ]}
                 onPress={() => handleNavigateToExercise(index)}
               >
               <View style={styles.exerciseInfo}>
                   <View style={styles.exerciseNameRow}>
                 <Text style={[styles.exerciseName, isSkipped && styles.exerciseNameSkipped]}>
-                      {exercise.name}
+                      {ssTag ? `${ssTag} · ` : ''}{exercise.name}
                       {isSkipped && ' (Skipped)'}
                     </Text>
                     {!isSkipped && (
@@ -962,13 +1098,20 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                     )}
                   </View>
                 <Text style={[styles.exerciseSets, isSkipped && styles.exerciseSetsSkipped]}>
-                  {exercise.durationSeconds != null && exercise.durationSeconds > 0
-                    ? `1 set • ${exercise.durationSeconds} sec`
-                    : `${exercise.sets} sets • ${exercise.reps} reps`}
+                  {(() => {
+                    const protocol = getStretchProtocol(exercise);
+                    if (protocol) return formatStretchProtocolLabel(protocol);
+                    if (exercise.durationSeconds != null && exercise.durationSeconds > 0) {
+                      return `1 set • ${exercise.durationSeconds} sec`;
+                    }
+                    return `${exercise.sets} sets • ${exercise.reps} reps`;
+                  })()}
                 </Text>
                   {!isSkipped && exerciseSets.length > 0 && (
                     <Text style={styles.exerciseProgress}>
-                      {completedSets}/{exerciseSets.length} sets completed
+                      {isStretchLoggingExercise(exercise)
+                        ? `${completedSets}/${exerciseSets.length} holds`
+                        : `${completedSets}/${exerciseSets.length} sets completed`}
                     </Text>
                   )}
               </View>
@@ -989,7 +1132,8 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
               </View>
               </TouchableOpacity>
             );
-          }) || null}
+          }) || null;
+          })()}
         </View>
 
         {/* Notes */}
@@ -1004,25 +1148,6 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
             numberOfLines={3}
           />
         </View>
-
-        {/* Complete Workout - only show if all exercises are completed */}
-        {(() => {
-          const allExercisesCompleted = exerciseData.every(exercise => 
-            exercise.sets.every(set => set.completed)
-          );
-          
-          if (allExercisesCompleted) {
-            return (
-        <TouchableOpacity
-          style={styles.completeButton}
-          onPress={handleWorkoutComplete}
-        >
-                <Text style={styles.completeButtonText}>Done</Text>
-        </TouchableOpacity>
-            );
-          }
-          return null;
-        })()}
       </ScrollView>
 
       <RestTimerModal
@@ -1041,123 +1166,6 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
           setCurrentVideoUrl(undefined);
         }}
       />
-
-      {/* Post-Workout Questions Modal */}
-      <Modal
-        visible={showPostWorkoutQuestions}
-        animationType="none"
-        transparent={true}
-        onRequestClose={() => {
-          // Don't allow closing without answering
-          Alert.alert('Complete Questions', 'Please answer all questions to finish your workout.');
-        }}
-      >
-        <SafeAreaView style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>How did you feel?</Text>
-            <Text style={styles.modalSubtitle}>
-              We didn&apos;t get enough smartwatch or Apple Health data for this session window, so a
-              quick check-in helps. When watch data is available, these questions are skipped.
-            </Text>
-
-            <ScrollView style={styles.questionsContainer} showsVerticalScrollIndicator={false}>
-              {/* Soreness Level */}
-              <View style={styles.questionContainer}>
-                <Text style={styles.questionLabel}>Soreness Level</Text>
-                <Text style={styles.questionHint}>How sore were you during this workout?</Text>
-                <View style={styles.ratingContainer}>
-                  {[1, 2, 3, 4, 5].map((level) => (
-                    <TouchableOpacity
-                      key={level}
-                      style={[
-                        styles.ratingButton,
-                        sorenessLevel === level && styles.ratingButtonSelected
-                      ]}
-                      onPress={() => setSorenessLevel(level)}
-                    >
-                      <Text style={[
-                        styles.ratingButtonText,
-                        sorenessLevel === level && styles.ratingButtonTextSelected
-                      ]}>
-                        {level}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.ratingLabels}>
-                  <Text style={styles.ratingLabelText}>Not Sore</Text>
-                  <Text style={styles.ratingLabelText}>Very Sore</Text>
-                </View>
-              </View>
-
-              {/* Energy Level */}
-              <View style={styles.questionContainer}>
-                <Text style={styles.questionLabel}>Energy Level</Text>
-                <Text style={styles.questionHint}>How energized did you feel?</Text>
-                <View style={styles.ratingContainer}>
-                  {[1, 2, 3, 4, 5].map((level) => (
-                    <TouchableOpacity
-                      key={level}
-                      style={[
-                        styles.ratingButton,
-                        energyLevel === level && styles.ratingButtonSelected
-                      ]}
-                      onPress={() => setEnergyLevel(level)}
-                    >
-                      <Text style={[
-                        styles.ratingButtonText,
-                        energyLevel === level && styles.ratingButtonTextSelected
-                      ]}>
-                        {level}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.ratingLabels}>
-                  <Text style={styles.ratingLabelText}>Low Energy</Text>
-                  <Text style={styles.ratingLabelText}>High Energy</Text>
-                </View>
-              </View>
-
-              {/* Motivation Level */}
-              <View style={styles.questionContainer}>
-                <Text style={styles.questionLabel}>Motivation Level</Text>
-                <Text style={styles.questionHint}>How motivated were you during this workout?</Text>
-                <View style={styles.ratingContainer}>
-                  {[1, 2, 3, 4, 5].map((level) => (
-                    <TouchableOpacity
-                      key={level}
-                      style={[
-                        styles.ratingButton,
-                        motivationLevel === level && styles.ratingButtonSelected
-                      ]}
-                      onPress={() => setMotivationLevel(level)}
-                    >
-                      <Text style={[
-                        styles.ratingButtonText,
-                        motivationLevel === level && styles.ratingButtonTextSelected
-                      ]}>
-                        {level}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.ratingLabels}>
-                  <Text style={styles.ratingLabelText}>Low Motivation</Text>
-                  <Text style={styles.ratingLabelText}>High Motivation</Text>
-                </View>
-              </View>
-            </ScrollView>
-
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={handleSubmitPostWorkoutQuestions}
-            >
-              <Text style={styles.submitButtonText}>Continue</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
 
       {/* Exercise Substitution Modal */}
       <Modal
@@ -1525,6 +1533,13 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 5,
   },
+  supersetBanner: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#00ff88',
+    marginBottom: 12,
+    marginTop: 4,
+  },
   exerciseInstructions: {
     fontSize: 14,
     color: '#888',
@@ -1651,16 +1666,18 @@ const styles = StyleSheet.create({
     color: '#00ff88',
   },
   finishWorkoutButton: {
-    flex: 1,
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    padding: 14,
     alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#00ff88',
   },
   finishWorkoutButtonText: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: '700',
+    color: '#00ff88',
   },
   setNavigation: {
     flexDirection: 'row',
@@ -1834,6 +1851,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ff6b6b',
   },
+  exerciseItemSuperset: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#00ff88',
+  },
   exerciseNameSkipped: {
     color: '#888',
     textDecorationLine: 'line-through',
@@ -1942,7 +1963,7 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   questionsContainer: {
-    maxHeight: 400,
+    flexGrow: 1,
   },
   questionContainer: {
     marginBottom: 30,
@@ -2085,7 +2106,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   alternativesContainer: {
-    maxHeight: 400,
+    flexGrow: 1,
   },
   alternativeCard: {
     flexDirection: 'row',

@@ -286,6 +286,11 @@ export default function NutritionSearchScreen({ onBack }: NutritionSearchScreenP
       <Modal visible={detailOpen} animationType="none" transparent>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalScrollContent}
+            >
             <Text style={styles.modalTitle} numberOfLines={2}>
               {detailTitle}
             </Text>
@@ -357,24 +362,23 @@ export default function NutritionSearchScreen({ onBack }: NutritionSearchScreenP
                   </View>
                 ))}
                 <Text style={styles.sectionLabel}>All nutrients</Text>
-                <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-                  {detailNutrients.map((n) => (
-                    <View key={n.nutrient_id} style={styles.macroRow}>
-                      <Text style={styles.macroLabel} numberOfLines={1}>
-                        {n.nutrient_name}
-                      </Text>
-                      <Text style={styles.macroValue}>
-                        {scaleNutrientAmount(n.amount, grams).toFixed(n.unit_name === 'kcal' ? 0 : 2)}{' '}
-                        {n.unit_name}
-                      </Text>
-                    </View>
-                  ))}
-                </ScrollView>
+                {detailNutrients.map((n) => (
+                  <View key={n.nutrient_id} style={styles.macroRow}>
+                    <Text style={styles.macroLabel} numberOfLines={1}>
+                      {n.nutrient_name}
+                    </Text>
+                    <Text style={styles.macroValue}>
+                      {scaleNutrientAmount(n.amount, grams).toFixed(n.unit_name === 'kcal' ? 0 : 2)}{' '}
+                      {n.unit_name}
+                    </Text>
+                  </View>
+                ))}
               </>
             )}
             <TouchableOpacity style={styles.closeBtn} onPress={() => setDetailOpen(false)}>
               <Text style={styles.closeBtnText}>Close</Text>
             </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -491,6 +495,9 @@ const styles = StyleSheet.create({
     maxHeight: '88%',
     borderWidth: 1,
     borderColor: AppTheme.border,
+  },
+  modalScrollContent: {
+    paddingBottom: 12,
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: AppTheme.textPrimary, marginBottom: 8 },
   sectionLabel: {

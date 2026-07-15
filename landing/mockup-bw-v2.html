@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TYLAI — B/W Mockup v2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --black: #050505;
+        --white: #fafafa;
+        --silver: #a3a3a3;
+        --mist: #d4d4d4;
+        --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--black);
+        color: var(--white);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 255, 255, 0.07), transparent 55%),
+          radial-gradient(ellipse 60% 40% at 100% 30%, rgba(255, 255, 255, 0.04), transparent 50%),
+          radial-gradient(ellipse 50% 35% at 0% 70%, rgba(255, 255, 255, 0.03), transparent 45%),
+          linear-gradient(180deg, #0d0d0d 0%, #050505 40%, #080808 100%);
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 1.5rem 4rem;
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.1rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        gap: 1rem;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        text-decoration: none;
+        color: var(--white);
+        flex-shrink: 0;
+      }
+
+      .logo img {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: block;
+        object-fit: cover;
+      }
+
+      .logo span {
+        font-weight: 700;
+        font-size: 0.95rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .nav-links {
+        display: none;
+        align-items: center;
+        gap: 1.75rem;
+        list-style: none;
+      }
+
+      .nav-links a {
+        color: var(--silver);
+        text-decoration: none;
+        font-size: 0.84rem;
+        font-weight: 500;
+        transition: color 0.2s;
+      }
+
+      .nav-links a:hover {
+        color: var(--white);
+      }
+
+      .nav-cta {
+        padding: 0.55rem 1rem;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(180deg, #ffffff 0%, #d4d4d4 100%);
+        color: #050505;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      @media (min-width: 900px) {
+        .nav-links {
+          display: flex;
+        }
+      }
+
+      .hero {
+        padding: 3.5rem 0 2rem;
+      }
+
+      .hero-grid {
+        display: grid;
+        gap: 2.5rem;
+        align-items: center;
+      }
+
+      @media (min-width: 900px) {
+        .hero-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 3rem;
+        }
+      }
+
+      .hero-copy h1 {
+        font-size: clamp(2.25rem, 5vw, 3.25rem);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.08;
+        margin-bottom: 1rem;
+        background: linear-gradient(180deg, #ffffff 0%, #ffffff 45%, #8a8a8a 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .hero-sub {
+        color: var(--silver);
+        font-size: 1.05rem;
+        max-width: 28rem;
+        margin-bottom: 1.75rem;
+      }
+
+      .hero-cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      .btn-primary {
+        padding: 0.85rem 1.5rem;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(180deg, #ffffff 0%, #d4d4d4 100%);
+        color: #050505;
+        font-weight: 700;
+        font-size: 0.82rem;
+        letter-spacing: 0.04em;
+        text-decoration: none;
+      }
+
+      .btn-ghost {
+        padding: 0.85rem 1.5rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: transparent;
+        color: var(--mist);
+        font-weight: 600;
+        font-size: 0.82rem;
+        text-decoration: none;
+      }
+
+      .hero-showcase {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+      }
+
+      .mockup-wrap {
+        position: relative;
+        width: 100%;
+        max-width: 320px;
+      }
+
+      .mockup-wrap::before {
+        content: "";
+        position: absolute;
+        inset: -25% -15%;
+        background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.1), transparent 70%);
+        pointer-events: none;
+      }
+
+      .mockup-wrap img {
+        position: relative;
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+      }
+
+      .hero-tagline {
+        text-align: center;
+        max-width: 22rem;
+      }
+
+      .hero-tagline h2 {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.4rem;
+        letter-spacing: -0.01em;
+      }
+
+      .hero-tagline p {
+        font-size: 0.9rem;
+        color: var(--silver);
+      }
+
+      footer {
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: center;
+        color: var(--silver);
+        font-size: 0.8rem;
+      }
+
+      .mockup-tag {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        font-size: 0.68rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--silver);
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mockup-tag">Mockup v2</div>
+
+    <div class="page">
+      <nav>
+        <a class="logo" href="#">
+          <img
+            src="../ios/TYLAI/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png"
+            alt="TYLAI app icon"
+            width="36"
+            height="36"
+          />
+          <span>TYLAI</span>
+        </a>
+        <ul class="nav-links">
+          <li><a href="#">Why TYL Works</a></li>
+          <li><a href="#">Features</a></li>
+          <li><a href="#">How it Works</a></li>
+          <li><a href="#">Apparel</a></li>
+        </ul>
+        <a class="nav-cta" href="#">Join Beta</a>
+      </nav>
+
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <h1>Transform Your Life</h1>
+            <p class="hero-sub">
+              One system for real change — personalized workouts, nutrition, mindset, and daily structure
+              built to help you follow through.
+            </p>
+            <div class="hero-cta">
+              <a class="btn-primary" href="#">Join the Beta (Free)</a>
+              <a class="btn-ghost" href="#">Why TYL Works</a>
+            </div>
+          </div>
+
+          <div class="hero-showcase">
+            <div class="mockup-wrap">
+              <img
+                src="tylai-dashboard-mockup.png"
+                alt="TYLAI app dashboard showing Today's Focus, workout tiles, weekly snapshot, and AI Coach"
+                width="680"
+                height="1200"
+                loading="eager"
+              />
+            </div>
+            <div class="hero-tagline">
+              <h2>One system. Real momentum.</h2>
+              <p>
+                TYLAI adapts to your goals and keeps you on track — without juggling five different apps.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <p>© 2026 Transform Your Life LLC · Design mockup</p>
+      </footer>
+    </div>
+  </body>
+</html>

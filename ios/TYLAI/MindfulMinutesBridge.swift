@@ -20,6 +20,7 @@ class MindfulMinutesBridge: NSObject {
     let date = Date(timeIntervalSince1970: ms / 1000.0)
     Task { @MainActor in
       let manager = HealthKitManager()
+      await manager.requestAuthorization()
       let minutes = await manager.fetchMindfulMinutes(for: date)
       resolve(minutes)
     }
