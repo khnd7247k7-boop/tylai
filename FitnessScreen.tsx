@@ -17,7 +17,6 @@ import {
   AppState,
   useWindowDimensions,
 } from 'react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -28,8 +27,28 @@ import SavedPlanViewScreen from './SavedPlanViewScreen';
 import WorkoutHistoryDetailScreen from './WorkoutHistoryDetailScreen';
 import LogPastWorkoutScreen from './LogPastWorkoutScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
+
+type DateTimePickerEvent = { type: string };
+type DateTimePickerComponent = React.ComponentType<{
+  value: Date;
+  mode?: 'date' | 'time' | 'datetime' | 'countdown';
+  display?: 'default' | 'spinner' | 'calendar' | 'clock' | 'compact' | 'inline';
+  maximumDate?: Date;
+  minimumDate?: Date;
+  onChange?: (event: DateTimePickerEvent, date?: Date) => void;
+  themeVariant?: 'light' | 'dark';
+}>;
+
+let DateTimePicker: DateTimePickerComponent | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  DateTimePicker = require('@react-native-community/datetimepicker').default ?? null;
+} catch (error) {
+  console.warn('[FitnessScreen] DateTimePicker unavailable', error);
+  DateTimePicker = null;
+}
 import TabSwipeNavigation from './TabSwipeNavigation';
-import BarcodeScanner from './BarcodeScanner';
+import SmartFoodScanner from './SmartFoodScanner';
 import { isScannedFoodUsable } from './src/utils/foodDatabase';
 import { getFoodDetails } from './src/api/usda';
 import { useFoodSearch } from './src/hooks/useFoodSearch';
@@ -1286,7 +1305,13 @@ export default function FitnessScreen({
   };
 
   const effectiveLogFoodDateKey = logFoodTargetDateKey ?? getTodayDateKey();
-  const isLoggingForPastDay = effectiveLogFoodDateKey !== getTodayDateKey();
+  const isLoggingForOtherDay = effectiveLogFoodDateKey !== getTodayDateKey();
+
+  const getLogFoodDatePickerMaxDate = () => {
+    const max = new Date();
+    max.setFullYear(max.getFullYear() + 1);
+    return max;
+  };
 
   const getLogFoodDateIso = (dateKey?: string | null) => {
     const key = dateKey ?? logFoodTargetDateKey;
@@ -1949,12 +1974,14 @@ export default function FitnessScreen({
   };
 
   const handleBarcodeScanNotFound = useCallback(
-    (barcode: string) => {
+    (barcode?: string) => {
       setShowBarcodeScanner(false);
       showNotification({
         title: 'Product not in database',
         lines: [
-          `No nutrition data was found for barcode ${barcode}.`,
+          barcode
+            ? `No nutrition data was found for barcode ${barcode}.`
+            : 'No nutrition data was found for that scan.',
           'Search by food name or enter macros manually from the package label.',
         ],
         type: 'warning',
@@ -1965,12 +1992,12 @@ export default function FitnessScreen({
   );
 
   const handleBarcodeScanError = useCallback(
-    (_barcode: string) => {
+    (_barcode?: string) => {
       setShowBarcodeScanner(false);
       showNotification({
-        title: 'Barcode lookup failed',
+        title: 'Scan lookup failed',
         lines: [
-          'Could not look up this barcode. Check your connection and try again, or add the food manually.',
+          'Could not look up this product. Check your connection and try again, or add the food manually.',
         ],
         type: 'error',
         durationMs: 4500,
@@ -3155,7 +3182,7 @@ export default function FitnessScreen({
                     if (hasWorkout) {
                       newExpanded.add(`workout-${dateKey}`);
                     }
-                    // Always offer nutrition details so users can log food for past days.
+                    // Always offer nutrition details so users can log food for any day.
                     newExpanded.add(`nutrition-${dateKey}`);
                     setExpandedDayItems(newExpanded);
                   }
@@ -3257,7 +3284,7 @@ export default function FitnessScreen({
               </View>
             )}
 
-            {/* Nutrition — always available so past days can be logged */}
+            {/* Nutrition — always available so any day (past or future) can be logged */}
             <View style={styles.dayDetailBubble}>
               <View style={styles.dayDetailBubbleHeader}>
                 <TouchableOpacity
@@ -4187,7 +4214,7 @@ export default function FitnessScreen({
                       </TouchableOpacity>
                     ) : (
                       <Text style={styles.logFoodTitle}>
-                        {isLoggingForPastDay
+                        {isLoggingForOtherDay
                           ? `Log Food · ${formatHistoryDateLabel(effectiveLogFoodDateKey)}`
                           : 'Log Food'}
                       </Text>
@@ -4203,13 +4230,13 @@ export default function FitnessScreen({
                       <View style={styles.logFoodDayCopy}>
                         <Text style={styles.logFoodDayLabel}>Day</Text>
                         <Text style={styles.logFoodDayValue}>
-                          {isLoggingForPastDay
+                          {isLoggingForOtherDay
                             ? formatHistoryDateLabel(effectiveLogFoodDateKey)
                             : 'Today'}
                         </Text>
                       </View>
                       <View style={styles.logFoodDayActions}>
-                        {isLoggingForPastDay ? (
+                        {isLoggingForOtherDay ? (
                           <TouchableOpacity
                             style={styles.logFoodDayChip}
                             onPress={() => setLogFoodTargetDateKey(null)}
@@ -4227,7 +4254,7 @@ export default function FitnessScreen({
                           hitSlop={8}
                         >
                           <Text style={[styles.logFoodDayChipText, styles.logFoodDayChipTextPrimary]}>
-                            {isLoggingForPastDay ? 'Change' : 'Past day'}
+                            {isLoggingForOtherDay ? 'Change' : 'Pick date'}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -4236,21 +4263,30 @@ export default function FitnessScreen({
 
                   {showLogFoodDatePicker ? (
                     <View style={styles.logFoodDatePickerWrap}>
-                      {Platform.OS === 'ios' ? (
-                        <View style={styles.logFoodDatePickerIosBar}>
-                          <TouchableOpacity onPress={() => setShowLogFoodDatePicker(false)} hitSlop={10}>
-                            <Text style={styles.logFoodDatePickerDone}>Done</Text>
-                          </TouchableOpacity>
-                        </View>
-                      ) : null}
-                      <DateTimePicker
-                        value={dateKeyToLocalDate(effectiveLogFoodDateKey)}
-                        mode="date"
-                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                        maximumDate={new Date()}
-                        onChange={handleLogFoodDateChange}
-                        themeVariant="dark"
-                      />
+                      {!DateTimePicker ? (
+                        <Text style={styles.logFoodScanNote}>
+                          Date picker is unavailable on this build. Use History to open Log Food for a
+                          specific day, or reinstall the latest TestFlight build.
+                        </Text>
+                      ) : (
+                        <>
+                          {Platform.OS === 'ios' ? (
+                            <View style={styles.logFoodDatePickerIosBar}>
+                              <TouchableOpacity onPress={() => setShowLogFoodDatePicker(false)} hitSlop={10}>
+                                <Text style={styles.logFoodDatePickerDone}>Done</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : null}
+                          <DateTimePicker
+                            value={dateKeyToLocalDate(effectiveLogFoodDateKey)}
+                            mode="date"
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            maximumDate={getLogFoodDatePickerMaxDate()}
+                            onChange={handleLogFoodDateChange}
+                            themeVariant="dark"
+                          />
+                        </>
+                      )}
                     </View>
                   ) : null}
 
@@ -4475,7 +4511,7 @@ export default function FitnessScreen({
                           activeOpacity={0.85}
                         >
                           <Text style={styles.logFoodBarcodeIcon}>▌▌▌</Text>
-                          <Text style={styles.logFoodScanBtnText}>Scan label</Text>
+                          <Text style={styles.logFoodScanBtnText}>Scan Food</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={styles.logFoodSavedBtn}
@@ -5659,8 +5695,8 @@ export default function FitnessScreen({
         </TabSwipeNavigation>
       </View>
 
-      {/* Barcode Scanner Modal */}
-      <BarcodeScanner
+      {/* Smart Food Scanner — barcode + Nutrition Facts + package recognition */}
+      <SmartFoodScanner
         visible={showBarcodeScanner}
         onClose={() => setShowBarcodeScanner(false)}
         onManualEntry={() => setShowBarcodeScanner(false)}

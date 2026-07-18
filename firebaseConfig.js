@@ -129,4 +129,17 @@ try {
   };
 }
 
-export { auth };
+// Firestore — cross-device sync for saved workouts and related user data
+let db = null;
+try {
+  if (app && firebaseEnvConfigured) {
+    const { getFirestore } = require('firebase/firestore');
+    db = getFirestore(app);
+    console.log('[Firebase] Firestore initialized');
+  }
+} catch (error) {
+  console.error('[Firebase] Firestore init failed:', error);
+  db = null;
+}
+
+export { auth, app, db };

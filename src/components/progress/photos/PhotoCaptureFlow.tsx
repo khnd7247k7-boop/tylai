@@ -18,6 +18,14 @@ import {
   PHOTO_POSE_LABELS,
   type PhotoPose,
 } from '../../../types/progressPhotos';
+
+type CameraFacing = 'front' | 'back';
+
+/** Front/side body shots: rear camera. Back pose: selfie camera. */
+function defaultFacingForPose(pose: PhotoPose): CameraFacing {
+  return pose === 'back' ? 'front' : 'back';
+}
+
 let CameraView: React.ComponentType<any> | null = null;
 let CameraModule: { requestCameraPermissionsAsync: () => Promise<{ status: string }> } | null =
   null;
@@ -56,9 +64,11 @@ export default function PhotoCaptureFlow({
   const [captures, setCaptures] = useState<Partial<Record<PhotoPose, string>>>({});
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<CameraFacing>(() =>
+    defaultFacingForPose(PHOTO_POSES[0])
+  );
 
   const currentPose = PHOTO_POSES[stepIndex];
-  const cameraFacing = currentPose === 'front' ? 'front' : 'back';
 
   useEffect(() => {
     if (!visible) return;
@@ -67,6 +77,7 @@ export default function PhotoCaptureFlow({
     setCaptures({});
     setCapturing(false);
     setSaving(false);
+    setCameraFacing(defaultFacingForPose(PHOTO_POSES[0]));
 
     const requestPermission = async () => {
       if (!CameraModule) {
@@ -78,6 +89,16 @@ export default function PhotoCaptureFlow({
     };
     requestPermission();
   }, [visible, retake]);
+
+  // Apply pose defaults when the step changes (keep manual flips until then).
+  useEffect(() => {
+    if (!visible) return;
+    setCameraFacing(defaultFacingForPose(currentPose));
+  }, [currentPose, visible]);
+
+  const flipCamera = () => {
+    setCameraFacing((prev) => (prev === 'front' ? 'back' : 'front'));
+  };
 
   const handleCapture = async () => {
     if (!cameraRef.current || capturing) return;
@@ -115,6 +136,8 @@ export default function PhotoCaptureFlow({
       onClose();
     }
   };
+
+  const cameraReady = Boolean(CameraView && hasPermission);
 
   if (!visible) {
     return <></>;
@@ -158,6 +181,22 @@ export default function PhotoCaptureFlow({
                 facing={cameraFacing}
                 mirror={cameraFacing === 'front'}
               />
+              <TouchableOpacity
+                style={styles.flipOverlayBtn}
+                onPress={flipCamera}
+                disabled={capturing || saving}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  cameraFacing === 'back' ? 'Switch to front camera' : 'Switch to rear camera'
+                }
+                hitSlop={8}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.flipOverlayIcon}>⟳</Text>
+                <Text style={styles.flipOverlayLabel}>
+                  {cameraFacing === 'back' ? 'Front' : 'Rear'}
+                </Text>
+              </TouchableOpacity>
               <View style={styles.guideFooter} pointerEvents="none">
                 <Text style={styles.instruction}>{PHOTO_POSE_INSTRUCTIONS[currentPose]}</Text>
               </View>
@@ -179,20 +218,41 @@ export default function PhotoCaptureFlow({
         </View>
 
         <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.captureBtn, (capturing || saving) && styles.captureBtnDisabled]}
-            onPress={handleCapture}
-            disabled={!hasPermission || capturing || saving || !CameraView}
-            activeOpacity={0.85}
-          >
-            {capturing || saving ? (
-              <ActivityIndicator color={AppTheme.accentDark} />
-            ) : (
-              <View style={styles.captureInner} />
-            )}
-          </TouchableOpacity>
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={[styles.flipSideBtn, !cameraReady && styles.captureBtnDisabled]}
+              onPress={flipCamera}
+              disabled={!cameraReady || capturing || saving}
+              accessibilityRole="button"
+              accessibilityLabel="Switch camera"
+              activeOpacity={0.85}
+            >
+              <Text style={styles.flipSideIcon}>⟳</Text>
+              <Text style={styles.flipSideLabel}>Flip</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.captureBtn, (capturing || saving) && styles.captureBtnDisabled]}
+              onPress={handleCapture}
+              disabled={!hasPermission || capturing || saving || !CameraView}
+              activeOpacity={0.85}
+            >
+              {capturing || saving ? (
+                <ActivityIndicator color={AppTheme.accentDark} />
+              ) : (
+                <View style={styles.captureInner} />
+              )}
+            </TouchableOpacity>
+
+            {/* Spacer so the shutter stays centered */}
+            <View style={styles.flipSideBtn} />
+          </View>
           <Text style={styles.captureHint}>
-            {saving ? 'Saving session…' : `Capture ${PHOTO_POSE_LABELS[currentPose]}`}
+            {saving
+              ? 'Saving session…'
+              : `Capture ${PHOTO_POSE_LABELS[currentPose]} · ${
+                  cameraFacing === 'back' ? 'rear camera' : 'front camera'
+                }`}
           </Text>
         </View>
       </SafeAreaView>
@@ -246,6 +306,32 @@ const styles = StyleSheet.create({
   },
   camera: {
     ...StyleSheet.absoluteFillObject,
+  },
+  flipOverlayBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    minWidth: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flipOverlayIcon: {
+    color: AppTheme.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  flipOverlayLabel: {
+    color: AppTheme.textPrimary,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
   },
   guideFooter: {
     position: 'absolute',
@@ -303,6 +389,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 28,
     paddingTop: 8,
+    paddingHorizontal: 16,
+  },
+  actionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  flipSideBtn: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flipSideIcon: {
+    color: AppTheme.textPrimary,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  flipSideLabel: {
+    color: AppTheme.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
   },
   captureBtn: {
     width: 72,
@@ -312,7 +423,6 @@ const styles = StyleSheet.create({
     borderColor: AppTheme.textPrimary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
   },
   captureBtnDisabled: {
     opacity: 0.6,
@@ -326,5 +436,6 @@ const styles = StyleSheet.create({
   captureHint: {
     fontSize: 13,
     color: AppTheme.textMuted,
+    textAlign: 'center',
   },
 });

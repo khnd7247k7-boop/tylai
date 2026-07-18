@@ -48,13 +48,17 @@
 		<false/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Allow $(PRODUCT_NAME) to access your camera</string>
+	<string>TYLAI uses the camera to scan barcodes for meal tracking and to capture weekly progress photos.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>We read heart rate, sleep, active energy, mindful session duration (aggregate minutes), weight, and cardio fitness from Apple Health to personalize recovery-oriented coaching, suggest training intensity, and show your trends in the app.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>If you choose to save activity, we can write selected workouts or metrics to Apple Health so your Activity rings and history stay up to date. We only write data you explicitly allow.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow $(PRODUCT_NAME) to access your microphone</string>
+	<string>TYLAI uses the microphone when recording video with the camera.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TYLAI can save your weekly progress photos to your camera roll when you turn on that option.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TYLAI needs photo library access to save progress photos when you enable camera roll backup.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

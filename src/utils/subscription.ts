@@ -79,7 +79,8 @@ export async function testFlightGrantsPremium(): Promise<boolean> {
 
 /**
  * Resolve tier from env override, TestFlight + Stripe, or local dev storage.
- * Clears cached premium when Stripe subscription is inactive.
+ * Only clears cached premium when Stripe confirms the subscription is inactive —
+ * network/API failures keep the last known tier so access does not flicker.
  */
 export async function resolveSubscriptionTier(): Promise<SubscriptionTier> {
   if (envGrantsPremium()) return 'premium';
@@ -91,12 +92,16 @@ export async function resolveSubscriptionTier(): Promise<SubscriptionTier> {
 
   if (await isTestFlightInstall()) {
     const paid = await checkStripePaidBetaAccess();
-    if (paid) {
+    if (paid === true) {
       await saveSubscriptionTier('premium');
       return 'premium';
     }
-    await saveSubscriptionTier('basic');
-    return 'basic';
+    if (paid === false) {
+      await saveSubscriptionTier('basic');
+      return 'basic';
+    }
+    // Unverified check (timeout, 5xx, auth race): keep cached tier.
+    return loadStoredSubscriptionTier();
   }
 
   return loadStoredSubscriptionTier();

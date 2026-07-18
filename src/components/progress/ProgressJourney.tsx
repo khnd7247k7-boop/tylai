@@ -238,21 +238,31 @@ export default function ProgressJourney({
   };
 
   const handleSaveToCameraRoll = async () => {
-    if (!isMediaLibraryAvailable()) {
-      Alert.alert('Camera roll unavailable', mediaLibraryUnavailableMessage());
+    try {
+      if (!isMediaLibraryAvailable()) {
+        Alert.alert('Camera roll unavailable', mediaLibraryUnavailableMessage());
+        await markCameraRollPromptSeen(false);
+        setShowCameraRollPrompt(false);
+        return;
+      }
+      const granted = await requestCameraRollPermission();
+      await markCameraRollPromptSeen(granted);
+      if (!granted) {
+        Alert.alert(
+          'Photo library access needed',
+          'You can enable camera roll backup later in Health & Trends.'
+        );
+      }
+    } catch (error) {
+      console.warn('[ProgressJourney] camera roll opt-in failed', error);
       await markCameraRollPromptSeen(false);
-      setShowCameraRollPrompt(false);
-      return;
-    }
-    const granted = await requestCameraRollPermission();
-    await markCameraRollPromptSeen(granted);
-    if (!granted) {
       Alert.alert(
-        'Photo library access needed',
-        'You can enable camera roll backup later in Health & Trends.'
+        'Could not enable camera roll',
+        'Try again from Health & Trends → Progress photos, or rebuild the app if this keeps happening.'
       );
+    } finally {
+      setShowCameraRollPrompt(false);
     }
-    setShowCameraRollPrompt(false);
   };
 
   const stopReplay = useCallback(() => {

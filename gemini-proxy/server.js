@@ -104,13 +104,38 @@ app.post('/api/gemini', requireAuth, geminiLimiter, async (req, res) => {
   try {
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : DEFAULT_MODEL;
+    const image = req.body?.image;
 
     if (!prompt) {
       return res.status(400).json({ error: 'Missing required field: prompt (string).' });
     }
 
     const modelClient = genAI.getGenerativeModel({ model });
-    const result = await modelClient.generateContent(prompt);
+
+    /** Optional multimodal payload: { mimeType, data } where data is base64 (no data: prefix). */
+    let content;
+    if (
+      image &&
+      typeof image === 'object' &&
+      typeof image.data === 'string' &&
+      image.data.trim() &&
+      typeof image.mimeType === 'string' &&
+      image.mimeType.trim()
+    ) {
+      const mimeType = String(image.mimeType).trim();
+      const data = String(image.data).replace(/^data:[^;]+;base64,/, '').trim();
+      if (!data) {
+        return res.status(400).json({ error: 'image.data must be non-empty base64.' });
+      }
+      content = [
+        { text: prompt },
+        { inlineData: { mimeType, data } },
+      ];
+    } else {
+      content = prompt;
+    }
+
+    const result = await modelClient.generateContent(content);
     const text = result.response?.text?.() || '';
 
     return res.json({ text, model });

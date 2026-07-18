@@ -1,23 +1,48 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+} from 'react-native';
 import { AppTheme } from '../theme/appVisualTheme';
 
 type Props = { children: ReactNode };
-type State = { error: Error | null };
+type State = { error: Error | null; clearing: boolean };
 
 /**
  * Catches render errors so the app shows a message instead of flashing closed.
  */
 export class AppErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, clearing: false };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[AppErrorBoundary]', error, info.componentStack);
   }
+
+  handleTryAgain = () => {
+    this.setState({ error: null, clearing: false });
+  };
+
+  handleResetSession = async () => {
+    this.setState({ clearing: true });
+    try {
+      const { auth } = await import('../../firebaseConfig');
+      if (auth && !auth._isMock && typeof auth.signOut === 'function') {
+        await auth.signOut();
+      }
+    } catch (error) {
+      console.warn('[AppErrorBoundary] signOut during reset failed', error);
+    } finally {
+      this.setState({ error: null, clearing: false });
+    }
+  };
 
   render() {
     if (!this.state.error) {
@@ -31,13 +56,47 @@ export class AppErrorBoundary extends Component<Props, State> {
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.title}>TYLAI could not start</Text>
           <Text style={styles.body}>
-            Something crashed while loading the app. If you launched from Xcode, start Metro first:
+            Something went wrong while loading the app. Try again. If it keeps happening, reset your
+            session and sign in again.
           </Text>
-          <Text style={styles.code}>npx expo start</Text>
-          <Text style={styles.body}>Then run:</Text>
-          <Text style={styles.code}>npx expo run:ios</Text>
-          <Text style={styles.label}>Error</Text>
-          <Text style={styles.errorText}>{message}</Text>
+
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={this.handleTryAgain}
+            disabled={this.state.clearing}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryBtnText}>Try again</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={() => void this.handleResetSession()}
+            disabled={this.state.clearing}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryBtnText}>
+              {this.state.clearing ? 'Resetting…' : 'Reset session & continue'}
+            </Text>
+          </TouchableOpacity>
+
+          {__DEV__ ? (
+            <>
+              <Text style={styles.body}>
+                Dev tip: if you launched from Xcode, start Metro first (`npx expo start`), then rebuild.
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.body}>
+              If this continues after resetting, delete and reinstall TYLAI from TestFlight, then try
+              signing in again.
+            </Text>
+          )}
+
+          <Text style={styles.label}>Error details (for support)</Text>
+          <Text style={styles.errorText} selectable>
+            {message}
+          </Text>
         </ScrollView>
       </View>
     );
@@ -52,6 +111,7 @@ const styles = StyleSheet.create({
   content: {
     padding: 24,
     paddingTop: 56,
+    paddingBottom: 40,
   },
   title: {
     color: AppTheme.accent,
@@ -63,13 +123,32 @@ const styles = StyleSheet.create({
     color: AppTheme.textPrimary,
     fontSize: 15,
     lineHeight: 22,
-    marginBottom: 8,
+    marginBottom: 14,
   },
-  code: {
-    color: '#9ae6b4',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 13,
-    marginBottom: 16,
+  primaryBtn: {
+    backgroundColor: AppTheme.accent,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  primaryBtnText: {
+    color: AppTheme.accentDark,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  secondaryBtn: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  secondaryBtnText: {
+    color: AppTheme.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
   },
   label: {
     color: AppTheme.textMuted,
@@ -83,5 +162,6 @@ const styles = StyleSheet.create({
     color: '#f87171',
     fontSize: 13,
     lineHeight: 20,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
 });

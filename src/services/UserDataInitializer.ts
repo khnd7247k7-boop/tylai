@@ -1,6 +1,6 @@
 /**
  * User Data Initializer Service
- * 
+ *
  * This service ensures all user data is automatically loaded when a user logs in.
  * It initializes data for all screens and categories.
  */
@@ -37,9 +37,22 @@ class UserDataInitializer {
         );
       }
 
+      // Pull saved workouts (and other synced keys) from Firestore so devices share plans.
+      try {
+        const { syncCloudSyncedKeysFromServer } = await import('./userCloudSync');
+        const cloud = await syncCloudSyncedKeysFromServer();
+        if (cloud.updatedKeys.length > 0) {
+          console.log(
+            `[UserDataInitializer] Synced from cloud: ${cloud.updatedKeys.join(', ')}`
+          );
+        }
+      } catch (syncError) {
+        console.warn('[UserDataInitializer] Cloud sync skipped', syncError);
+      }
+
       // Initialize Wellness Data Manager (for AI sync)
       await WellnessDataManager.initialize();
-      
+
       // Load and verify data exists for all categories
       const dataChecks = await Promise.all([
         this.checkDataExists('workoutHistory'),
@@ -109,10 +122,3 @@ class UserDataInitializer {
 }
 
 export default new UserDataInitializer();
-
-
-
-
-
-
-

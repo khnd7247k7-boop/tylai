@@ -53,6 +53,15 @@ export const saveUserData = async <T>(baseKey: string, data: T): Promise<void> =
   }
   try {
     await AsyncStorage.setItem(key, JSON.stringify(data));
+    // Cross-device sync for selected keys (saved workouts, etc.)
+    try {
+      const { isCloudSyncedKey, pushUserDataToCloud } = await import('../services/userCloudSync');
+      if (isCloudSyncedKey(baseKey)) {
+        void pushUserDataToCloud(baseKey, data);
+      }
+    } catch (syncError) {
+      console.warn(`[userStorage] cloud sync skipped for ${baseKey}`, syncError);
+    }
   } catch (error) {
     console.error(`Error saving user data for key ${baseKey}:`, error);
     throw error;

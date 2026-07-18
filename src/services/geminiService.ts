@@ -164,6 +164,80 @@ async function generateTextViaProxy(prompt: string, model?: string): Promise<str
   return text;
 }
 
+async function generateMultimodalViaProxy(
+  prompt: string,
+  image: { mimeType: string; data: string },
+  model?: string
+): Promise<string> {
+  const body = await proxyJsonFetch<{ text?: string; error?: string; details?: string }>('/api/gemini', {
+    method: 'POST',
+    body: JSON.stringify({ prompt, model, image }),
+  });
+  const text = body && typeof body.text === 'string' ? body.text.trim() : '';
+  if (!text) throw new Error('Empty text response from Gemini proxy.');
+  return text;
+}
+
+async function generateMultimodalWithModelFallback(
+  systemInstruction: string,
+  userPayload: string,
+  image: { mimeType: string; data: string },
+  options?: { modelCandidates?: string[] }
+): Promise<string> {
+  const candidates =
+    options?.modelCandidates?.length && options.modelCandidates.length > 0
+      ? options.modelCandidates
+      : resolveModelCandidates();
+  const proxyUrl = getGeminiProxyUrlLocal();
+  const prompt = `[system]\n${systemInstruction}\n\n[user]\n${userPayload}`;
+  let lastError: unknown;
+
+  for (const modelId of candidates) {
+    try {
+      if (proxyUrl) {
+        try {
+          return await generateMultimodalViaProxy(prompt, image, modelId);
+        } catch (proxyErr) {
+          if (isModelNotFoundError(proxyErr) && candidates.indexOf(modelId) < candidates.length - 1) {
+            lastError = proxyErr;
+            continue;
+          }
+          throw humanizeGeminiError(proxyErr);
+        }
+      }
+
+      if (__DEV__) {
+        const legacyKey = getLegacyGeminiApiKey();
+        if (legacyKey) {
+          const genAI = new GoogleGenerativeAI(legacyKey);
+          const model = genAI.getGenerativeModel({ model: modelId, systemInstruction });
+          const result = await withGeminiRetries(() =>
+            model.generateContent([
+              { text: userPayload },
+              { inlineData: { mimeType: image.mimeType, data: image.data } },
+            ])
+          );
+          const text = result.response?.text?.() || '';
+          if (!text.trim()) throw new Error('Empty text response from Gemini.');
+          return text.trim();
+        }
+      }
+
+      throw new Error(
+        'Gemini is not configured. Add EXPO_PUBLIC_GEMINI_PROXY_URL (and run gemini-proxy) or EXPO_PUBLIC_GEMINI_API_KEY for dev.'
+      );
+    } catch (err) {
+      lastError = err;
+      if (isModelNotFoundError(err) && candidates.indexOf(modelId) < candidates.length - 1) {
+        continue;
+      }
+      throw humanizeGeminiError(err);
+    }
+  }
+
+  throw humanizeGeminiError(lastError ?? new Error('Gemini request failed.'));
+}
+
 /** True when Gemini calls (AI Coach, Food coach / eating-out coach) can run. */
 export function isGeminiApiKeyConfigured(): boolean {
   return isGeminiConfigured();
@@ -742,4 +816,151 @@ export async function getAiMealEstimateFromDescription(description: string): Pro
     };
   }
   return estimate;
+}
+
+export type FoodPackageVisionResult = {
+  hasNutritionFacts: boolean;
+  brand: string | null;
+  productName: string | null;
+  flavor: string | null;
+  category: string | null;
+  barcodeVisible: string | null;
+  servingSize: string | null;
+  servingsPerContainer: number | null;
+  calories: number | null;
+  totalFat_g: number | null;
+  saturatedFat_g: number | null;
+  transFat_g: number | null;
+  cholesterol_mg: number | null;
+  sodium_mg: number | null;
+  carbohydrates_g: number | null;
+  fiber_g: number | null;
+  sugar_g: number | null;
+  addedSugar_g: number | null;
+  protein_g: number | null;
+  ingredients: string | null;
+  ocrConfidence: number;
+  packageConfidence: number;
+  searchQuery: string | null;
+  notes: string | null;
+};
+
+const FOOD_PACKAGE_VISION_SYSTEM = `You analyze packaged food photos for a nutrition logging app.
+
+Rules:
+- Extract Nutrition Facts ONLY when clearly visible. Never invent nutrition numbers.
+- If a field is unreadable or absent, use null.
+- Correct common OCR mistakes (e.g. O→0, l→1) only when confident.
+- Prefer values for one serving as printed on the label.
+- packageConfidence: how sure you are of brand + product name from packaging (0–1).
+- ocrConfidence: how sure you are of extracted Nutrition Facts digits (0–1). Use 0 if no panel.
+- searchQuery: best short query to find this product in a food database (brand + product + flavor).
+- Output ONE JSON object only. No markdown fences.`;
+
+function clamp01(n: unknown): number {
+  const v = typeof n === 'number' ? n : parseFloat(String(n));
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function strOrNull(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t : null;
+}
+
+function parseFoodPackageVisionPayload(raw: string): FoodPackageVisionResult {
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  const slice = start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned;
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(slice) as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+
+  return {
+    hasNutritionFacts: data.hasNutritionFacts === true,
+    brand: strOrNull(data.brand),
+    productName: strOrNull(data.productName),
+    flavor: strOrNull(data.flavor),
+    category: strOrNull(data.category),
+    barcodeVisible: strOrNull(data.barcodeVisible),
+    servingSize: strOrNull(data.servingSize),
+    servingsPerContainer: numOrNull(data.servingsPerContainer),
+    calories: numOrNull(data.calories),
+    totalFat_g: numOrNull(data.totalFat_g),
+    saturatedFat_g: numOrNull(data.saturatedFat_g),
+    transFat_g: numOrNull(data.transFat_g),
+    cholesterol_mg: numOrNull(data.cholesterol_mg),
+    sodium_mg: numOrNull(data.sodium_mg),
+    carbohydrates_g: numOrNull(data.carbohydrates_g),
+    fiber_g: numOrNull(data.fiber_g),
+    sugar_g: numOrNull(data.sugar_g),
+    addedSugar_g: numOrNull(data.addedSugar_g),
+    protein_g: numOrNull(data.protein_g),
+    ingredients: strOrNull(data.ingredients),
+    ocrConfidence: clamp01(data.ocrConfidence),
+    packageConfidence: clamp01(data.packageConfidence),
+    searchQuery: strOrNull(data.searchQuery),
+    notes: strOrNull(data.notes),
+  };
+}
+
+/**
+ * Smart Food Scanner — vision pass over a package / Nutrition Facts photo.
+ * Never fabricates macros: missing fields stay null.
+ */
+export async function analyzeFoodPackageImage(input: {
+  base64: string;
+  mimeType?: string;
+}): Promise<FoodPackageVisionResult> {
+  assertPremiumGeminiAccess();
+  const data = input.base64.replace(/^data:[^;]+;base64,/, '').trim();
+  if (!data) throw new Error('No image data to analyze.');
+
+  const mimeType = input.mimeType?.trim() || 'image/jpeg';
+  const userPayload = `Analyze this food package / Nutrition Facts image.
+
+Return JSON with this schema:
+{
+  "hasNutritionFacts": boolean,
+  "brand": string|null,
+  "productName": string|null,
+  "flavor": string|null,
+  "category": string|null,
+  "barcodeVisible": string|null,
+  "servingSize": string|null,
+  "servingsPerContainer": number|null,
+  "calories": number|null,
+  "totalFat_g": number|null,
+  "saturatedFat_g": number|null,
+  "transFat_g": number|null,
+  "cholesterol_mg": number|null,
+  "sodium_mg": number|null,
+  "carbohydrates_g": number|null,
+  "fiber_g": number|null,
+  "sugar_g": number|null,
+  "addedSugar_g": number|null,
+  "protein_g": number|null,
+  "ingredients": string|null,
+  "ocrConfidence": number,
+  "packageConfidence": number,
+  "searchQuery": string|null,
+  "notes": string|null
+}`;
+
+  const text = await generateMultimodalWithModelFallback(FOOD_PACKAGE_VISION_SYSTEM, userPayload, {
+    mimeType,
+    data,
+  });
+  return parseFoodPackageVisionPayload(text);
 }

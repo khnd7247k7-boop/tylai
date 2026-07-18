@@ -18,6 +18,8 @@ import { buildPlanPhaseBlocks } from './src/utils/workoutPhaseDisplay';
 interface WorkoutOptionsScreenProps {
   workoutOptions: GeneratedWorkoutPlan[];
   generatedGoal?: string;
+  /** True during first-time plan setup after onboarding. */
+  isInitialSetup?: boolean;
   onSave: (workout: GeneratedWorkoutPlan) => void;
   onStartWorkout?: (workout: GeneratedWorkoutPlan) => void;
   onBack: () => void;
@@ -30,6 +32,7 @@ const CARD_SPACING = 20;
 export default function WorkoutOptionsScreen({
   workoutOptions,
   generatedGoal,
+  isInitialSetup = false,
   onSave,
   onStartWorkout,
   onBack,

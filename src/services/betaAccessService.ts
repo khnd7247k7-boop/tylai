@@ -31,13 +31,20 @@ export function getBetaPaymentUrl(): string {
   return readEnvString('EXPO_PUBLIC_BETA_PAYMENT_URL') || 'https://tyl-ai.com/join.html#pricing';
 }
 
-/** True when this Firebase account email has an active Stripe beta payment. */
-export async function checkStripePaidBetaAccess(): Promise<boolean> {
+/**
+ * Stripe paid check for TestFlight premium.
+ * Returns `null` when the check could not be verified (network/auth/API error) —
+ * callers must not treat that as unpaid or they will strip premium temporarily.
+ */
+export async function checkStripePaidBetaAccess(): Promise<boolean | null> {
   const status = await fetchStripeSubscriptionStatus();
+  if (!status.verified) return null;
   return status.paid;
 }
 
 export type StripeSubscriptionStatus = {
+  /** False when the server response could not be trusted (do not downgrade on this). */
+  verified: boolean;
   paid: boolean;
   active: boolean;
   plan: string | null;
@@ -45,17 +52,30 @@ export type StripeSubscriptionStatus = {
   cancelAtPeriodEnd: boolean;
 };
 
-export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptionStatus> {
-  const empty: StripeSubscriptionStatus = {
+function unverifiedStatus(): StripeSubscriptionStatus {
+  return {
+    verified: false,
     paid: false,
     active: false,
     plan: null,
     subscriptionStatus: null,
     cancelAtPeriodEnd: false,
   };
+}
 
+export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptionStatus> {
   const user = auth?.currentUser;
-  if (!user?.email || auth?._isMock) return empty;
+  if (!user?.email || auth?._isMock) {
+    // No signed-in account — treat as a verified unpaid result.
+    return {
+      verified: true,
+      paid: false,
+      active: false,
+      plan: null,
+      subscriptionStatus: null,
+      cancelAtPeriodEnd: false,
+    };
+  }
 
   try {
     const idToken = await user.getIdToken();
@@ -67,7 +87,7 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
 
     if (!res.ok) {
       console.warn('[betaAccess] status check failed', res.status);
-      return empty;
+      return unverifiedStatus();
     }
 
     const data = (await res.json()) as {
@@ -79,6 +99,7 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
     };
 
     return {
+      verified: true,
       paid: data.paid === true,
       active: data.active === true,
       plan: data.plan ?? null,
@@ -87,7 +108,7 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
     };
   } catch (error) {
     console.warn('[betaAccess] status check error', error);
-    return empty;
+    return unverifiedStatus();
   }
 }
 

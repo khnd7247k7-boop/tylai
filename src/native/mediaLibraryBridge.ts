@@ -29,10 +29,11 @@ export async function requestMediaLibraryPermission(): Promise<boolean> {
   const MediaLibrary = await getMediaLibraryApi();
   if (!MediaLibrary) return false;
   try {
+    // writeOnly=true → only needs NSPhotoLibraryAddUsageDescription (save to camera roll).
     const existing = await MediaLibrary.getPermissionsAsync(true);
-    if (existing.granted) return true;
+    if (existing.granted || existing.status === 'granted') return true;
     const requested = await MediaLibrary.requestPermissionsAsync(true);
-    return requested.granted;
+    return Boolean(requested.granted || requested.status === 'granted');
   } catch (error) {
     console.warn('[mediaLibraryBridge] permission request failed', error);
     return false;

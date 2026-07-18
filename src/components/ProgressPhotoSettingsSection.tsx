@@ -26,36 +26,44 @@ export default function ProgressPhotoSettingsSection(): React.ReactElement {
   }, [refresh]);
 
   const handleToggle = async (enabled: boolean) => {
-    if (Platform.OS === 'web') {
-      Alert.alert(
-        'Not available on web',
-        'Saving progress photos to your camera roll is only available in the iOS and Android app.'
-      );
-      return;
-    }
-
-    if (!isMediaLibraryAvailable()) {
-      Alert.alert('Camera roll unavailable', mediaLibraryUnavailableMessage());
-      return;
-    }
-
-    if (enabled) {
-      const granted = await requestCameraRollPermission();
-      if (!granted) {
+    try {
+      if (Platform.OS === 'web') {
         Alert.alert(
-          'Photo library access needed',
-          'Allow photo library access in Settings to save progress photos to your camera roll.',
-          [
-            { text: 'Not now', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => Linking.openSettings() },
-          ]
+          'Not available on web',
+          'Saving progress photos to your camera roll is only available in the iOS and Android app.'
         );
         return;
       }
-    }
 
-    const next = await setSaveToCameraRoll(enabled);
-    setSaveToCameraRollState(next.saveToCameraRoll);
+      if (!isMediaLibraryAvailable()) {
+        Alert.alert('Camera roll unavailable', mediaLibraryUnavailableMessage());
+        return;
+      }
+
+      if (enabled) {
+        const granted = await requestCameraRollPermission();
+        if (!granted) {
+          Alert.alert(
+            'Photo library access needed',
+            'Allow photo library access in Settings to save progress photos to your camera roll.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
+          return;
+        }
+      }
+
+      const next = await setSaveToCameraRoll(enabled);
+      setSaveToCameraRollState(next.saveToCameraRoll);
+    } catch (error) {
+      console.warn('[ProgressPhotoSettings] toggle failed', error);
+      Alert.alert(
+        'Could not update setting',
+        'Photo library permission failed. Check Settings → TYLAI → Photos, then try again.'
+      );
+    }
   };
 
   const nativeAvailable = isMediaLibraryAvailable();

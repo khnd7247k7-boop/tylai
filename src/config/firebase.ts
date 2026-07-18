@@ -1,2 +1,2 @@
-/** Single Firebase Auth instance (persistence configured in root firebaseConfig.js). */
-export { auth } from '../../firebaseConfig';
+/** Single Firebase Auth / Firestore instances (configured in root firebaseConfig.js). */
+export { auth, db } from '../../firebaseConfig';

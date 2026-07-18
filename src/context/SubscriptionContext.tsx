@@ -46,12 +46,31 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const [upgradeVisible, setUpgradeVisible] = useState(false);
   const [stripeStatus, setStripeStatus] = useState<StripeSubscriptionStatus | null>(null);
 
-  const refreshTier = useCallback(async () => {
-    const resolved = await resolveSubscriptionTier();
+  const refreshTier = useCallback(async (opts?: { retryIfUnpaid?: boolean }) => {
+    const resolveWithOptionalRetry = async (): Promise<SubscriptionTier> => {
+      let resolved = await resolveSubscriptionTier();
+      if (!opts?.retryIfUnpaid || isPremiumTier(resolved)) return resolved;
+
+      // After returning from Stripe checkout, webhooks can lag a few seconds.
+      const delaysMs = [1500, 3000, 5000];
+      for (const delay of delaysMs) {
+        await new Promise((r) => setTimeout(r, delay));
+        resolved = await resolveSubscriptionTier();
+        if (isPremiumTier(resolved)) return resolved;
+      }
+      return resolved;
+    };
+
+    const resolved = await resolveWithOptionalRetry();
     setTier(resolved);
     setPremiumAccessSync(isPremiumTier(resolved));
+
     const status = await fetchStripeSubscriptionStatus();
-    setStripeStatus(status);
+    // Keep last known Stripe details when the check failed (avoid flashing unpaid).
+    // `verified` may be missing on older payloads — only skip updates when explicitly false.
+    if (status && (status as { verified?: boolean }).verified !== false) {
+      setStripeStatus(status);
+    }
   }, []);
 
   useEffect(() => {
@@ -78,7 +97,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     const onAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'active') {
-        refreshTier().catch((error) => {
+        refreshTier({ retryIfUnpaid: true }).catch((error) => {
           console.warn('[Subscription] refresh on foreground failed', error);
         });
       }
