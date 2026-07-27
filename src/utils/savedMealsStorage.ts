@@ -1,3 +1,5 @@
+import type { LogFoodItem } from '../types/nutritionLogging';
+import { createLogFoodItem } from './logFoodItems';
 import { loadUserData, saveUserData, getUserStorageKey } from './userStorage';
 
 export type SavedMealRecord = {
@@ -13,6 +15,8 @@ export type SavedMealRecord = {
   lastBaseServingSize?: string;
   lastServings?: string;
   lastServingAmount?: string;
+  /** Multi-item breakdown with quantities (e.g. yogurt bowl ingredients). */
+  items?: LogFoodItem[];
 };
 
 export type SavedMealPortionHint = {
@@ -20,7 +24,46 @@ export type SavedMealPortionHint = {
   lastBaseServingSize?: string;
   lastServings?: string;
   lastServingAmount?: string;
+  items?: LogFoodItem[];
 };
+
+function normalizeSavedMealItems(raw: unknown): LogFoodItem[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const items: LogFoodItem[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Partial<LogFoodItem>;
+    const name = String(r.name ?? '').trim();
+    if (!name) continue;
+    items.push(
+      createLogFoodItem({
+        id: typeof r.id === 'string' ? r.id : undefined,
+        name,
+        amount: typeof r.amount === 'string' ? r.amount : undefined,
+        quantity: typeof r.quantity === 'number' ? r.quantity : undefined,
+        baseProtein: Number(r.baseProtein) || 0,
+        baseCarbs: Number(r.baseCarbs) || 0,
+        baseFat: Number(r.baseFat) || 0,
+      })
+    );
+  }
+  return items.length > 0 ? items : undefined;
+}
+
+/** Fresh item ids so a logged copy never shares identity with the template. */
+export function cloneSavedMealItems(items: LogFoodItem[] | undefined): LogFoodItem[] | undefined {
+  if (!items?.length) return undefined;
+  return items.map((item) =>
+    createLogFoodItem({
+      name: item.name,
+      amount: item.amount,
+      quantity: item.quantity,
+      baseProtein: item.baseProtein,
+      baseCarbs: item.baseCarbs,
+      baseFat: item.baseFat,
+    })
+  );
+}
 
 function lastUsedTs(iso: string): number {
   const t = new Date(iso).getTime();
@@ -31,6 +74,7 @@ function normalizeSavedMeal(m: Partial<SavedMealRecord> | null | undefined): Sav
   if (!m) return null;
   const name = String(m.name ?? '').trim();
   if (!name) return null;
+  const items = normalizeSavedMealItems(m.items);
   return {
     id: String(m.id ?? `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`),
     name,
@@ -43,6 +87,7 @@ function normalizeSavedMeal(m: Partial<SavedMealRecord> | null | undefined): Sav
     lastBaseServingSize: typeof m.lastBaseServingSize === 'string' ? m.lastBaseServingSize : undefined,
     lastServings: typeof m.lastServings === 'string' ? m.lastServings : undefined,
     lastServingAmount: typeof m.lastServingAmount === 'string' ? m.lastServingAmount : undefined,
+    ...(items ? { items } : {}),
     lastUsed:
       typeof m.lastUsed === 'string' && Number.isFinite(new Date(m.lastUsed).getTime())
         ? m.lastUsed
@@ -105,6 +150,7 @@ export function applySavedMealUpsert(
   const now = new Date().toISOString();
   const portion = opts?.portion;
   let next: SavedMealRecord[];
+  const items = normalizeSavedMealItems(portion?.items);
   if (existing) {
     next = prev.map((m) =>
       m.id === existing.id
@@ -121,6 +167,7 @@ export function applySavedMealUpsert(
             ...(portion?.lastBaseServingSize ? { lastBaseServingSize: portion.lastBaseServingSize } : {}),
             ...(portion?.lastServings ? { lastServings: portion.lastServings } : {}),
             ...(portion?.lastServingAmount ? { lastServingAmount: portion.lastServingAmount } : {}),
+            ...(items ? { items } : {}),
           }
         : m
     );
@@ -139,6 +186,7 @@ export function applySavedMealUpsert(
         ...(portion?.lastBaseServingSize ? { lastBaseServingSize: portion.lastBaseServingSize } : {}),
         ...(portion?.lastServings ? { lastServings: portion.lastServings } : {}),
         ...(portion?.lastServingAmount ? { lastServingAmount: portion.lastServingAmount } : {}),
+        ...(items ? { items } : {}),
       },
       ...prev,
     ];

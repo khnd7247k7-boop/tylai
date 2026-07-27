@@ -28,11 +28,13 @@ interface PhotoHeroCardProps {
   onSwipeSession?: (direction: 'prev' | 'next') => void;
   /** When true, hides week chrome — page timeline owns the week label. */
   embedded?: boolean;
+  canSwipePrev?: boolean;
+  canSwipeNext?: boolean;
 }
 
 /**
- * Featured transformation frame — crossfades on week/pose change,
- * optional inline before/after scrub (no navigation).
+ * Featured transformation frame — instant photo swap (no crossfade flash),
+ * optional before/after scrub that only reveals the earlier photo when dragged.
  */
 export default function PhotoHeroCard({
   session,
@@ -45,6 +47,8 @@ export default function PhotoHeroCard({
   onOpenDetails,
   onSwipeSession,
   embedded = false,
+  canSwipePrev = false,
+  canSwipeNext = false,
 }: PhotoHeroCardProps): React.ReactElement {
   const [pose, setPose] = useState<PhotoPose>('front');
   const [compareModeLocal, setCompareModeLocal] = useState(false);
@@ -54,17 +58,10 @@ export default function PhotoHeroCard({
     if (compareModeProp === undefined) setCompareModeLocal(next);
   };
 
-  const [slider, setSlider] = useState(0.5);
+  const [slider, setSlider] = useState(0);
   const [frameW, setFrameW] = useState(0);
   const widthRef = useRef(0);
   const pressScale = useRef(new Animated.Value(1)).current;
-
-  // Dual-layer crossfade: bottom stays, top fades to new image
-  const [baseUri, setBaseUri] = useState(session.photos.front);
-  const [overlayUri, setOverlayUri] = useState(session.photos.front);
-  const overlayOpacity = useRef(new Animated.Value(1)).current;
-  const pendingUri = useRef(session.photos.front);
-  const animating = useRef(false);
 
   const label = formatTimelineLabel(session, weekIndex, isToday);
   const uri = session.photos[pose];
@@ -74,43 +71,14 @@ export default function PhotoHeroCard({
   useEffect(() => {
     setPose('front');
     setCompareMode(false);
-    setSlider(0.5);
+    setSlider(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on session change
   }, [session.id]);
 
   useEffect(() => {
-    if (uri === pendingUri.current && !animating.current) {
-      setBaseUri(uri);
-      setOverlayUri(uri);
-      overlayOpacity.setValue(1);
-      return;
-    }
-    if (uri === pendingUri.current) return;
-    pendingUri.current = uri;
-
-    if (animating.current) {
-      // Jump to latest mid-animation
-      setBaseUri(uri);
-      setOverlayUri(uri);
-      overlayOpacity.setValue(1);
-      animating.current = false;
-      return;
-    }
-
-    animating.current = true;
-    setOverlayUri(uri);
-    overlayOpacity.setValue(0);
-    Animated.timing(overlayOpacity, {
-      toValue: 1,
-      duration: 320,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (!finished) return;
-      setBaseUri(uri);
-      overlayOpacity.setValue(1);
-      animating.current = false;
-    });
-  }, [uri, overlayOpacity]);
+    // Entering compare: show current photo only until the user drags the scrub line.
+    if (compareMode) setSlider(0);
+  }, [compareMode]);
 
   const pan = useMemo(
     () =>
@@ -154,62 +122,92 @@ export default function PhotoHeroCard({
         </View>
       ) : null}
 
-      <TouchableOpacity
-        activeOpacity={1}
-        onPressIn={() =>
-          Animated.spring(pressScale, {
-            toValue: 0.985,
-            useNativeDriver: true,
-            speed: 40,
-            bounciness: 0,
-          }).start()
-        }
-        onPressOut={() =>
-          Animated.spring(pressScale, {
-            toValue: 1,
-            useNativeDriver: true,
-            speed: 20,
-            bounciness: 6,
-          }).start()
-        }
-        onPress={onOpenDetails}
-      >
-        <View
-          style={styles.heroFrame}
-          onLayout={(e) => {
-            widthRef.current = e.nativeEvent.layout.width;
-            setFrameW(e.nativeEvent.layout.width);
-          }}
-          {...pan.panHandlers}
+      <View style={styles.heroFrameWrap}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPressIn={() =>
+            Animated.spring(pressScale, {
+              toValue: 0.985,
+              useNativeDriver: true,
+              speed: 40,
+              bounciness: 0,
+            }).start()
+          }
+          onPressOut={() =>
+            Animated.spring(pressScale, {
+              toValue: 1,
+              useNativeDriver: true,
+              speed: 20,
+              bounciness: 6,
+            }).start()
+          }
+          onPress={onOpenDetails}
         >
-          <Image source={{ uri: baseUri }} style={styles.heroImage} resizeMode="cover" />
-          <Animated.View style={[styles.overlayLayer, { opacity: overlayOpacity }]}>
-            <Image source={{ uri: overlayUri }} style={styles.heroImage} resizeMode="cover" />
-          </Animated.View>
+          <View
+            style={styles.heroFrame}
+            onLayout={(e) => {
+              widthRef.current = e.nativeEvent.layout.width;
+              setFrameW(e.nativeEvent.layout.width);
+            }}
+            {...pan.panHandlers}
+          >
+            {/* Current (after) photo — no crossfade; swap instantly to avoid flashing */}
+            <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
 
-          {compareMode && compareUri ? (
-            <>
-              <View style={[styles.beforeClip, { width: frameW * slider }]} pointerEvents="none">
-                <Image
-                  source={{ uri: compareUri }}
-                  style={[styles.heroImage, frameW > 0 ? { width: frameW } : null]}
-                  resizeMode="cover"
+            {compareMode && compareUri ? (
+              <>
+                {/* Before photo only appears as the scrub line is dragged */}
+                <View style={[styles.beforeClip, { width: frameW * slider }]} pointerEvents="none">
+                  <Image
+                    source={{ uri: compareUri }}
+                    style={[styles.heroImage, frameW > 0 ? { width: frameW } : null]}
+                    resizeMode="cover"
+                  />
+                </View>
+                <View style={[styles.handle, { left: Math.max(0, frameW * slider - 1) }]} />
+                <View
+                  style={[styles.handleKnob, { left: Math.max(12, frameW * slider - 14) }]}
                 />
-              </View>
-              <View style={[styles.handle, { left: Math.max(0, frameW * slider - 1) }]} />
-              <View
-                style={[styles.handleKnob, { left: Math.max(12, frameW * slider - 14) }]}
-              />
-              <Text style={styles.beforeBadge}>Before</Text>
-              <Text style={styles.afterBadge}>After</Text>
-            </>
-          ) : null}
+                {slider > 0.02 ? (
+                  <>
+                    <Text style={styles.beforeBadge}>Before</Text>
+                    <Text style={styles.afterBadge}>After</Text>
+                  </>
+                ) : (
+                  <Text style={styles.afterBadge}>Drag to compare</Text>
+                )}
+              </>
+            ) : null}
 
-          <View style={styles.stampWrap} pointerEvents="none">
-            <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
+            <View style={styles.stampWrap} pointerEvents="none">
+              <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
+            </View>
           </View>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        {onSwipeSession && canSwipePrev ? (
+          <TouchableOpacity
+            style={[styles.navChevron, styles.navChevronLeft]}
+            onPress={() => onSwipeSession('prev')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Previous photos"
+          >
+            <Text style={styles.navChevronText}>‹</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onSwipeSession && canSwipeNext ? (
+          <TouchableOpacity
+            style={[styles.navChevron, styles.navChevronRight]}
+            onPress={() => onSwipeSession('next')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Next photos"
+          >
+            <Text style={styles.navChevronText}>›</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
       <View style={styles.poseRow}>
         {PHOTO_POSES.map((p) => (
@@ -280,23 +278,24 @@ const styles = StyleSheet.create({
   },
   ringWrap: { alignItems: 'center', marginLeft: 8 },
   ringCaption: { fontSize: 10, color: AppTheme.textFaint, marginTop: 2 },
+  heroFrameWrap: {
+    position: 'relative',
+    width: '100%',
+  },
   heroFrame: {
     width: '100%',
     aspectRatio: 3 / 4,
     maxHeight: Math.min(460, Dimensions.get('window').height * 0.48),
     borderRadius: AppTheme.radiusCard,
     overflow: 'hidden',
-    backgroundColor: AppTheme.bgElevated,
+    backgroundColor: '#0a0a0a',
   },
   heroImage: { width: '100%', height: '100%' },
-  overlayLayer: {
-    ...StyleSheet.absoluteFillObject,
-  },
   stampWrap: {
     position: 'absolute',
     left: 10,
     bottom: 10,
-    maxWidth: '70%',
+    maxWidth: '48%',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -307,6 +306,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
     letterSpacing: 0.2,
+  },
+  navChevron: {
+    position: 'absolute',
+    top: '42%',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navChevronLeft: { left: 8 },
+  navChevronRight: { right: 8 },
+  navChevronText: {
+    color: '#fff',
+    fontSize: 26,
+    fontWeight: '600',
+    marginTop: -2,
   },
   beforeClip: {
     position: 'absolute',

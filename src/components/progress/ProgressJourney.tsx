@@ -18,11 +18,8 @@ import {
   loadPhotoSessions,
   computePhotoStats,
   createSessionFromCaptures,
-  deletePhotoSession,
   selectDefaultSession,
-  getSessionForDate,
   formatTimelineLabel,
-  getRetakeButtonLabel,
 } from '../../services/PhotoService';
 import { buildMetricsBySessionId } from '../../services/sessionProgressMetricsService';
 import {
@@ -227,11 +224,7 @@ export default function ProgressJourney({
   const handleCaptureComplete = async (
     captures: Parameters<typeof createSessionFromCaptures>[0]
   ) => {
-    if (retakeMode) {
-      const today = localDateKey();
-      const existing = await getSessionForDate(today);
-      if (existing) await deletePhotoSession(existing.id);
-    }
+    // createSessionFromCaptures keeps all prior dates; only replaces today's session.
     const session = await createSessionFromCaptures(captures);
     await reload();
     setSelectedId(session.id);
@@ -362,6 +355,8 @@ export default function ProgressJourney({
           onCompareModeChange={setInlineCompare}
           onOpenDetails={() => setDetailVisible(true)}
           onSwipeSession={handleSwipeSession}
+          canSwipePrev={selectedIndex > 0}
+          canSwipeNext={selectedIndex >= 0 && selectedIndex < sortedSessions.length - 1}
         />
       ) : (
         <ProgressPhotosEmptyState onTakePhotos={() => openCapture(false)} />
@@ -370,21 +365,15 @@ export default function ProgressJourney({
       {hasSessions ? (
         <View style={styles.photoActions}>
           <TouchableOpacity
-            style={styles.photoAction}
-            onPress={() => openCapture(false)}
+            style={styles.photoActionPrimary}
+            onPress={() => openCapture(stats.hasSessionToday)}
             activeOpacity={0.85}
           >
-            <Text style={styles.photoActionText}>{stats.buttonLabel}</Text>
+            <Text style={styles.photoActionPrimaryText}>{stats.buttonLabel}</Text>
           </TouchableOpacity>
-          {stats.hasSessionToday ? (
-            <TouchableOpacity
-              style={styles.photoActionGhost}
-              onPress={() => openCapture(true)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.photoActionGhostText}>{getRetakeButtonLabel()}</Text>
-            </TouchableOpacity>
-          ) : null}
+          <Text style={styles.photoCadenceHint}>
+            Weekly photos are a great baseline — take them daily anytime you want.
+          </Text>
         </View>
       ) : null}
 
@@ -445,31 +434,27 @@ const styles = StyleSheet.create({
     borderTopColor: AppTheme.border,
   },
   photoActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
     marginBottom: 14,
+    gap: 8,
   },
-  photoAction: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+  photoActionPrimary: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: AppTheme.radiusPill,
-    backgroundColor: AppTheme.bgElevated,
-    borderWidth: 1,
-    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.accent,
+    alignItems: 'center',
   },
-  photoActionText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: AppTheme.textSecondary,
+  photoActionPrimaryText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: AppTheme.accentDark,
   },
-  photoActionGhost: {
-    paddingVertical: 8,
-  },
-  photoActionGhostText: {
-    fontSize: 13,
-    fontWeight: '600',
+  photoCadenceHint: {
+    fontSize: 12,
+    lineHeight: 17,
     color: AppTheme.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: 8,
   },
   chartCard: {
     backgroundColor: AppTheme.card,

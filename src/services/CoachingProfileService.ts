@@ -281,7 +281,10 @@ export async function updateCoachingProfileFromQuestionnaire(profile: CoachingPr
   notifyUserDataReady();
 }
 
-export async function completeOnboarding(profile: CoachingProfile): Promise<void> {
+export async function completeOnboarding(
+  profile: CoachingProfile,
+  opts?: { requestFirstWorkoutPlan?: boolean }
+): Promise<void> {
   const userKey = await getUserStorageKey(COACHING_PROFILE_KEY);
   if (!userKey) {
     throw new Error('Not signed in. Close the app, sign in again, then finish onboarding.');
@@ -302,6 +305,11 @@ export async function completeOnboarding(profile: CoachingProfile): Promise<void
 
   await persistWeightFromProfile(finalized);
   await saveUserData(ONBOARDING_COMPLETED_KEY, true);
+  // Only force the first-plan flow when the user opted in after the questionnaire.
+  await saveUserData(PENDING_FIRST_PLAN_KEY, opts?.requestFirstWorkoutPlan === true);
+}
+
+export async function markPendingFirstWorkoutPlan(): Promise<void> {
   await saveUserData(PENDING_FIRST_PLAN_KEY, true);
 }
 
@@ -517,6 +525,7 @@ export default {
   consumePendingFirstWorkoutPlan,
   isPendingFirstWorkoutPlan,
   clearPendingFirstWorkoutPlan,
+  markPendingFirstWorkoutPlan,
   buildWorkoutGenerationInput,
   syncCoachingProfileToUserProfile,
   shouldShowNutritionBodyProfilePrompt,

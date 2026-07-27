@@ -3,6 +3,8 @@
  * Logged meals are upserted into saved templates; each log bumps use count for faster re-find.
  */
 
+import type { LogFoodItem } from '../types/nutritionLogging';
+
 export interface LogFoodSavedMatch {
   kind: 'saved';
   id: string;
@@ -17,6 +19,7 @@ export interface LogFoodSavedMatch {
   baseServingSize?: string;
   servings?: string;
   servingAmount?: string;
+  items?: LogFoodItem[];
 }
 
 export interface LogFoodHistoryMatch {
@@ -33,6 +36,7 @@ export interface LogFoodHistoryMatch {
   baseServingSize?: string;
   servings?: string;
   servingAmount?: string;
+  items?: LogFoodItem[];
 }
 
 /** Unified row for inline suggestions — saved + history merged by priority score. */
@@ -52,6 +56,7 @@ export interface LogFoodYourFoodMatch {
   baseServingSize?: string;
   servings?: string;
   servingAmount?: string;
+  items?: LogFoodItem[];
 }
 
 export interface LogFoodNameMatchGroups {
@@ -74,6 +79,7 @@ export interface LogFoodSavedLike {
   lastBaseServingSize?: string;
   lastServings?: string;
   lastServingAmount?: string;
+  items?: LogFoodItem[];
 }
 
 export interface LogFoodMealLike {
@@ -87,6 +93,7 @@ export interface LogFoodMealLike {
   servings?: number;
   servingUnit?: string;
   servingAmount?: string;
+  items?: LogFoodItem[];
 }
 
 function norm(s: string): string {
@@ -243,6 +250,7 @@ export function getLogFoodNameMatches(
       logCount: Math.max(logCount, m.timesUsed),
       score,
       ...portionFromSaved(m),
+      items: m.items?.length ? m.items : agg?.latest.items,
     });
   }
 
@@ -266,6 +274,7 @@ export function getLogFoodNameMatches(
       logCount: agg.logCount,
       score,
       ...portionFromMeal(latest),
+      items: latest.items,
     });
   }
 
@@ -290,6 +299,7 @@ export function getLogFoodNameMatches(
       baseServingSize: r.baseServingSize,
       servings: r.servings,
       servingAmount: r.servingAmount,
+      items: r.items,
     }));
 
   const savedNameKeys = new Set(saved.map((s) => norm(s.name)));
@@ -310,6 +320,7 @@ export function getLogFoodNameMatches(
       baseServingSize: r.baseServingSize,
       servings: r.servings,
       servingAmount: r.servingAmount,
+      items: r.items,
     }));
 
   return { saved, history, yourFoods };

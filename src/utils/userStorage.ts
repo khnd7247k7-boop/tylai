@@ -170,6 +170,9 @@ const USER_DATA_BASE_KEYS = [
   'progressPhotoSessions',
   'progressPhotoSettings',
   'weightEntries',
+  'waterLogEntries',
+  'waterQuickAmounts',
+  'notificationCenterDaily',
 ] as const;
 
 function parseUserStorageKey(key: string): { userId: string; baseKey: string } | null {

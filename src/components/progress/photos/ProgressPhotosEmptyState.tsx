@@ -37,11 +37,11 @@ export default function ProgressPhotosEmptyState({
       </View>
       <Text style={styles.title}>Add photos to the journey</Text>
       <Text style={styles.body}>
-        Photos aren’t a separate gallery — they’re one more track on this timeline. Capture the
-        same poses weekly and every week of Progress comes alive.
+        Weekly front / side / back shots are a solid baseline to see change. Want to track faster?
+        You can take progress photos any day — including every day.
       </Text>
       <TouchableOpacity style={styles.cta} onPress={onTakePhotos} activeOpacity={0.85}>
-        <Text style={styles.ctaText}>Take First Photos</Text>
+        <Text style={styles.ctaText}>Take photos</Text>
       </TouchableOpacity>
     </FadeInCard>
   );

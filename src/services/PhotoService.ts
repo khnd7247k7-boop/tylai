@@ -1,5 +1,9 @@
 /**
  * Progress photo persistence — session metadata in AsyncStorage, images on disk.
+ *
+ * Every capture creates (or replaces same-day) a session; older dates are never pruned.
+ * Photo paths are stored relative to the app documents folder so they survive iOS
+ * container UUID changes across app updates.
  */
 
 import { Directory, File, Paths } from 'expo-file-system';
@@ -9,9 +13,11 @@ import { saveSessionPhotosIfEnabled } from './PhotoCameraRollService';
 import type {
   PhotoPose,
   PhotoSession,
+  PhotoSessionPhotos,
   ProgressPhotoStats,
   ProgressPhotoButtonState,
 } from '../types/progressPhotos';
+import { PHOTO_POSES } from '../types/progressPhotos';
 
 const STORAGE_KEY = 'progressPhotoSessions';
 const PHOTO_DIR = 'progress-photos';
@@ -44,6 +50,83 @@ function weekKey(dateKey: string): string {
   return localDateKey(mondayOfWeek(parseDateKey(dateKey)));
 }
 
+/** Stable relative path written into AsyncStorage (not a full file:// URI). */
+function relativePhotoPath(sessionId: string, pose: PhotoPose): string {
+  return `${PHOTO_DIR}/${sessionId}/${pose}.jpg`;
+}
+
+function photoFile(sessionId: string, pose: PhotoPose): File {
+  const dir = new Directory(Paths.document, PHOTO_DIR, sessionId);
+  return new File(dir, `${pose}.jpg`);
+}
+
+function fileExists(uriOrPath: string): boolean {
+  try {
+    return new File(uriOrPath).exists;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a stored path/URI to a loadable file:// URI for Image components.
+ * Repairs absolute URIs that broke after an iOS app update (container path change).
+ */
+export function resolvePhotoUri(
+  stored: string | null | undefined,
+  sessionId: string,
+  pose: PhotoPose
+): string {
+  const fallback = photoFile(sessionId, pose);
+  if (fallback.exists) return fallback.uri;
+
+  if (stored) {
+    if (fileExists(stored)) return stored;
+
+    // Absolute path with old container UUID — rebuild from relative suffix.
+    const marker = `/${PHOTO_DIR}/`;
+    const idx = stored.indexOf(marker);
+    if (idx >= 0) {
+      const relative = stored.slice(idx + 1); // progress-photos/...
+      const parts = relative.split('/');
+      if (parts.length >= 3) {
+        const sid = parts[1];
+        const poseFile = parts[2]?.replace(/\.jpg$/i, '') as PhotoPose;
+        if (sid && PHOTO_POSES.includes(poseFile)) {
+          const repaired = photoFile(sid, poseFile);
+          if (repaired.exists) return repaired.uri;
+        }
+      }
+    }
+
+    // Relative path from storage
+    if (stored.startsWith(PHOTO_DIR + '/')) {
+      const parts = stored.split('/');
+      const sid = parts[1];
+      const poseFile = parts[2]?.replace(/\.jpg$/i, '') as PhotoPose;
+      if (sid && PHOTO_POSES.includes(poseFile)) {
+        const repaired = photoFile(sid, poseFile);
+        if (repaired.exists) return repaired.uri;
+      }
+    }
+  }
+
+  // Last resort: return expected URI even if missing (Image will error quietly).
+  return fallback.uri;
+}
+
+function hydrateSessionPhotos(session: PhotoSession): PhotoSessionPhotos {
+  return {
+    front: resolvePhotoUri(session.photos?.front, session.id, 'front'),
+    side: resolvePhotoUri(session.photos?.side, session.id, 'side'),
+    back: resolvePhotoUri(session.photos?.back, session.id, 'back'),
+  };
+}
+
+function sessionHasAnyPhotoOnDisk(sessionId: string): boolean {
+  return PHOTO_POSES.some((pose) => photoFile(sessionId, pose).exists);
+}
+
 async function persistPhoto(tempUri: string, sessionId: string, pose: PhotoPose): Promise<string> {
   const dir = new Directory(Paths.document, PHOTO_DIR, sessionId);
   dir.create({ intermediates: true, idempotent: true });
@@ -52,8 +135,16 @@ async function persistPhoto(tempUri: string, sessionId: string, pose: PhotoPose)
   if (!src.exists) {
     throw new Error(`Captured photo not found: ${tempUri}`);
   }
+  if (dest.exists) {
+    try {
+      dest.delete();
+    } catch {
+      // overwrite via copy if delete fails
+    }
+  }
   src.copy(dest);
-  return dest.uri;
+  // Persist relative path so we can re-resolve after container moves.
+  return relativePhotoPath(sessionId, pose);
 }
 
 async function deleteSessionFiles(sessionId: string): Promise<void> {
@@ -63,16 +154,105 @@ async function deleteSessionFiles(sessionId: string): Promise<void> {
   }
 }
 
+/** Discover on-disk session folders that may be missing from AsyncStorage. */
+function recoverSessionsFromDisk(known: PhotoSession[]): PhotoSession[] {
+  const knownIds = new Set(known.map((s) => s.id));
+  const recovered: PhotoSession[] = [];
+  try {
+    const root = new Directory(Paths.document, PHOTO_DIR);
+    if (!root.exists) return recovered;
+    const entries = root.list();
+    for (const entry of entries) {
+      // Prefer directories named ps_*
+      const uri = entry.uri ?? '';
+      const name = uri.replace(/\/$/, '').split('/').pop() ?? '';
+      const isDir =
+        typeof (entry as Directory).list === 'function' ||
+        (entry as { isDirectory?: boolean }).isDirectory === true ||
+        !name.includes('.');
+      if (!isDir || !name.startsWith('ps_') || knownIds.has(name)) continue;
+      if (!sessionHasAnyPhotoOnDisk(name)) continue;
+      const stampMs = Number(name.replace(/^ps_/, ''));
+      const captured = Number.isFinite(stampMs) ? new Date(stampMs) : new Date();
+      const date = localDateKey(captured);
+      recovered.push({
+        id: name,
+        date,
+        timestamp: captured.toISOString(),
+        photos: {
+          front: relativePhotoPath(name, 'front'),
+          side: relativePhotoPath(name, 'side'),
+          back: relativePhotoPath(name, 'back'),
+        },
+      });
+    }
+  } catch (error) {
+    console.warn('[PhotoService] disk recovery failed', error);
+  }
+  return recovered;
+}
+
+function normalizeLoadedSessions(raw: PhotoSession[]): PhotoSession[] {
+  const byId = new Map<string, PhotoSession>();
+  for (const session of raw) {
+    if (!session?.id || !session.date) continue;
+    byId.set(session.id, {
+      ...session,
+      photos: {
+        front: session.photos?.front ?? relativePhotoPath(session.id, 'front'),
+        side: session.photos?.side ?? relativePhotoPath(session.id, 'side'),
+        back: session.photos?.back ?? relativePhotoPath(session.id, 'back'),
+      },
+    });
+  }
+
+  for (const recovered of recoverSessionsFromDisk([...byId.values()])) {
+    if (!byId.has(recovered.id)) byId.set(recovered.id, recovered);
+  }
+
+  return [...byId.values()]
+    .map((session) => ({
+      ...session,
+      photos: hydrateSessionPhotos(session),
+    }))
+    .sort((a, b) => parseDateKey(a.date).getTime() - parseDateKey(b.date).getTime());
+}
+
 export async function loadPhotoSessions(): Promise<PhotoSession[]> {
   const raw = await loadUserData<PhotoSession[]>(STORAGE_KEY);
-  if (!raw?.length) return [];
-  return [...raw].sort(
-    (a, b) => parseDateKey(a.date).getTime() - parseDateKey(b.date).getTime()
-  );
+  const sessions = normalizeLoadedSessions(raw ?? []);
+
+  // If we recovered sessions from disk that weren't in storage, persist them.
+  const rawIds = new Set((raw ?? []).map((s) => s.id));
+  const needsPersist = sessions.some((s) => !rawIds.has(s.id));
+  if (needsPersist) {
+    await saveUserData(
+      STORAGE_KEY,
+      sessions.map((s) => ({
+        ...s,
+        photos: {
+          front: relativePhotoPath(s.id, 'front'),
+          side: relativePhotoPath(s.id, 'side'),
+          back: relativePhotoPath(s.id, 'back'),
+        },
+      }))
+    );
+  }
+
+  return sessions;
 }
 
 async function writeSessions(sessions: PhotoSession[]): Promise<void> {
-  await saveUserData(STORAGE_KEY, sessions);
+  // Always persist relative paths (not ephemeral absolute URIs).
+  const toStore = sessions.map((s) => ({
+    ...s,
+    photos: {
+      front: relativePhotoPath(s.id, 'front'),
+      side: relativePhotoPath(s.id, 'side'),
+      back: relativePhotoPath(s.id, 'back'),
+    },
+  }));
+  await saveUserData(STORAGE_KEY, toStore);
   notifyUserDataReady();
 }
 
@@ -81,17 +261,17 @@ export async function getSessionForDate(dateKey: string): Promise<PhotoSession |
   return sessions.find((s) => s.date === dateKey) ?? null;
 }
 
+/**
+ * Save a new progress session for today.
+ * Replaces only today's session if one exists — all previous dates stay stored.
+ */
 export async function createSessionFromCaptures(
   captures: Record<PhotoPose, string>
 ): Promise<PhotoSession> {
   const date = localDateKey();
-  const existing = await getSessionForDate(date);
-  if (existing) {
-    await deletePhotoSession(existing.id);
-  }
-
   const id = `ps_${Date.now()}`;
-  const photos = {
+
+  const photosRelative = {
     front: await persistPhoto(captures.front, id, 'front'),
     side: await persistPhoto(captures.side, id, 'side'),
     back: await persistPhoto(captures.back, id, 'back'),
@@ -101,20 +281,38 @@ export async function createSessionFromCaptures(
     id,
     date,
     timestamp: new Date().toISOString(),
-    photos,
+    photos: photosRelative,
   };
 
-  const sessions = await loadPhotoSessions();
-  sessions.push(session);
-  await writeSessions(sessions);
-  await saveSessionPhotosIfEnabled([photos.front, photos.side, photos.back]);
-  return session;
+  const existing = await loadUserData<PhotoSession[]>(STORAGE_KEY);
+  const prior = Array.isArray(existing) ? existing : [];
+  const replacedToday = prior.filter((s) => s.date === date);
+  for (const old of replacedToday) {
+    if (old.id !== id) await deleteSessionFiles(old.id);
+  }
+
+  const kept = prior.filter((s) => s.date !== date);
+  kept.push(session);
+  await writeSessions(kept);
+
+  const absoluteUris = {
+    front: resolvePhotoUri(photosRelative.front, id, 'front'),
+    side: resolvePhotoUri(photosRelative.side, id, 'side'),
+    back: resolvePhotoUri(photosRelative.back, id, 'back'),
+  };
+  await saveSessionPhotosIfEnabled([absoluteUris.front, absoluteUris.side, absoluteUris.back]);
+
+  return {
+    ...session,
+    photos: absoluteUris,
+  };
 }
 
 export async function deletePhotoSession(sessionId: string): Promise<void> {
   await deleteSessionFiles(sessionId);
-  const sessions = await loadPhotoSessions();
-  await writeSessions(sessions.filter((s) => s.id !== sessionId));
+  const sessions = await loadUserData<PhotoSession[]>(STORAGE_KEY);
+  const next = (Array.isArray(sessions) ? sessions : []).filter((s) => s.id !== sessionId);
+  await writeSessions(next);
 }
 
 export function computeWeeklyPhotoStreak(sessions: PhotoSession[]): number {
@@ -143,14 +341,14 @@ export function computePhotoStats(sessions: PhotoSession[]): ProgressPhotoStats 
   const weeklyStreak = computeWeeklyPhotoStreak(sessions);
 
   let buttonState: ProgressPhotoButtonState = 'take';
-  let buttonLabel = "Take Today's Photos";
+  let buttonLabel = 'Take photos';
 
   if (hasSessionToday) {
-    buttonState = 'view';
-    buttonLabel = "View Today's Photos";
+    buttonState = 'retake';
+    buttonLabel = 'Take new photos';
   } else if (lastPhotoDate && parseDateKey(nextRecommendedDate) <= parseDateKey(today)) {
     buttonState = 'take';
-    buttonLabel = "Take Today's Photos";
+    buttonLabel = 'Take weekly photos';
   }
 
   return {
@@ -164,7 +362,7 @@ export function computePhotoStats(sessions: PhotoSession[]): ProgressPhotoStats 
 }
 
 export function getRetakeButtonLabel(): string {
-  return "Retake Today's Photos";
+  return 'Retake today’s photos';
 }
 
 export function formatDisplayDate(dateKey: string | null): string {
@@ -226,12 +424,17 @@ export function formatSessionStamp(session: PhotoSession): string {
   return formatDisplayDate(session.date);
 }
 
+/** Timeline node label — dates so users can scroll back through history. */
 export function formatTimelineLabel(
   session: PhotoSession,
   index: number,
   isToday: boolean
 ): string {
   if (isToday) return 'Today';
+  const d = parseDateKey(session.date);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
   return `Week ${index + 1}`;
 }
 

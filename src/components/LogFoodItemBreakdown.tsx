@@ -11,6 +11,8 @@ import {
 type Props = {
   items: LogFoodItem[];
   onChange: (items: LogFoodItem[]) => void;
+  /** When the user removes the last remaining item (e.g. delete the whole meal). */
+  onRemoveLastItem?: () => void;
 };
 
 /** Human-friendly quantity string (supports decimals like 0.5 / 1.5). */
@@ -46,7 +48,7 @@ function parseMacro(text: string): number {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : 0;
 }
 
-export default function LogFoodItemBreakdown({ items, onChange }: Props) {
+export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem }: Props) {
   const totals = sumLogFoodItemMacros(items);
   /** Draft qty text per item so partial decimals ("1.", ".5") don't snap back to 1. */
   const [qtyDraftById, setQtyDraftById] = useState<Record<string, string>>({});
@@ -108,7 +110,10 @@ export default function LogFoodItemBreakdown({ items, onChange }: Props) {
   };
 
   const removeItem = (id: string) => {
-    if (items.length <= 1) return;
+    if (items.length <= 1) {
+      onRemoveLastItem?.();
+      return;
+    }
     onChange(items.filter((item) => item.id !== id));
   };
 
@@ -132,15 +137,14 @@ export default function LogFoodItemBreakdown({ items, onChange }: Props) {
           <View key={item.id} style={styles.row}>
             <View style={styles.rowHeader}>
               <Text style={styles.rowIndex}>#{index + 1}</Text>
-              {items.length > 1 ? (
-                <TouchableOpacity
-                  onPress={() => removeItem(item.id)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityLabel={`Remove ${item.name}`}
-                >
-                  <Text style={styles.removeText}>Remove</Text>
-                </TouchableOpacity>
-              ) : null}
+              <TouchableOpacity
+                onPress={() => removeItem(item.id)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${item.name}`}
+              >
+                <Text style={styles.removeText}>Remove</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.fieldLabel}>Food</Text>

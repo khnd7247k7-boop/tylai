@@ -38,9 +38,18 @@ class UserDataInitializer {
       }
 
       // Pull saved workouts (and other synced keys) from Firestore so devices share plans.
+      // Cap wait time — offline Firestore getDoc can hang and used to block app boot.
       try {
         const { syncCloudSyncedKeysFromServer } = await import('./userCloudSync');
-        const cloud = await syncCloudSyncedKeysFromServer();
+        const cloud = await Promise.race([
+          syncCloudSyncedKeysFromServer(),
+          new Promise<{ updatedKeys: string[] }>((resolve) =>
+            setTimeout(() => {
+              console.warn('[UserDataInitializer] Cloud sync timed out; continuing with local data');
+              resolve({ updatedKeys: [] });
+            }, 8000)
+          ),
+        ]);
         if (cloud.updatedKeys.length > 0) {
           console.log(
             `[UserDataInitializer] Synced from cloud: ${cloud.updatedKeys.join(', ')}`

@@ -547,4 +547,136 @@
       source: "landing-page"
     };
   });
+
+  /* Apparel shop: gallery + Stripe Payment Link checkout */
+  (function wireApparelShop() {
+    var buyBtn = document.getElementById("apparelBuyBtn");
+    if (!buyBtn) return;
+
+    // Paste your Stripe Payment Link here (Dashboard → Payment links).
+    // Enable shipping address collection + adjustable quantity on the link.
+    // Optional: add a custom field named "Size" in Stripe for fulfillment notes.
+    // For full automation (no manual re-orders), connect Printful/Printify via
+    // Stripe webhook → create print order (see comments in response / docs).
+    var APPAREL_STRIPE_PAYMENT_LINK =
+      window.TYL_APPAREL_STRIPE_LINK ||
+      ""; // e.g. "https://buy.stripe.com/xxxxx"
+
+    var UNIT_PRICE = 34.99;
+    var state = { size: "M", color: "Cream", qty: 1 };
+
+    var mainImage = document.getElementById("apparelMainImage");
+    var colorLabel = document.getElementById("apparelColorLabel");
+    var qtyInput = document.getElementById("apparelQty");
+    var buyError = document.getElementById("apparelBuyError");
+    var priceEl = document.getElementById("apparelPrice");
+
+    function formatMoney(n) {
+      return "$" + n.toFixed(2);
+    }
+
+    function syncBuyLabel() {
+      var total = UNIT_PRICE * state.qty;
+      buyBtn.textContent = "Buy now — " + formatMoney(total);
+      if (priceEl) priceEl.textContent = formatMoney(UNIT_PRICE);
+    }
+
+    document.querySelectorAll(".apparel-thumb").forEach(function (thumb) {
+      thumb.addEventListener("click", function () {
+        document.querySelectorAll(".apparel-thumb").forEach(function (t) {
+          t.classList.remove("is-active");
+          t.setAttribute("aria-pressed", "false");
+        });
+        thumb.classList.add("is-active");
+        thumb.setAttribute("aria-pressed", "true");
+        if (mainImage) {
+          mainImage.src = thumb.getAttribute("data-src");
+          mainImage.alt = thumb.getAttribute("data-alt") || mainImage.alt;
+        }
+      });
+    });
+
+    document.querySelectorAll(".apparel-swatch:not(:disabled)").forEach(function (swatch) {
+      swatch.addEventListener("click", function () {
+        document.querySelectorAll(".apparel-swatch").forEach(function (s) {
+          s.classList.remove("is-active");
+          s.setAttribute("aria-pressed", "false");
+        });
+        swatch.classList.add("is-active");
+        swatch.setAttribute("aria-pressed", "true");
+        state.color = swatch.getAttribute("data-color") || "Cream";
+        if (colorLabel) colorLabel.textContent = state.color;
+      });
+    });
+
+    document.querySelectorAll(".apparel-size").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".apparel-size").forEach(function (b) {
+          b.classList.remove("is-active");
+          b.setAttribute("aria-pressed", "false");
+        });
+        btn.classList.add("is-active");
+        btn.setAttribute("aria-pressed", "true");
+        state.size = btn.getAttribute("data-size") || "M";
+      });
+    });
+
+    function clampQty(n) {
+      n = parseInt(n, 10);
+      if (isNaN(n) || n < 1) n = 1;
+      if (n > 10) n = 10;
+      return n;
+    }
+
+    function setQty(n) {
+      state.qty = clampQty(n);
+      if (qtyInput) qtyInput.value = String(state.qty);
+      syncBuyLabel();
+    }
+
+    var minus = document.getElementById("apparelQtyMinus");
+    var plus = document.getElementById("apparelQtyPlus");
+    if (minus) minus.addEventListener("click", function () { setQty(state.qty - 1); });
+    if (plus) plus.addEventListener("click", function () { setQty(state.qty + 1); });
+    if (qtyInput) {
+      qtyInput.addEventListener("change", function () {
+        setQty(qtyInput.value);
+      });
+    }
+
+    buyBtn.addEventListener("click", function () {
+      if (buyError) {
+        buyError.hidden = true;
+        buyError.textContent = "";
+      }
+      if (!APPAREL_STRIPE_PAYMENT_LINK) {
+        if (buyError) {
+          buyError.hidden = false;
+          buyError.textContent =
+            "Stripe Payment Link not configured yet. Create a product Payment Link in Stripe, then set TYL_APPAREL_STRIPE_LINK (or APPAREL_STRIPE_PAYMENT_LINK in site.js).";
+        }
+        return;
+      }
+      var url;
+      try {
+        url = new URL(APPAREL_STRIPE_PAYMENT_LINK);
+      } catch (e) {
+        if (buyError) {
+          buyError.hidden = false;
+          buyError.textContent = "Invalid Stripe Payment Link URL.";
+        }
+        return;
+      }
+      // Pass size/color/qty so you can see them in Stripe (Payment Link → client_reference_id).
+      url.searchParams.set(
+        "client_reference_id",
+        ["tee", state.color, state.size, "qty" + state.qty].join("-").replace(/\s+/g, "")
+      );
+      // Prefill quantity when the Payment Link allows adjustable quantity.
+      url.searchParams.set("prefilled_quantity", String(state.qty));
+      window.location.href = url.toString();
+    });
+
+    syncBuyLabel();
+  })();
 })();

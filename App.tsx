@@ -486,12 +486,13 @@ function AppInner() {
       
       const unsubscribe = onAuthStateChanged(auth, async (user) => {
         if (user) {
-          // User is signed in
+          // User is signed in — show the app immediately; sync can finish in the background.
           console.log('[App] User authenticated:', user.uid);
           setIsLoggedIn(true);
           setCurrentScreen('dashboard');
           setNavigationHistory(['login', 'dashboard']);
-          
+          setAuthBootstrapped(true);
+
           // Save email to profile for future logins
           try {
             const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
@@ -507,48 +508,48 @@ function AppInner() {
           } catch (error) {
             console.error('[App] Error saving email to profile:', error);
           }
-          
-          // Initialize user data automatically
-          try {
-            const { keysCopied } = await UserDataInitializer.initializeUserData();
-            console.log('[App] User data initialized successfully');
-            if (keysCopied > 0) {
-              showToast(
-                `Restored ${keysCopied} saved item(s) from this device.`,
-                'success'
-              );
-            }
-          } catch (error) {
-            console.error('[App] Error initializing user data:', error);
-          }
-          
-          // Request HealthKit access so TYLAI appears under Health → Sharing → Apps.
-          // Safe to call every launch: iOS only shows the sheet when status is not determined.
-          try {
-            const { isAnyExpoHealthMetricEnabled } = await import(
-              './src/utils/healthDataPermissions'
-            );
-            if (await isAnyExpoHealthMetricEnabled()) {
-              console.log('[App] Requesting health permissions for Apple Health sync');
-              const hasPermissions = await HealthService.requestPermissions();
-              if (hasPermissions) {
-                console.log('[App] HealthKit authorization flow completed');
-              } else {
-                console.log('[App] Health permissions not available (Expo Go or HealthKit off)');
+
+          // Initialize user data / HealthKit without blocking the boot screen.
+          // Firestore can hang when the simulator briefly reports no internet.
+          void (async () => {
+            try {
+              const { keysCopied } = await UserDataInitializer.initializeUserData();
+              console.log('[App] User data initialized successfully');
+              if (keysCopied > 0) {
+                showToast(
+                  `Restored ${keysCopied} saved item(s) from this device.`,
+                  'success'
+                );
               }
+            } catch (error) {
+              console.error('[App] Error initializing user data:', error);
             }
-          } catch (error) {
-            console.error('[App] Error requesting health permissions:', error);
-            // Fail silently - health permissions are optional
-          }
+
+            try {
+              const { isAnyExpoHealthMetricEnabled } = await import(
+                './src/utils/healthDataPermissions'
+              );
+              if (await isAnyExpoHealthMetricEnabled()) {
+                console.log('[App] Requesting health permissions for Apple Health sync');
+                const hasPermissions = await HealthService.requestPermissions();
+                if (hasPermissions) {
+                  console.log('[App] HealthKit authorization flow completed');
+                } else {
+                  console.log('[App] Health permissions not available (Expo Go or HealthKit off)');
+                }
+              }
+            } catch (error) {
+              console.error('[App] Error requesting health permissions:', error);
+            }
+          })();
         } else {
           // User is signed out
           console.log('[App] User signed out');
           setIsLoggedIn(false);
           setCurrentScreen('login');
           UserDataInitializer.reset();
+          setAuthBootstrapped(true);
         }
-        setAuthBootstrapped(true);
       }, (error) => {
         console.error('[App] Firebase Auth error:', error);
         // Continue without auth if there's an error
@@ -913,13 +914,13 @@ function AppInner() {
 
   const handleNavigateToWorkout = () => {
     openedFromMoreMenuRef.current = false;
-    navigateToScreen('workout');
+    navigatePrimaryTab('workout');
   };
 
   const handleNavigateToFitness = () => {
     setFitnessSyncedTab('workouts');
     setFitnessSurfaceNonce((n) => n + 1);
-    navigateToScreen('fitness');
+    navigatePrimaryTab('fitness');
   };
 
   const handleStartTodayWorkout = () => {
@@ -927,21 +928,21 @@ function AppInner() {
     setTourFitnessIntent({ id: Date.now(), startTodayWorkout: true });
     setFitnessSyncedTab('workouts');
     setFitnessSurfaceNonce((n) => n + 1);
-    navigateToScreen('fitness');
+    navigatePrimaryTab('fitness');
   };
 
   const handleNavigateToLogFood = () => {
     setTourFitnessIntent({ id: Date.now(), closeAll: true });
     setFitnessSyncedTab('nutrition');
     setFitnessSurfaceNonce((n) => n + 1);
-    navigateToScreen('fitness');
+    navigatePrimaryTab('fitness');
     setTourLogFoodIntent({ id: Date.now(), open: true });
   };
 
   const handleNavigateToFitnessHistory = () => {
     setFitnessSyncedTab('history');
     setFitnessSurfaceNonce((n) => n + 1);
-    navigateToScreen('fitness');
+    navigatePrimaryTab('fitness');
   };
 
   const handleNavigateToMental = () => {
@@ -1013,11 +1014,17 @@ function AppInner() {
     if (wasEdit) {
       return;
     }
+    void openAdvancedNutritionIfNeeded();
     void isPendingFirstWorkoutPlan().then((pending) => {
       setInitialPlanSetupPending(pending);
+      if (pending) {
+        // User opted in to generated plans — show the 3 options flow.
+        navigateToScreen('workout');
+      } else {
+        // Profile complete; let them explore / build their own workouts.
+        navigateToScreen('dashboard');
+      }
     });
-    void openAdvancedNutritionIfNeeded();
-    navigateToScreen('workout');
   }, [onboardingWizardMode, openAdvancedNutritionIfNeeded]);
 
   const handleOnboardingWizardCancel = useCallback(() => {
@@ -1059,7 +1066,7 @@ function AppInner() {
   };
 
   const navigateToScreen = (screen: 'login' | LoggedInScreen) => {
-    setNavigationHistory(prev => {
+    setNavigationHistory((prev) => {
       // Don't add the same screen twice in a row
       if (prev[prev.length - 1] !== screen) {
         return [...prev, screen];
@@ -1068,6 +1075,18 @@ function AppInner() {
     });
     setCurrentScreen(screen);
   };
+
+  /** Bottom-tab / primary destinations — always push so Back returns to the prior page. */
+  const navigatePrimaryTab = useCallback((screen: LoggedInScreen) => {
+    openedFromMoreMenuRef.current = false;
+    setNavigationHistory((prev) => {
+      if (prev[prev.length - 1] !== screen) {
+        return [...prev, screen];
+      }
+      return prev;
+    });
+    setCurrentScreen(screen);
+  }, []);
 
   const returnToMoreHub = useCallback(() => {
     openedFromMoreMenuRef.current = false;
@@ -1093,6 +1112,20 @@ function AppInner() {
 
     if (navigationHistory.length > 1) {
       const previousScreen = navigationHistory[navigationHistory.length - 2];
+      // Never pop back to the login screen while signed in.
+      if (previousScreen === 'login') {
+        if (currentScreen !== 'dashboard') {
+          setNavigationHistory((prev) => {
+            const withoutCurrent = prev.slice(0, -1);
+            if (withoutCurrent[withoutCurrent.length - 1] === 'dashboard') {
+              return withoutCurrent;
+            }
+            return [...withoutCurrent, 'dashboard'];
+          });
+          setCurrentScreen('dashboard');
+        }
+        return;
+      }
       setNavigationHistory((prev) => prev.slice(0, -1));
       setCurrentScreen(previousScreen);
       return;
@@ -1103,7 +1136,9 @@ function AppInner() {
       return;
     }
 
-    setCurrentScreen('dashboard');
+    if (currentScreen !== 'dashboard') {
+      setCurrentScreen('dashboard');
+    }
   }, [currentScreen, navigationHistory, returnToMoreHub]);
 
   const openAppGuide = () => {
@@ -1259,25 +1294,23 @@ function AppInner() {
     const handleMainBottomTabPress = (tab: MainBottomTabId) => {
       switch (tab) {
         case 'dashboard':
-          navigateToScreen('dashboard');
+          navigatePrimaryTab('dashboard');
           break;
         case 'workouts':
           setFitnessSyncedTab('workouts');
           setFitnessSurfaceNonce((n) => n + 1);
-          navigateToScreen('fitness');
+          navigatePrimaryTab('fitness');
           break;
         case 'nutrition':
           setFitnessSyncedTab('nutrition');
           setFitnessSurfaceNonce((n) => n + 1);
-          navigateToScreen('fitness');
+          navigatePrimaryTab('fitness');
           break;
         case 'progress':
-          openedFromMoreMenuRef.current = false;
-          navigateToScreen('progress');
+          navigatePrimaryTab('progress');
           break;
         case 'more':
-          openedFromMoreMenuRef.current = false;
-          navigateToScreen('moreHub');
+          navigatePrimaryTab('moreHub');
           break;
       }
     };

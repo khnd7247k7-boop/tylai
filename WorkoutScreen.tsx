@@ -325,10 +325,25 @@ export default function WorkoutScreen({
   const handleWorkoutOptionsBack = () => {
     if (initialSetupPending) {
       Alert.alert(
-        'Pick a plan to finish setup',
-        'Swipe through the options and tap Save Plan (or Save & Start Workout). You can also tap Generate again if you want fresh options.',
-        [{ text: 'OK' }]
+        'Skip plan for now?',
+        'You can generate personalized plans anytime from Workouts, or build your own.',
+        [
+          { text: 'Keep browsing plans', style: 'cancel' },
+          {
+            text: 'Skip for now',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setShowWorkoutOptions(false);
+                await clearPendingFirstWorkoutPlan();
+                onPlanSetupComplete?.();
+                onBack();
+              })();
+            },
+          },
+        ]
       );
+      return;
     }
     setShowWorkoutOptions(false);
   };
@@ -2678,9 +2693,9 @@ export default function WorkoutScreen({
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {initialSetupPending ? (
           <View style={styles.setupBanner}>
-            <Text style={styles.setupBannerTitle}>Last step: save your workout plan</Text>
+            <Text style={styles.setupBannerTitle}>Choose a personalized plan</Text>
             <Text style={styles.setupBannerText}>
-              We generated options from your onboarding answers. Pick one and tap Save Plan to finish setup.
+              We generated options from your onboarding answers. Pick one and tap Save Plan, or skip and build your own anytime.
             </Text>
             <TouchableOpacity onPress={handleSkipInitialSetup} style={styles.setupSkipLink}>
               <Text style={styles.setupSkipLinkText}>Skip for now</Text>

@@ -46,7 +46,7 @@ export default function ProgressPhotosCard({
   return (
     <FadeInCard style={styles.card} delay={animate ? 80 : 0}>
       <Text style={styles.title}>Progress Photos</Text>
-      <Text style={styles.subtitle}>Your visual transformation, week by week</Text>
+      <Text style={styles.subtitle}>Weekly baseline — daily anytime you want</Text>
 
       <View style={styles.tiles}>
         <SummaryTile label="Last Photo" value={formatRelativePhotoAge(stats.lastPhotoDate)} />

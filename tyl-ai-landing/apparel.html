@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="TYL Apparel — performance meets everyday wear from the TYL AI brand. Request custom designs." />
+  <meta name="description" content="TYL Apparel — Essential Tee. Minimal gear. Maximum purpose." />
   <title>Apparel — TYL</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <link rel="stylesheet" href="styles.css?v=24" />
 </head>
 <body data-page="apparel.html">
   <div class="wrap">
@@ -20,6 +20,7 @@
         <li><a href="features.html">Features</a></li>
         <li><a href="index.html#app-preview">App Preview</a></li>
         <li><a href="index.html#about">About</a></li>
+        <li><a href="apparel.html">Apparel</a></li>
         <li><a href="join.html">Pricing</a></li>
         <li><a href="index.html#faq">FAQ</a></li>
       </ul>
@@ -29,133 +30,174 @@
       </div>
     </header>
 
-  <main class="page-main apparel-page">
-    <p class="section-title">TYL Apparel</p>
-    <h1 class="about-head">Performance meets everyday wear</h1>
-    <p class="about-lead">Explore the TYL Apparel line — designed to match the energy you bring to training and life.</p>
-    <div class="apparel-logos">
-      <div class="on-light"><img src="tyl-apparel-01.png" alt="TYL Apparel logo on white" width="200" height="120" loading="lazy" /></div>
-      <div class="on-dark"><img src="tyl-apparel-02.png" alt="TYL Apparel logo on black" width="200" height="120" loading="lazy" /></div>
-    </div>
-    <div class="apparel-actions">
-      <button type="button" class="btn-solid" id="apparelRequestBtn">Request a custom design</button>
-      <button type="button" class="btn-outline" id="apparelBtn">See what clothing we offer</button>
-    </div>
-    <p class="apparel-actions-hint">Have a logo, pattern, or idea in mind? Tell us your size, color, and design — we’ll follow up with pricing and next steps.</p>
-  </main>
+    <main class="page-main apparel-shop">
+      <section class="apparel-hero" aria-label="TYL Apparel">
+        <div class="apparel-hero-bg" aria-hidden="true">
+          <img src="apparel-tee-back.jpg" alt="" width="1080" height="1440" />
+        </div>
+        <div class="apparel-hero-copy">
+          <p class="eyebrow">TYL Apparel</p>
+          <h1>Minimal gear.<br />Maximum purpose.</h1>
+          <div class="apparel-hero-actions">
+            <a class="btn-solid" href="#current-drop">Shop the current drop</a>
+            <a class="btn-text" href="why-tyl-works.html">Learn about the brand →</a>
+          </div>
+        </div>
+      </section>
 
-  <footer class="site-footer">
-    <div class="footer-grid">
-      <div class="footer-brand"><strong>TYL</strong><p>Transform Your Life LLC</p></div>
-      <div class="footer-links">
-        <a href="legal.html#privacy-policy">Privacy</a>
-        <a href="legal.html#terms-of-service">Terms</a>
-        <a href="#" id="contactOpen">Contact</a>
-      </div>
-    </div>
-    <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved. Transform Your Life LLC owns the TYL app, apparel, and all related products and content.</p>
-  </footer>
-  </div>
+      <section class="apparel-product" id="current-drop">
+        <div class="apparel-media">
+          <div class="apparel-thumbs" role="tablist" aria-label="Product photos">
+            <button type="button" class="apparel-thumb is-active" data-src="apparel-tee-front.jpg" data-alt="Cream TYL Essential Tee — front" aria-label="Front view" aria-pressed="true">
+              <img src="apparel-tee-front-thumb.png" alt="" width="80" height="100" />
+            </button>
+            <button type="button" class="apparel-thumb" data-src="apparel-tee-back.jpg" data-alt="Cream TYL Essential Tee — back" aria-label="Back view" aria-pressed="false">
+              <img src="apparel-tee-back-thumb.png" alt="" width="80" height="100" />
+            </button>
+            <button type="button" class="apparel-thumb" data-src="tyl-apparel-01.png" data-alt="TYL Apparel logo on white" aria-label="Logo mark light" aria-pressed="false">
+              <img src="tyl-apparel-01.png" alt="" width="80" height="100" />
+            </button>
+            <button type="button" class="apparel-thumb" data-src="tyl-apparel-02.png" data-alt="TYL Apparel logo on black" aria-label="Logo mark dark" aria-pressed="false">
+              <img src="tyl-apparel-02.png" alt="" width="80" height="100" />
+            </button>
+          </div>
+          <figure class="apparel-main-shot">
+            <img
+              id="apparelMainImage"
+              src="apparel-tee-front.jpg"
+              alt="Cream TYL Essential Tee — front"
+              width="1080"
+              height="1440"
+              loading="eager"
+            />
+          </figure>
+        </div>
 
-  <div class="modal-overlay" id="apparelModal" role="dialog" aria-modal="true" aria-labelledby="apparelModalTitle">
-    <div class="modal">
-      <button type="button" class="modal-close" id="apparelClose" aria-label="Close">×</button>
-      <h3 id="apparelModalTitle">TYL Apparel</h3>
-      <p>The full storefront is coming soon. Want something made for you now? Use the custom design request form.</p>
-      <button type="button" class="btn-solid" id="apparelRequestFromModalBtn">Request a custom design</button>
-      <button type="button" class="btn-outline contact-open-inline" style="margin-top:10px;width:100%;">General contact</button>
-    </div>
-  </div>
+        <div class="apparel-buy">
+          <p class="apparel-drop-label">Current drop · 001</p>
+          <h2>TYL Essential Tee</h2>
+          <p class="apparel-price" id="apparelPrice">$34.99</p>
+          <p class="apparel-desc">
+            Heavyweight cream tee with the TYL Apparel chest mark and FOCUS back print.
+            Built for training days and everything after.
+          </p>
 
-  <div class="apparel-drawer" id="apparelRequestModal" role="dialog" aria-modal="true" aria-labelledby="apparelRequestModalTitle" aria-hidden="true">
-    <div class="apparel-drawer-backdrop" data-drawer-close="apparelRequestModal" aria-hidden="true"></div>
-    <div class="apparel-drawer-panel">
-      <div class="apparel-drawer-header">
-        <h3 id="apparelRequestModalTitle">Custom apparel request</h3>
-        <button type="button" class="apparel-drawer-close" id="apparelRequestClose" aria-label="Close">×</button>
+          <div class="apparel-option">
+            <div class="apparel-option-head">
+              <span>Color</span>
+              <span class="apparel-option-value" id="apparelColorLabel">Cream</span>
+            </div>
+            <div class="apparel-swatches" role="group" aria-label="Color">
+              <button type="button" class="apparel-swatch is-active" data-color="Cream" style="--swatch:#f3eee6" aria-label="Cream" aria-pressed="true"></button>
+              <button type="button" class="apparel-swatch" data-color="Black" style="--swatch:#111" aria-label="Black" aria-pressed="false" disabled title="Coming soon"></button>
+              <button type="button" class="apparel-swatch" data-color="White" style="--swatch:#f5f5f5" aria-label="White" aria-pressed="false" disabled title="Coming soon"></button>
+            </div>
+          </div>
+
+          <div class="apparel-option">
+            <div class="apparel-option-head">
+              <span>Size</span>
+              <a class="apparel-size-guide" href="#size-guide">Size guide</a>
+            </div>
+            <div class="apparel-sizes" role="group" aria-label="Size">
+              <button type="button" class="apparel-size" data-size="S" aria-pressed="false">S</button>
+              <button type="button" class="apparel-size is-active" data-size="M" aria-pressed="true">M</button>
+              <button type="button" class="apparel-size" data-size="L" aria-pressed="false">L</button>
+              <button type="button" class="apparel-size" data-size="XL" aria-pressed="false">XL</button>
+              <button type="button" class="apparel-size" data-size="XXL" aria-pressed="false">XXL</button>
+            </div>
+          </div>
+
+          <div class="apparel-option">
+            <div class="apparel-option-head"><span>Qty</span></div>
+            <div class="apparel-qty">
+              <button type="button" id="apparelQtyMinus" aria-label="Decrease quantity">−</button>
+              <input type="number" id="apparelQty" value="1" min="1" max="10" inputmode="numeric" aria-label="Quantity" />
+              <button type="button" id="apparelQtyPlus" aria-label="Increase quantity">+</button>
+            </div>
+          </div>
+
+          <button type="button" class="btn-solid apparel-buy-btn" id="apparelBuyBtn">
+            Buy now — $34.99
+          </button>
+          <p class="apparel-buy-error" id="apparelBuyError" hidden role="alert"></p>
+          <p class="apparel-trust">Secure checkout via Stripe · Ships to your door · Free shipping on orders $75+</p>
+
+          <p class="apparel-size-guide-note" id="size-guide">
+            True-to-size oversized fit. Size up for a roomier look. Measurements coming soon — questions?
+            <a href="#" id="contactOpenInline" class="contact-open-inline">Contact us</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="apparel-features" aria-label="Why TYL Apparel">
+        <article>
+          <h3>Premium quality</h3>
+          <p>Heavyweight fabric that holds shape wash after wash.</p>
+        </article>
+        <article>
+          <h3>Built to perform</h3>
+          <p>Made for training, travel, and everyday wear.</p>
+        </article>
+        <article>
+          <h3>All-day comfort</h3>
+          <p>Soft hand-feel with a relaxed, modern cut.</p>
+        </article>
+        <article>
+          <h3>Purpose driven</h3>
+          <p>Every piece carries the Transform Your Life mark.</p>
+        </article>
+      </section>
+
+      <section class="apparel-mission">
+        <div>
+          <p class="section-title">More than apparel</p>
+          <h2>Gear that matches the work you put in.</h2>
+          <p>
+            TYL Apparel is part of Transform Your Life LLC — the same brand behind the coaching app.
+            Minimal design. Clear purpose. Built to show up with you.
+          </p>
+          <a class="btn-outline" href="why-tyl-works.html">Learn our story</a>
+        </div>
+        <div class="apparel-mission-visual">
+          <img src="apparel-tee-back.jpg" alt="TYL Essential Tee back print — FOCUS" width="1080" height="1440" loading="lazy" />
+        </div>
+      </section>
+
+      <section class="apparel-future">
+        <p class="section-title">Future drops</p>
+        <p class="apparel-future-lead">More is coming. Stay ready.</p>
+        <div class="apparel-future-grid">
+          <article class="apparel-future-card">
+            <img src="tyl-apparel-02.png" alt="" loading="lazy" />
+            <h3>Performance collection</h3>
+            <span class="apparel-soon">Coming soon</span>
+          </article>
+          <article class="apparel-future-card">
+            <img src="tyl-apparel-01.png" alt="" loading="lazy" />
+            <h3>Heavyweight collection</h3>
+            <span class="apparel-soon">Coming soon</span>
+          </article>
+          <article class="apparel-future-card">
+            <img src="app-icon.png" alt="" loading="lazy" />
+            <h3>Lifestyle collection</h3>
+            <span class="apparel-soon">Coming soon</span>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div class="footer-brand"><strong>TYL</strong><p>Transform Your Life LLC</p></div>
+        <div class="footer-links">
+          <a href="legal.html#privacy-policy">Privacy</a>
+          <a href="legal.html#terms-of-service">Terms</a>
+          <a href="#" id="contactOpen">Contact</a>
+        </div>
       </div>
-      <div class="apparel-drawer-scroll" id="apparelRequestScroll">
-        <p class="form-notice">Tell us what you want printed or embroidered. Upload a reference image, describe your design, or both. We’ll email you back with next steps.</p>
-        <form id="apparelRequestForm" novalidate>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="apparelName">Name</label>
-            <input type="text" id="apparelName" name="name" autocomplete="name" required placeholder="Your name" />
-          </div>
-          <div class="form-field">
-            <label for="apparelEmail">Email</label>
-            <input type="email" id="apparelEmail" name="email" autocomplete="email" required placeholder="you@example.com" />
-          </div>
-        </div>
-        <div class="form-field">
-          <label for="apparelPhone">Phone <span class="label-optional">(optional)</span></label>
-          <input type="tel" id="apparelPhone" name="phone" autocomplete="tel" placeholder="For order updates" />
-        </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="apparelGarment">Garment type</label>
-            <select id="apparelGarment" name="garmentType" required>
-              <option value="T-shirt" selected>T-shirt</option>
-              <option value="Hoodie">Hoodie</option>
-              <option value="Tank top">Tank top</option>
-              <option value="Long sleeve">Long sleeve</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div class="form-field">
-            <label for="apparelSize">T-shirt / garment size</label>
-            <select id="apparelSize" name="size" required>
-              <option value="" disabled selected>Select size</option>
-              <option value="XS">XS</option>
-              <option value="S">S</option>
-              <option value="M">M</option>
-              <option value="L">L</option>
-              <option value="XL">XL</option>
-              <option value="2XL">2XL</option>
-              <option value="3XL">3XL</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-field">
-            <label for="apparelColor">Color</label>
-            <input type="text" id="apparelColor" name="color" required placeholder="e.g. Black, Navy, Heather gray" />
-          </div>
-          <div class="form-field">
-            <label for="apparelQuantity">Quantity</label>
-            <input type="number" id="apparelQuantity" name="quantity" min="1" max="99" value="1" required />
-          </div>
-        </div>
-        <div class="form-field">
-          <label for="apparelPlacement">Design placement</label>
-          <select id="apparelPlacement" name="placement">
-            <option value="Front" selected>Front</option>
-            <option value="Back">Back</option>
-            <option value="Front & back">Front &amp; back</option>
-            <option value="Sleeve">Sleeve</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label for="apparelDesignFile">Reference image <span class="label-optional">(optional if you describe below)</span></label>
-          <input type="file" id="apparelDesignFile" name="designFile" accept="image/jpeg,image/png,image/webp,image/gif" />
-          <p class="form-hint" id="apparelDesignFileHint">JPG, PNG, WebP, or GIF · max 5 MB</p>
-        </div>
-        <div class="form-field">
-          <label for="apparelDesignDescription">Describe your pattern / design</label>
-          <textarea id="apparelDesignDescription" name="designDescription" placeholder="Colors, text, logo placement, inspiration links, or anything we should know to produce your design."></textarea>
-          <p class="form-hint">Required if you don’t upload a reference image.</p>
-        </div>
-        <div class="form-field">
-          <label for="apparelNotes">Additional notes <span class="label-optional">(optional)</span></label>
-          <textarea id="apparelNotes" name="additionalNotes" placeholder="Deadline, shipping address, budget, or special instructions"></textarea>
-        </div>
-        <button type="submit" class="btn-solid" style="width:100%;">Submit custom request</button>
-        <p class="form-error" id="apparelRequestError" hidden role="alert"></p>
-        <p class="form-success" id="apparelRequestSuccess" role="status">Request sent! Check your inbox for a confirmation — we’ll follow up with pricing and next steps.</p>
-        </form>
-      </div>
-    </div>
+      <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved. Transform Your Life LLC owns the TYL app, apparel, and all related products and content.</p>
+    </footer>
   </div>
 
   <div class="modal-overlay" id="contactModal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
@@ -183,6 +225,6 @@
     </div>
   </div>
 
-  <script src="site.js?v=17"></script>
+  <script src="site.js?v=24"></script>
 </body>
 </html>

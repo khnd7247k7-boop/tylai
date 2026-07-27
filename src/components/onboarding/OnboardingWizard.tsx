@@ -167,30 +167,82 @@ export default function OnboardingWizard({
     if (completionIssues.length > 0) {
       Alert.alert(
         'Almost there',
-        `Complete these before we build your plan:\n\n${completionIssues.map((i) => `• ${i}`).join('\n')}`
+        `Complete these before finishing setup:\n\n${completionIssues.map((i) => `• ${i}`).join('\n')}`
       );
       return;
     }
 
-    setFinishing(true);
-    try {
-      if (isEditMode) {
+    if (isEditMode) {
+      setFinishing(true);
+      try {
         await updateCoachingProfileFromQuestionnaire(profile);
-      } else {
-        await completeOnboarding(profile);
+        onComplete();
+      } catch (e) {
+        console.error('[OnboardingWizard] finish failed', e);
+        const detail =
+          e instanceof Error && e.message ? e.message : 'Unknown error while saving.';
+        Alert.alert(
+          'Could not save your answers',
+          `${detail}\n\nIf this keeps happening, force-quit the app, sign in again, and retry.`
+        );
+      } finally {
+        setFinishing(false);
       }
-      onComplete();
-    } catch (e) {
-      console.error('[OnboardingWizard] finish failed', e);
-      const detail =
-        e instanceof Error && e.message ? e.message : 'Unknown error while saving.';
-      Alert.alert(
-        'Could not save your answers',
-        `${detail}\n\nIf this keeps happening, force-quit the app, sign in again, and retry.`
-      );
-    } finally {
-      setFinishing(false);
+      return;
     }
+
+    // First-time onboarding: save profile, then ask whether to generate a plan.
+    Alert.alert(
+      'Generate a workout plan?',
+      'We can build 3 personalized plans from your answers. Or skip and create your own workouts anytime.',
+      [
+        {
+          text: 'Not now',
+          style: 'cancel',
+          onPress: () => {
+            void (async () => {
+              setFinishing(true);
+              try {
+                await completeOnboarding(profile, { requestFirstWorkoutPlan: false });
+                onComplete();
+              } catch (e) {
+                console.error('[OnboardingWizard] finish failed', e);
+                const detail =
+                  e instanceof Error && e.message ? e.message : 'Unknown error while saving.';
+                Alert.alert(
+                  'Could not save your answers',
+                  `${detail}\n\nIf this keeps happening, force-quit the app, sign in again, and retry.`
+                );
+              } finally {
+                setFinishing(false);
+              }
+            })();
+          },
+        },
+        {
+          text: 'Yes, generate plans',
+          onPress: () => {
+            void (async () => {
+              setFinishing(true);
+              try {
+                await completeOnboarding(profile, { requestFirstWorkoutPlan: true });
+                onComplete();
+              } catch (e) {
+                console.error('[OnboardingWizard] finish failed', e);
+                const detail =
+                  e instanceof Error && e.message ? e.message : 'Unknown error while saving.';
+                Alert.alert(
+                  'Could not save your answers',
+                  `${detail}\n\nIf this keeps happening, force-quit the app, sign in again, and retry.`
+                );
+              } finally {
+                setFinishing(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
   }, [finishing, isEditMode, onComplete, profile]);
 
   const nutritionPreview = useMemo(() => {
@@ -1000,7 +1052,7 @@ export default function OnboardingWizard({
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.nextBtnText}>
-                      {isEditMode ? 'Save changes' : 'Build my plan'}
+                      {isEditMode ? 'Save changes' : 'Finish setup'}
                     </Text>
                   )}
                 </TouchableOpacity>

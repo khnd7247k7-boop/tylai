@@ -122,7 +122,12 @@ export async function pullUserDataFromCloud(baseKey: string): Promise<unknown | 
 
   try {
     const ref = ctx.doc(ctx.db, 'users', uid, 'appData', baseKey);
-    const snap = await ctx.getDoc(ref);
+    const snap = await Promise.race([
+      ctx.getDoc(ref),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`cloud pull timeout for ${baseKey}`)), 5000)
+      ),
+    ]);
     if (!snap.exists()) return null;
     const payload = snap.data() as { value?: unknown };
     return payload?.value ?? null;

@@ -33,11 +33,43 @@ export function subscribeNotificationCenter(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+function normalizeEntry(raw: unknown): NotificationCenterEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Partial<NotificationCenterEntry>;
+  const id = String(row.id ?? '').trim();
+  if (!id) return null;
+  const lines = Array.isArray(row.lines)
+    ? row.lines.map((line) => String(line ?? '').trim()).filter(Boolean)
+    : [];
+  const title = typeof row.title === 'string' ? row.title.trim() : undefined;
+  if (lines.length === 0 && !title) return null;
+  const type =
+    row.type === 'success' || row.type === 'error' || row.type === 'warning' || row.type === 'info'
+      ? row.type
+      : 'info';
+  const createdAt =
+    typeof row.createdAt === 'string' && Number.isFinite(new Date(row.createdAt).getTime())
+      ? row.createdAt
+      : new Date().toISOString();
+  return {
+    id,
+    title: title || undefined,
+    lines: lines.length > 0 ? lines : title ? [title] : [],
+    type,
+    createdAt,
+    read: row.read === true,
+  };
+}
+
 async function loadStore(): Promise<DailyStore> {
   const today = localNotificationDateKey();
   const raw = await loadUserData<DailyStore>(STORAGE_KEY);
   if (raw?.dateKey === today && Array.isArray(raw.entries)) {
-    return raw;
+    const entries = raw.entries
+      .map(normalizeEntry)
+      .filter((entry): entry is NotificationCenterEntry => entry != null)
+      .slice(0, MAX_ENTRIES_PER_DAY);
+    return { dateKey: today, entries };
   }
   return { dateKey: today, entries: [] };
 }
@@ -54,15 +86,16 @@ export async function recordNotificationCenterEntry(
   const store = await loadStore();
   if (store.entries.some((entry) => entry.id === id)) return;
 
-  const lines = [...(payload.lines ?? [])].filter(Boolean);
+  const lines = [...(payload.lines ?? [])].map((line) => String(line).trim()).filter(Boolean);
   const title = payload.title?.trim();
   if (lines.length === 0 && title) {
     lines.push(title);
   }
+  if (lines.length === 0 && !title) return;
 
   store.entries.unshift({
     id,
-    title,
+    title: title || undefined,
     lines,
     type: payload.type ?? 'info',
     createdAt: new Date().toISOString(),
@@ -86,6 +119,21 @@ export async function markNotificationCenterRead(entryId?: string): Promise<void
   } else {
     store.entries = store.entries.map((entry) => ({ ...entry, read: true }));
   }
+  await saveStore(store);
+}
+
+export async function deleteNotificationCenterEntry(entryId: string): Promise<void> {
+  const store = await loadStore();
+  const next = store.entries.filter((entry) => entry.id !== entryId);
+  if (next.length === store.entries.length) return;
+  store.entries = next;
+  await saveStore(store);
+}
+
+export async function clearNotificationCenterEntries(): Promise<void> {
+  const store = await loadStore();
+  if (store.entries.length === 0) return;
+  store.entries = [];
   await saveStore(store);
 }
 

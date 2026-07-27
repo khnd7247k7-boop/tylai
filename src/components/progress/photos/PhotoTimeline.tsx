@@ -98,8 +98,10 @@ export default function PhotoTimeline({
 
   const rangeLabel =
     sessions.length >= 2
-      ? `${formatTimelineLabel(sessions[0], 0, sessions[0].date === today)}  —  Today`
-      : 'Your journey';
+      ? `${formatTimelineLabel(sessions[0], 0, sessions[0].date === today)}  →  ${formatTimelineLabel(sessions[sessions.length - 1], sessions.length - 1, sessions[sessions.length - 1].date === today)}`
+      : sessions.length === 1
+        ? formatTimelineLabel(sessions[0], 0, sessions[0].date === today)
+        : 'Your journey';
 
   return (
     <View style={styles.wrap}>

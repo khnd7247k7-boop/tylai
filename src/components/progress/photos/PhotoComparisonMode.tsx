@@ -32,7 +32,7 @@ export default function PhotoComparisonMode({
 }: PhotoComparisonModeProps): React.ReactElement {
   const [range, setRange] = useState<RangeOption>('beginning');
   const [pose, setPose] = useState<PhotoPose>('front');
-  const [slider, setSlider] = useState(0.5);
+  const [slider, setSlider] = useState(0);
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
 
@@ -137,7 +137,9 @@ export default function PhotoComparisonMode({
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={styles.hint}>Drag across the image to compare</Text>
+            <Text style={styles.hint}>
+              {slider <= 0.02 ? 'Drag the line to reveal your before photo' : 'Drag across the image to compare'}
+            </Text>
           </>
         )}
       </SafeAreaView>

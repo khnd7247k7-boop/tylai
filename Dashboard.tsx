@@ -31,7 +31,9 @@ import { subscribeUserDataReady } from './src/utils/userDataEvents';
 import { isMindsetCheckInDoneToday } from './src/utils/mindsetCheckIn';
 import { NotificationCenterModal } from './src/components/NotificationCenterModal';
 import {
+  clearNotificationCenterEntries,
   countUnreadNotifications,
+  deleteNotificationCenterEntry,
   fetchTodayNotificationCenterEntries,
   markNotificationCenterRead,
   subscribeNotificationCenter,
@@ -193,6 +195,24 @@ export default function Dashboard({
 
   const openNotificationCenter = useCallback(async () => {
     setNotificationCenterOpen(true);
+    await markNotificationCenterRead();
+    await refreshNotificationCenter();
+  }, [refreshNotificationCenter]);
+
+  const handleDeleteNotification = useCallback(
+    async (id: string) => {
+      await deleteNotificationCenterEntry(id);
+      await refreshNotificationCenter();
+    },
+    [refreshNotificationCenter]
+  );
+
+  const handleClearAllNotifications = useCallback(async () => {
+    await clearNotificationCenterEntries();
+    await refreshNotificationCenter();
+  }, [refreshNotificationCenter]);
+
+  const handleMarkAllNotificationsRead = useCallback(async () => {
     await markNotificationCenterRead();
     await refreshNotificationCenter();
   }, [refreshNotificationCenter]);
@@ -601,7 +621,13 @@ export default function Dashboard({
         entries={notificationEntries}
         onClose={() => setNotificationCenterOpen(false)}
         onMarkAllRead={() => {
-          void markNotificationCenterRead().then(refreshNotificationCenter);
+          void handleMarkAllNotificationsRead();
+        }}
+        onDeleteEntry={(id) => {
+          void handleDeleteNotification(id);
+        }}
+        onClearAll={() => {
+          void handleClearAllNotifications();
         }}
       />
     </SafeAreaView>

@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTheme } from '../theme/appVisualTheme';
@@ -35,15 +36,36 @@ type Props = {
   entries: NotificationCenterEntry[];
   onClose: () => void;
   onMarkAllRead: () => void;
+  onDeleteEntry: (id: string) => void;
+  onClearAll: () => void;
 };
 
-export function NotificationCenterModal({ visible, entries, onClose, onMarkAllRead }: Props) {
+export function NotificationCenterModal({
+  visible,
+  entries,
+  onClose,
+  onMarkAllRead,
+  onDeleteEntry,
+  onClearAll,
+}: Props) {
   const insets = useSafeAreaInsets();
   const todayLabel = new Date().toLocaleDateString([], {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
   });
+
+  const confirmClearAll = () => {
+    if (entries.length === 0) return;
+    Alert.alert(
+      'Clear notifications?',
+      'This removes all of today’s notifications from this list.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear all', style: 'destructive', onPress: onClearAll },
+      ]
+    );
+  };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -57,16 +79,29 @@ export function NotificationCenterModal({ visible, entries, onClose, onMarkAllRe
             <Text style={styles.headerSub}>{todayLabel}</Text>
           </View>
           <TouchableOpacity
-            onPress={onMarkAllRead}
+            onPress={confirmClearAll}
             style={styles.clearBtn}
             hitSlop={10}
             disabled={entries.length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Clear all notifications"
           >
             <Text style={[styles.clearText, entries.length === 0 && styles.clearTextDisabled]}>
-              Mark read
+              Clear all
             </Text>
           </TouchableOpacity>
         </View>
+
+        {entries.length > 0 ? (
+          <View style={styles.toolbar}>
+            <Text style={styles.toolbarCount}>
+              {entries.length} today{entries.some((e) => !e.read) ? ' · unread' : ''}
+            </Text>
+            <TouchableOpacity onPress={onMarkAllRead} hitSlop={8} accessibilityRole="button">
+              <Text style={styles.markReadText}>Mark all read</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         <ScrollView
           style={styles.scroll}
@@ -93,12 +128,21 @@ export function NotificationCenterModal({ visible, entries, onClose, onMarkAllRe
                   <View style={[styles.accent, { backgroundColor: accent }]} />
                   <View style={styles.cardBody}>
                     <View style={styles.cardTopRow}>
-                      {entry.title ? (
-                        <Text style={styles.cardTitle}>{entry.title}</Text>
-                      ) : (
-                        <Text style={styles.cardTitle}>Notification</Text>
-                      )}
-                      <Text style={styles.cardTime}>{formatNotificationCenterTime(entry.createdAt)}</Text>
+                      <View style={styles.cardTitleCol}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          {entry.title || 'Notification'}
+                        </Text>
+                        <Text style={styles.cardTime}>{formatNotificationCenterTime(entry.createdAt)}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => onDeleteEntry(entry.id)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete notification"
+                      >
+                        <Text style={styles.deleteBtnText}>×</Text>
+                      </TouchableOpacity>
                     </View>
                     {entry.lines.map((line, index) => (
                       <Text key={`${entry.id}-line-${index}`} style={styles.cardLine}>
@@ -161,12 +205,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   clearText: {
-    color: AppTheme.textMuted,
+    color: '#ff6b6b',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   clearTextDisabled: {
     opacity: 0.35,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  toolbarCount: {
+    color: AppTheme.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  markReadText: {
+    color: AppTheme.accent,
+    fontSize: 13,
+    fontWeight: '700',
   },
   scroll: {
     flex: 1,
@@ -216,7 +277,7 @@ const styles = StyleSheet.create({
   cardBody: {
     flex: 1,
     padding: 12,
-    paddingRight: 14,
+    paddingRight: 10,
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -225,8 +286,11 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 6,
   },
-  cardTitle: {
+  cardTitleCol: {
     flex: 1,
+    paddingRight: 4,
+  },
+  cardTitle: {
     color: AppTheme.textPrimary,
     fontSize: 15,
     fontWeight: '700',
@@ -235,17 +299,35 @@ const styles = StyleSheet.create({
     color: AppTheme.textFaint,
     fontSize: 12,
     fontWeight: '600',
+    marginTop: 2,
+  },
+  deleteBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+  },
+  deleteBtnText: {
+    color: AppTheme.textMuted,
+    fontSize: 20,
+    fontWeight: '600',
+    marginTop: -1,
   },
   cardLine: {
     color: AppTheme.textSecondary,
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 2,
+    paddingRight: 28,
   },
   unreadDot: {
     position: 'absolute',
     top: 12,
-    right: 10,
+    right: 44,
     width: 8,
     height: 8,
     borderRadius: 4,

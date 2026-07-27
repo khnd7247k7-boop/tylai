@@ -100,24 +100,70 @@ export function dateKeyToLocalNoonIso(dateKey: string): string {
   return new Date(y, mo - 1, d, 12, 0, 0, 0).toISOString();
 }
 
-function cloneMealForDate(meal: LoggedMeal, targetDateKey: string): LoggedMeal {
+export type LoggedMealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snacks';
+
+/** Normalize stored slot strings (incl. legacy `snack`) to a known meal time. */
+export function normalizeLoggedMealSlot(raw: unknown): LoggedMealSlot | null {
+  const v = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  if (v === 'breakfast' || v === 'lunch' || v === 'dinner' || v === 'snacks') return v;
+  if (v === 'snack') return 'snacks';
+  return null;
+}
+
+/**
+ * Resolve which meal bucket a logged entry belongs in.
+ * Prefer an explicit slot; otherwise use name hints, then original log hour.
+ * Call this BEFORE rewriting `date` to noon on copy — noon would otherwise re-bucket meals.
+ */
+export function resolveLoggedMealSlot(meal: Pick<LoggedMeal, 'mealSlot' | 'name' | 'date'>): LoggedMealSlot {
+  const fromStored = normalizeLoggedMealSlot(meal.mealSlot);
+  if (fromStored) return fromStored;
+
+  const n = String(meal.name ?? '').toLowerCase();
+  if (/\b(breakfast|brunch)\b/.test(n)) return 'breakfast';
+  if (/\blunch\b/.test(n)) return 'lunch';
+  if (/\b(dinner|supper)\b/.test(n)) return 'dinner';
+  if (/\bsnack/.test(n)) return 'snacks';
+
+  const h = new Date(meal.date).getHours();
+  if (Number.isFinite(h)) {
+    if (h < 11) return 'breakfast';
+    if (h < 15) return 'lunch';
+    if (h < 21) return 'dinner';
+  }
+  return 'snacks';
+}
+
+function cloneMealForDate(
+  meal: LoggedMeal,
+  targetDateKey: string,
+  opts?: { mealSlot?: string }
+): LoggedMeal {
+  // Resolve slot from the source meal *before* the date becomes noon, then stamp it
+  // so copies stay in breakfast/lunch/dinner instead of collapsing into snacks/lunch.
+  const mealSlot =
+    normalizeLoggedMealSlot(opts?.mealSlot) ?? resolveLoggedMealSlot(meal);
   return {
     ...meal,
     id: `meal-copy-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     date: dateKeyToLocalNoonIso(targetDateKey),
+    mealSlot,
   };
 }
 
 /** Duplicate one logged meal onto another calendar day (new entry, same macros). */
 export async function duplicateLoggedMealToDate(
   mealId: string,
-  targetDateKey: string
+  targetDateKey: string,
+  opts?: { mealSlot?: string }
 ): Promise<{ meals: LoggedMeal[]; copy: LoggedMeal } | null> {
   const meals = (await loadUserData<LoggedMeal[]>('meals')) || [];
   const source = meals.find((m) => m.id === mealId);
   if (!source) return null;
 
-  const copy = cloneMealForDate(source, targetDateKey);
+  const copy = cloneMealForDate(source, targetDateKey, opts);
   const next = [...meals, copy];
   await saveUserData('meals', next);
   return { meals: next, copy };
