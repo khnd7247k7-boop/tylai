@@ -1197,6 +1197,11 @@ body.nav-menu-open {
   max-width: 28rem;
 }
 
+.apparel-desc strong {
+  color: var(--white);
+  font-weight: 600;
+}
+
 .apparel-option {
   margin-bottom: 1.25rem;
 }
@@ -1233,13 +1238,13 @@ body.nav-menu-open {
 }
 
 .apparel-swatch {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: 2px solid transparent;
   background: var(--swatch);
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
 }
 
 .apparel-swatch.is-active {
@@ -1249,6 +1254,52 @@ body.nav-menu-open {
 .apparel-swatch:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.apparel-color-note {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+  color: var(--gray);
+  line-height: 1.5;
+}
+
+.apparel-logo-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.apparel-logo-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--white);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.apparel-logo-choice.is-active {
+  border-color: var(--white);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.apparel-logo-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.apparel-logo-swatch-white {
+  background: #f5f5f5;
+}
+
+.apparel-logo-swatch-black {
+  background: #111;
 }
 
 .apparel-size {
@@ -1321,6 +1372,204 @@ body.nav-menu-open {
   color: var(--gray-dim);
   line-height: 1.5;
   margin-bottom: 1.25rem;
+}
+
+.apparel-ship-fields {
+  padding-top: 0.25rem;
+}
+
+.apparel-ship-note {
+  color: var(--gray);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0 0 0.85rem;
+}
+
+.apparel-ship-note strong {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.apparel-field-label {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0.55rem 0 0.35rem;
+}
+
+.apparel-field-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--white);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.95rem;
+}
+
+.apparel-field-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.apparel-order-ticket {
+  margin: 1.1rem 0 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+}
+
+.apparel-order-ticket-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0 0 0.35rem;
+}
+
+.apparel-order-ticket-sku {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.55rem;
+  letter-spacing: 0.02em;
+}
+
+.apparel-order-ticket-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--gray);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.apparel-thanks {
+  max-width: 40rem;
+  padding: 1.5rem 0 3rem;
+}
+
+.apparel-thanks h1 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: -0.03em;
+  margin: 0.35rem 0 0.85rem;
+}
+
+.apparel-thanks-lead {
+  color: var(--gray);
+  line-height: 1.65;
+  margin-bottom: 1.5rem;
+}
+
+.apparel-thanks-card,
+.apparel-thanks-next,
+.apparel-fulfill-card {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  padding: 1.15rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.apparel-thanks-card h2,
+.apparel-thanks-next h2,
+.apparel-fulfill-card h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.apparel-thanks-dl {
+  margin: 0;
+}
+
+.apparel-thanks-dl > div {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.apparel-thanks-dl dt {
+  color: var(--gray);
+  font-size: 0.8rem;
+}
+
+.apparel-thanks-dl dd {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.apparel-thanks-dl code,
+.apparel-fulfill-card code {
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+.apparel-thanks-next ol,
+.apparel-fulfill-card ol,
+.apparel-fulfill-card ul {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+.apparel-fulfill {
+  max-width: 48rem;
+  padding: 1.5rem 0 3rem;
+}
+
+.apparel-fulfill h1 {
+  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  letter-spacing: -0.02em;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.apparel-fulfill-lead {
+  color: var(--gray);
+  line-height: 1.65;
+  margin-bottom: 1.5rem;
+}
+
+.apparel-fulfill-warn {
+  color: #fca5a5;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0.75rem 0 0;
+}
+
+.apparel-fulfill-card pre {
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.8rem;
+}
+
+.apparel-fulfill-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.apparel-fulfill-table th,
+.apparel-fulfill-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.55rem 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.apparel-fulfill-table th {
+  color: var(--gray);
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .apparel-size-guide-note {

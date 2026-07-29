@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="TYL Apparel fulfillment checklist — Stripe to Printful ship-to-customer." />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Apparel fulfillment — TYL (internal)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=29" />
+</head>
+<body data-page="apparel-fulfillment.html">
+  <div class="wrap">
+    <header class="site-header">
+      <a class="logo" href="index.html" aria-label="TYL home">
+        <img src="app-icon.png" alt="TYL" width="52" height="52" />
+      </a>
+      <ul class="nav-center" id="navMenu">
+        <li><a href="apparel.html">Apparel shop</a></li>
+        <li><a href="apparel-thanks.html">Thanks page</a></li>
+      </ul>
+      <div class="nav-right">
+        <button type="button" class="menu-toggle" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">☰</button>
+      </div>
+    </header>
+
+    <main class="page-main apparel-fulfill">
+      <p class="eyebrow">Internal · not linked in public nav</p>
+      <h1>Ship tees to the customer (not your house)</h1>
+      <p class="apparel-fulfill-lead">
+        The website + Stripe Payment Link collect payment, size/color/qty, email, and
+        <strong>the customer’s shipping address</strong>. You copy that address into Printful/Printify
+        so the package goes straight to them.
+      </p>
+
+      <section class="apparel-fulfill-card">
+        <h2>1. One-time Stripe Payment Link setup</h2>
+        <ol>
+          <li>Stripe Dashboard → <strong>Product catalog</strong> → create <em>TYL Focus Tee</em> ($34.99).</li>
+          <li>Create a <strong>Payment link</strong> for that product.</li>
+          <li>Turn <strong>ON: Collect customers’ shipping addresses</strong> (required).</li>
+          <li>Turn <strong>ON: Collect phone numbers</strong> (recommended for carriers).</li>
+          <li>Optional: <strong>Custom fields</strong> → add <code>Size</code> (dropdown S / M / L / XL / XXL).</li>
+          <li>Optional: enable <strong>Adjustable quantity</strong>.</li>
+          <li>
+            After payment → <strong>Don’t show confirmation page</strong> → Redirect to:<br />
+            <code>https://YOUR-LIVE-DOMAIN/apparel-thanks.html</code>
+          </li>
+          <li>
+            Paste the Payment Link URL into <code>tyl-ai-landing/site.js</code>
+            (<code>APPAREL_STRIPE_PAYMENT_LINK</code>)
+            <em>or</em> set before load:
+            <pre><code>&lt;script&gt;window.TYL_APPAREL_STRIPE_LINK = "https://buy.stripe.com/…";&lt;/script&gt;</code></pre>
+          </li>
+        </ol>
+        <p class="apparel-fulfill-warn">
+          If shipping address collection is off, Stripe will not give you a customer address and you cannot
+          ship direct-to-buyer from this flow.
+        </p>
+      </section>
+
+      <section class="apparel-fulfill-card">
+        <h2>2. What the website already sends</h2>
+        <p>When the buyer clicks <strong>Buy now</strong>, Stripe opens with:</p>
+        <ul>
+          <li><code>prefilled_email</code> — buyer email from the apparel form</li>
+          <li><code>prefilled_quantity</code> — qty from the apparel form</li>
+          <li>
+            <code>client_reference_id</code> — compact ticket, e.g.
+            <code>TYL-TEE|CREAM|M|Q1|you@email.com</code>
+          </li>
+        </ul>
+        <p>
+          Name, email, color, size, and qty are also saved in the browser for the thanks page.
+          <strong>The shipping street address only exists in Stripe</strong> (and later in your print order).
+        </p>
+      </section>
+
+      <section class="apparel-fulfill-card">
+        <h2>3. After each sale — fulfillment checklist</h2>
+        <ol>
+          <li>Open <a href="https://dashboard.stripe.com/payments" target="_blank" rel="noopener">Stripe → Payments</a>.</li>
+          <li>Open the new payment.</li>
+          <li>
+            Copy from the payment page:
+            <ul>
+              <li><strong>Shipping name</strong></li>
+              <li><strong>Address line 1 / line 2</strong></li>
+              <li><strong>City, state/region, postal code, country</strong></li>
+              <li><strong>Phone</strong> (if collected)</li>
+              <li><strong>Email</strong></li>
+              <li><strong>Client reference</strong> → parse color, size, qty (and Size custom field if present)</li>
+            </ul>
+          </li>
+          <li>Open Printful or Printify → <strong>Manual order</strong> / Create order.</li>
+          <li>
+            Recipient = Stripe shipping details (NOT your home address). Confirm the ship-to fields match Stripe exactly.
+          </li>
+          <li>Item = TYL Focus Tee · match <strong>size</strong> + <strong>color</strong> + <strong>qty</strong> from the reference id.</li>
+          <li>Submit / confirm the print order. Save the provider order ID next to the Stripe payment id.</li>
+          <li>When tracking appears, email the buyer (or rely on Printful’s customer notifications if enabled).</li>
+        </ol>
+      </section>
+
+      <section class="apparel-fulfill-card">
+        <h2>4. Copy-paste Printful / Printify field map</h2>
+        <table class="apparel-fulfill-table">
+          <thead>
+            <tr>
+              <th>Print provider field</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Recipient name</td><td>Stripe → Shipping details → Name</td></tr>
+            <tr><td>Address 1</td><td>Stripe → Shipping → Line 1</td></tr>
+            <tr><td>Address 2</td><td>Stripe → Shipping → Line 2</td></tr>
+            <tr><td>City</td><td>Stripe → Shipping → City</td></tr>
+            <tr><td>State / Province</td><td>Stripe → Shipping → State</td></tr>
+            <tr><td>ZIP / Postal</td><td>Stripe → Shipping → Postal code</td></tr>
+            <tr><td>Country</td><td>Stripe → Shipping → Country</td></tr>
+            <tr><td>Phone</td><td>Stripe → Customer phone</td></tr>
+            <tr><td>Email</td><td>Stripe → Customer email (or client_reference_id)</td></tr>
+            <tr><td>Product / variant size</td><td>client_reference_id segment after color (e.g. <code>M</code>)</td></tr>
+            <tr><td>Color / style</td><td>client_reference_id (e.g. <code>CREAM</code>, <code>ARMY-GREEN</code>, <code>ANCORA-RED</code>)</td></tr>
+            <tr><td>Quantity</td><td>client_reference_id <code>Q#</code> or Stripe line quantity</td></tr>
+            <tr><td>External / merchant ID</td><td>Stripe Payment Intent / Charge id</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="apparel-fulfill-card">
+        <h2>5. Decode <code>client_reference_id</code></h2>
+        <p>Format from the website:</p>
+        <pre><code>TYL-TEE|CREAM|LWHITE|M|Q2|buyer@email.com</code></pre>
+        <ul>
+          <li><code>TYL-TEE</code> — product family</li>
+          <li><code>CREAM</code> — shirt color (also Black, Pink, etc.)</li>
+          <li><code>LWHITE</code> / <code>LBLACK</code> — logo/design ink</li>
+          <li><code>M</code> — size</li>
+          <li><code>Q2</code> — quantity</li>
+          <li>email — buyer contact</li>
+        </ul>
+        <p>Any shirt color can be fulfilled with a white or black logo/design — match both fields when placing the print order.</p>
+      </section>
+
+      <section class="apparel-fulfill-card">
+        <h2>6. Avoid shipping to yourself</h2>
+        <ul>
+          <li>Never use your home/business as the Printful recipient unless the order is a personal sample.</li>
+          <li>In Printful/Printify, double-check the recipient block before confirming.</li>
+          <li>If Stripe shipping is missing, refund or email the buyer for an address before ordering a print.</li>
+        </ul>
+      </section>
+
+      <p>
+        Shop page: <a href="apparel.html">apparel.html</a> ·
+        Customer thanks: <a href="apparel-thanks.html">apparel-thanks.html</a>
+      </p>
+    </main>
+  </div>
+  <script src="site.js?v=29"></script>
+</body>
+</html>

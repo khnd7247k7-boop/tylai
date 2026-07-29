@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Thanks for your TYL Apparel order." />
+  <meta name="robots" content="noindex" />
+  <title>Order received — TYL Apparel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=29" />
+</head>
+<body data-page="apparel-thanks.html">
+  <div class="wrap">
+    <header class="site-header">
+      <a class="logo" href="index.html" aria-label="TYL home">
+        <img src="app-icon.png" alt="TYL" width="52" height="52" />
+      </a>
+      <ul class="nav-center" id="navMenu">
+        <li><a href="features.html">Features</a></li>
+        <li><a href="index.html#app-preview">App Preview</a></li>
+        <li><a href="index.html#about">About</a></li>
+        <li><a href="apparel.html">Apparel</a></li>
+        <li><a href="join.html">Pricing</a></li>
+        <li><a href="index.html#faq">FAQ</a></li>
+      </ul>
+      <div class="nav-right">
+        <button type="button" class="menu-toggle" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">☰</button>
+        <a class="nav-download" href="join.html#pricing">Get Premium</a>
+      </div>
+    </header>
+
+    <main class="page-main apparel-thanks">
+      <p class="eyebrow">TYL Apparel</p>
+      <h1>Order received</h1>
+      <p class="apparel-thanks-lead">
+        Payment is processing through Stripe. Your tee ships to the <strong>address you entered at checkout</strong> —
+        not to our office.
+      </p>
+
+      <section class="apparel-thanks-card" aria-label="Order summary">
+        <h2>Your order</h2>
+        <div id="apparelThanksDetails"></div>
+      </section>
+
+      <section class="apparel-thanks-next">
+        <h2>What happens next</h2>
+        <ol>
+          <li>Stripe confirms payment and stores your shipping address.</li>
+          <li>We place a print order using that address as the ship-to destination.</li>
+          <li>You’ll get tracking by email when the carrier scans the package.</li>
+        </ol>
+        <p>
+          Questions? <a href="#" id="contactOpen" class="contact-open-inline">Contact us</a>
+          or email <a href="mailto:travis@tyl-ai.com">travis@tyl-ai.com</a>.
+        </p>
+        <a class="btn-solid" href="apparel.html">Back to apparel</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div class="footer-brand"><strong>TYL</strong><p>Transform Your Life LLC</p></div>
+        <div class="footer-links">
+          <a href="legal.html#privacy-policy">Privacy</a>
+          <a href="legal.html#terms-of-service">Terms</a>
+          <a href="#" id="contactOpenFooter">Contact</a>
+        </div>
+      </div>
+      <p class="copyright">© 2024–2026 Transform Your Life LLC. All rights reserved.</p>
+    </footer>
+  </div>
+
+  <div class="modal-overlay" id="contactModal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+    <div class="modal modal-wide">
+      <button type="button" class="modal-close" id="contactClose" aria-label="Close">×</button>
+      <h3 id="contactModalTitle">Contact TYL AI</h3>
+      <p>Send us a message — we'll get back to you at the email you provide.</p>
+      <form id="contactForm" novalidate>
+        <div class="form-field">
+          <label for="contactName">Name</label>
+          <input type="text" id="contactName" name="name" autocomplete="name" required placeholder="Your name" />
+        </div>
+        <div class="form-field">
+          <label for="contactEmail">Email</label>
+          <input type="email" id="contactEmail" name="email" autocomplete="email" required placeholder="you@email.com" />
+        </div>
+        <div class="form-field">
+          <label for="contactMessage">Message</label>
+          <textarea id="contactMessage" name="message" required placeholder="How can we help?"></textarea>
+        </div>
+        <button type="submit" class="btn-solid" style="width:100%;">Send message</button>
+        <p class="form-success" id="contactSuccess" role="status">Message received! We'll reply to your email soon.</p>
+      </form>
+    </div>
+  </div>
+
+  <script src="site.js?v=29"></script>
+</body>
+</html>

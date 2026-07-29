@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="TYL Apparel — Essential Tee. Minimal gear. Maximum purpose." />
+  <meta name="description" content="TYL Apparel — Focus Tee. Minimal gear. Maximum purpose." />
   <title>Apparel — TYL</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=25" />
+  <link rel="stylesheet" href="styles.css?v=29" />
 </head>
 <body data-page="apparel.html">
   <div class="wrap">
@@ -48,10 +48,10 @@
       <section class="apparel-product" id="current-drop">
         <div class="apparel-media">
           <div class="apparel-thumbs" role="tablist" aria-label="Product photos">
-            <button type="button" class="apparel-thumb is-active" data-src="apparel-tee-front.jpg" data-alt="Cream TYL Essential Tee — front" aria-label="Front view" aria-pressed="true">
+            <button type="button" class="apparel-thumb is-active" data-src="apparel-tee-front.jpg" data-alt="Light Apricot TYL Focus Tee — front" aria-label="Front view" aria-pressed="true">
               <img src="apparel-tee-front-thumb.png" alt="" width="80" height="100" />
             </button>
-            <button type="button" class="apparel-thumb" data-src="apparel-tee-back.jpg" data-alt="Cream TYL Essential Tee — back" aria-label="Back view" aria-pressed="false">
+            <button type="button" class="apparel-thumb" data-src="apparel-tee-back.jpg" data-alt="Light Apricot TYL Focus Tee — back" aria-label="Back view" aria-pressed="false">
               <img src="apparel-tee-back-thumb.png" alt="" width="80" height="100" />
             </button>
             <button type="button" class="apparel-thumb" data-src="tyl-apparel-01.png" data-alt="TYL Apparel logo on white" aria-label="Logo mark light" aria-pressed="false">
@@ -65,7 +65,7 @@
             <img
               id="apparelMainImage"
               src="apparel-tee-front.jpg"
-              alt="Cream TYL Essential Tee — front"
+              alt="Light Apricot TYL Focus Tee — front"
               width="1080"
               height="1440"
               loading="eager"
@@ -75,22 +75,49 @@
 
         <div class="apparel-buy">
           <p class="apparel-drop-label">Current drop · 001</p>
-          <h2>TYL Essential Tee</h2>
+          <h2>TYL Focus Tee</h2>
           <p class="apparel-price" id="apparelPrice">$34.99</p>
           <p class="apparel-desc">
-            Heavyweight cream tee with the TYL Apparel chest mark and FOCUS back print.
-            Built for training days and everything after.
+            Heavyweight TYL Focus Tee with the TYL Apparel chest mark and FOCUS back print.
+            Built for training days and everything after. Available in multiple shirt colors — pair any of them
+            with a <strong>white or black</strong> logo/design.
           </p>
 
           <div class="apparel-option">
             <div class="apparel-option-head">
-              <span>Color</span>
-              <span class="apparel-option-value" id="apparelColorLabel">Cream</span>
+              <span>Shirt color</span>
+              <span class="apparel-option-value" id="apparelColorLabel">Light Apricot</span>
             </div>
-            <div class="apparel-swatches" role="group" aria-label="Color">
-              <button type="button" class="apparel-swatch is-active" data-color="Cream" style="--swatch:#f3eee6" aria-label="Cream" aria-pressed="true"></button>
-              <button type="button" class="apparel-swatch" data-color="Black" style="--swatch:#111" aria-label="Black" aria-pressed="false" disabled title="Coming soon"></button>
-              <button type="button" class="apparel-swatch" data-color="White" style="--swatch:#f5f5f5" aria-label="White" aria-pressed="false" disabled title="Coming soon"></button>
+            <div class="apparel-swatches" role="group" aria-label="Shirt color">
+              <button type="button" class="apparel-swatch is-active" data-color="Light Apricot" style="--swatch:#f5deca" aria-label="Light Apricot" title="Light Apricot" aria-pressed="true"></button>
+              <button type="button" class="apparel-swatch" data-color="Black" style="--swatch:#111111" aria-label="Black" title="Black" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Pink" style="--swatch:#e8a4b8" aria-label="Pink" title="Pink" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Grey" style="--swatch:#8b8f94" aria-label="Grey" title="Grey" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Army Green" style="--swatch:#4f5d3a" aria-label="Army Green" title="Army Green" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Khaki" style="--swatch:#c4b28a" aria-label="Khaki" title="Khaki" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Purple" style="--swatch:#6b3f91" aria-label="Purple" title="Purple" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Ancora Red" style="--swatch:#b4232e" aria-label="Ancora Red" title="Ancora Red" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Royal Blue" style="--swatch:#2f5bff" aria-label="Royal Blue" title="Royal Blue" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Navy Blue" style="--swatch:#15233b" aria-label="Navy Blue" title="Navy Blue" aria-pressed="false"></button>
+              <button type="button" class="apparel-swatch" data-color="Coffee" style="--swatch:#4a3428" aria-label="Coffee" title="Coffee" aria-pressed="false"></button>
+            </div>
+            <p class="apparel-color-note">Any shirt color can be printed with a white or black logo/design.</p>
+          </div>
+
+          <div class="apparel-option">
+            <div class="apparel-option-head">
+              <span>Logo / design</span>
+              <span class="apparel-option-value" id="apparelLogoLabel">White</span>
+            </div>
+            <div class="apparel-logo-choices" role="group" aria-label="Logo color">
+              <button type="button" class="apparel-logo-choice is-active" data-logo="White" aria-pressed="true">
+                <span class="apparel-logo-swatch apparel-logo-swatch-white" aria-hidden="true"></span>
+                White logo
+              </button>
+              <button type="button" class="apparel-logo-choice" data-logo="Black" aria-pressed="false">
+                <span class="apparel-logo-swatch apparel-logo-swatch-black" aria-hidden="true"></span>
+                Black logo
+              </button>
             </div>
           </div>
 
@@ -117,11 +144,59 @@
             </div>
           </div>
 
+          <div class="apparel-option apparel-ship-fields">
+            <div class="apparel-option-head">
+              <span>Checkout contact</span>
+              <span class="apparel-option-value">Required</span>
+            </div>
+            <p class="apparel-ship-note">
+              You’ll enter your <strong>shipping address on the Stripe checkout</strong> so we can send the tee
+              straight to your door — not to us.
+            </p>
+            <label class="apparel-field-label" for="apparelBuyerName">Full name</label>
+            <input
+              class="apparel-field-input"
+              type="text"
+              id="apparelBuyerName"
+              name="buyer_name"
+              autocomplete="name"
+              placeholder="Name on the package"
+              maxlength="80"
+            />
+            <label class="apparel-field-label" for="apparelBuyerEmail">Email</label>
+            <input
+              class="apparel-field-input"
+              type="email"
+              id="apparelBuyerEmail"
+              name="buyer_email"
+              autocomplete="email"
+              placeholder="you@email.com"
+              maxlength="120"
+              required
+            />
+          </div>
+
+          <div class="apparel-order-ticket" id="apparelOrderTicket" aria-live="polite">
+            <p class="apparel-order-ticket-label">Order ticket (for fulfillment)</p>
+            <p class="apparel-order-ticket-sku" id="apparelOrderSku">TYL-TEE-CREAM-M × 1</p>
+            <ul class="apparel-order-ticket-list" id="apparelOrderTicketList">
+              <li>Product: TYL Focus Tee</li>
+              <li>Color: Light Apricot</li>
+              <li>Logo: White</li>
+              <li>Size: M</li>
+              <li>Qty: 1</li>
+              <li>Ship to: (collected on Stripe)</li>
+            </ul>
+          </div>
+
           <button type="button" class="btn-solid apparel-buy-btn" id="apparelBuyBtn">
             Buy now — $34.99
           </button>
           <p class="apparel-buy-error" id="apparelBuyError" hidden role="alert"></p>
-          <p class="apparel-trust">Secure checkout via Stripe · Ships to your door · Free shipping on orders $75+</p>
+          <p class="apparel-trust">
+            Secure checkout via Stripe · Your shipping address is collected at payment · We fulfill from that address
+            (direct to you)
+          </p>
 
           <p class="apparel-size-guide-note" id="size-guide">
             True-to-size oversized fit. Size up for a roomier look. Measurements coming soon — questions?
@@ -160,7 +235,7 @@
           <a class="btn-outline" href="why-tyl-works.html">Learn our story</a>
         </div>
         <div class="apparel-mission-visual">
-          <img src="apparel-tee-back.jpg" alt="TYL Essential Tee back print — FOCUS" width="1080" height="1440" loading="lazy" />
+          <img src="apparel-tee-back.jpg" alt="TYL Focus Tee back print — FOCUS" width="1080" height="1440" loading="lazy" />
         </div>
       </section>
 
@@ -225,6 +300,6 @@
     </div>
   </div>
 
-  <script src="site.js?v=24"></script>
+  <script src="site.js?v=29"></script>
 </body>
 </html>

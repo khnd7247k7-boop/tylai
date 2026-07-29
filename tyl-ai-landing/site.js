@@ -548,37 +548,127 @@
     };
   });
 
-  /* Apparel shop: gallery + Stripe Payment Link checkout */
+  /* Apparel shop: gallery + Stripe Payment Link checkout (ship-to-customer) */
   (function wireApparelShop() {
     var buyBtn = document.getElementById("apparelBuyBtn");
     if (!buyBtn) return;
 
-    // Paste your Stripe Payment Link here (Dashboard → Payment links).
-    // Enable shipping address collection + adjustable quantity on the link.
-    // Optional: add a custom field named "Size" in Stripe for fulfillment notes.
-    // For full automation (no manual re-orders), connect Printful/Printify via
-    // Stripe webhook → create print order (see comments in response / docs).
+    /**
+     * Paste your Stripe Payment Link URL here (or set window.TYL_APPAREL_STRIPE_LINK before site.js).
+     *
+     * Required Stripe Payment Link settings (Dashboard → Payment links → your link):
+     * 1. Collect shipping addresses = ON  (this is how we ship to the buyer, not you)
+     * 2. Collect phone numbers = ON (recommended for carriers)
+     * 3. Custom fields → add "Size" (text or dropdown S–XXL) — backup if reference id is missed
+     * 4. After payment → Don’t show confirmation page → Redirect to:
+     *    https://YOUR-DOMAIN/apparel-thanks.html
+     * 5. Adjustable quantity = ON (optional; we also pass prefilled_quantity)
+     *
+     * After each sale: open Stripe → Payments → open the charge → copy Shipping details
+     * into Printful/Printify as the recipient address. See apparel-fulfillment.html.
+     */
     var APPAREL_STRIPE_PAYMENT_LINK =
       window.TYL_APPAREL_STRIPE_LINK ||
-      ""; // e.g. "https://buy.stripe.com/xxxxx"
+      "https://buy.stripe.com/28E00i2Wq6CCatj4V64wM04";
 
-    var UNIT_PRICE = 34.99;
-    var state = { size: "M", color: "Cream", qty: 1 };
+    var PRODUCT = {
+      skuPrefix: "TYL-TEE",
+      name: "TYL Focus Tee",
+      unitPrice: 34.99,
+      printProviderHint: "Printful / Printify — ship to customer address from Stripe",
+    };
+
+    var ORDER_STORAGE_KEY = "tyl_apparel_pending_order_v1";
+    var state = { size: "M", color: "Light Apricot", logo: "White", qty: 1 };
 
     var mainImage = document.getElementById("apparelMainImage");
     var colorLabel = document.getElementById("apparelColorLabel");
+    var logoLabel = document.getElementById("apparelLogoLabel");
     var qtyInput = document.getElementById("apparelQty");
     var buyError = document.getElementById("apparelBuyError");
     var priceEl = document.getElementById("apparelPrice");
+    var nameInput = document.getElementById("apparelBuyerName");
+    var emailInput = document.getElementById("apparelBuyerEmail");
+    var skuEl = document.getElementById("apparelOrderSku");
+    var ticketList = document.getElementById("apparelOrderTicketList");
 
     function formatMoney(n) {
       return "$" + n.toFixed(2);
     }
 
+    function slug(v) {
+      return String(v || "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    }
+
+    function buildSku() {
+      return (
+        [PRODUCT.skuPrefix, slug(state.color), "LOGO-" + slug(state.logo), slug(state.size)].join("-") +
+        " × " +
+        state.qty
+      );
+    }
+
+    function buildClientReferenceId(email) {
+      // Stripe client_reference_id max length is 200. Encodes everything Travis needs at a glance.
+      var parts = [
+        PRODUCT.skuPrefix,
+        slug(state.color),
+        "L" + slug(state.logo),
+        slug(state.size),
+        "Q" + state.qty,
+      ];
+      var emailSlug = String(email || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9@._+-]/g, "")
+        .slice(0, 48);
+      if (emailSlug) parts.push(emailSlug);
+      return parts.join("|").slice(0, 200);
+    }
+
+    function syncTicket() {
+      if (skuEl) skuEl.textContent = buildSku();
+      if (!ticketList) return;
+      var name = nameInput && nameInput.value.trim() ? nameInput.value.trim() : "(collected at Stripe)";
+      var email = emailInput && emailInput.value.trim() ? emailInput.value.trim() : "(collected at Stripe)";
+      ticketList.innerHTML =
+        "<li>Product: " +
+        PRODUCT.name +
+        "</li>" +
+        "<li>SKU: " +
+        buildSku() +
+        "</li>" +
+        "<li>Shirt color: " +
+        state.color +
+        "</li>" +
+        "<li>Logo / design: " +
+        state.logo +
+        "</li>" +
+        "<li>Size: " +
+        state.size +
+        "</li>" +
+        "<li>Qty: " +
+        state.qty +
+        "</li>" +
+        "<li>Buyer name: " +
+        name +
+        "</li>" +
+        "<li>Buyer email: " +
+        email +
+        "</li>" +
+        "<li>Ship to: (collected on Stripe)</li>" +
+        "<li>Fulfillment: (collected on Stripe)</li>";
+    }
+
     function syncBuyLabel() {
-      var total = UNIT_PRICE * state.qty;
+      var total = PRODUCT.unitPrice * state.qty;
       buyBtn.textContent = "Buy now — " + formatMoney(total);
-      if (priceEl) priceEl.textContent = formatMoney(UNIT_PRICE);
+      if (priceEl) priceEl.textContent = formatMoney(PRODUCT.unitPrice);
+      syncTicket();
     }
 
     document.querySelectorAll(".apparel-thumb").forEach(function (thumb) {
@@ -604,8 +694,23 @@
         });
         swatch.classList.add("is-active");
         swatch.setAttribute("aria-pressed", "true");
-        state.color = swatch.getAttribute("data-color") || "Cream";
+        state.color = swatch.getAttribute("data-color") || "Light Apricot";
         if (colorLabel) colorLabel.textContent = state.color;
+        syncTicket();
+      });
+    });
+
+    document.querySelectorAll(".apparel-logo-choice").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".apparel-logo-choice").forEach(function (b) {
+          b.classList.remove("is-active");
+          b.setAttribute("aria-pressed", "false");
+        });
+        btn.classList.add("is-active");
+        btn.setAttribute("aria-pressed", "true");
+        state.logo = btn.getAttribute("data-logo") || "White";
+        if (logoLabel) logoLabel.textContent = state.logo;
+        syncTicket();
       });
     });
 
@@ -618,6 +723,7 @@
         btn.classList.add("is-active");
         btn.setAttribute("aria-pressed", "true");
         state.size = btn.getAttribute("data-size") || "M";
+        syncTicket();
       });
     });
 
@@ -643,40 +749,140 @@
         setQty(qtyInput.value);
       });
     }
+    if (nameInput) nameInput.addEventListener("input", syncTicket);
+    if (emailInput) emailInput.addEventListener("input", syncTicket);
+
+    function showBuyError(msg) {
+      if (!buyError) return;
+      buyError.hidden = false;
+      buyError.textContent = msg;
+    }
 
     buyBtn.addEventListener("click", function () {
       if (buyError) {
         buyError.hidden = true;
         buyError.textContent = "";
       }
-      if (!APPAREL_STRIPE_PAYMENT_LINK) {
-        if (buyError) {
-          buyError.hidden = false;
-          buyError.textContent =
-            "Stripe Payment Link not configured yet. Create a product Payment Link in Stripe, then set TYL_APPAREL_STRIPE_LINK (or APPAREL_STRIPE_PAYMENT_LINK in site.js).";
-        }
+
+      var buyerName = nameInput ? nameInput.value.trim() : "";
+      var buyerEmail = emailInput ? emailInput.value.trim() : "";
+      if (!buyerEmail || buyerEmail.indexOf("@") < 1) {
+        showBuyError("Enter your email so we can confirm the order and reach you about shipping.");
+        if (emailInput) emailInput.focus();
         return;
       }
+      if (!buyerName) {
+        showBuyError("Enter the full name that should appear on the shipping label.");
+        if (nameInput) nameInput.focus();
+        return;
+      }
+
+      if (!APPAREL_STRIPE_PAYMENT_LINK) {
+        showBuyError(
+          "Stripe Payment Link not configured yet. Create a Payment Link with shipping address collection enabled, then set TYL_APPAREL_STRIPE_LINK (see apparel-fulfillment.html)."
+        );
+        return;
+      }
+
       var url;
       try {
         url = new URL(APPAREL_STRIPE_PAYMENT_LINK);
       } catch (e) {
-        if (buyError) {
-          buyError.hidden = false;
-          buyError.textContent = "Invalid Stripe Payment Link URL.";
-        }
+        showBuyError("Invalid Stripe Payment Link URL.");
         return;
       }
-      // Pass size/color/qty so you can see them in Stripe (Payment Link → client_reference_id).
-      url.searchParams.set(
-        "client_reference_id",
-        ["tee", state.color, state.size, "qty" + state.qty].join("-").replace(/\s+/g, "")
-      );
-      // Prefill quantity when the Payment Link allows adjustable quantity.
+
+      var refId = buildClientReferenceId(buyerEmail);
+      url.searchParams.set("client_reference_id", refId);
+      url.searchParams.set("prefilled_email", buyerEmail);
       url.searchParams.set("prefilled_quantity", String(state.qty));
+
+      var pending = {
+        createdAt: new Date().toISOString(),
+        product: PRODUCT.name,
+        sku: buildSku(),
+        color: state.color,
+        logo: state.logo,
+        size: state.size,
+        qty: state.qty,
+        unitPrice: PRODUCT.unitPrice,
+        total: Math.round(PRODUCT.unitPrice * state.qty * 100) / 100,
+        buyerName: buyerName,
+        buyerEmail: buyerEmail,
+        clientReferenceId: refId,
+        shipTo: "customer_address_on_stripe",
+        fulfillment: PRODUCT.printProviderHint,
+      };
+      try {
+        sessionStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(pending));
+        localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(pending));
+      } catch (e) {
+        /* ignore quota / private mode */
+      }
+
       window.location.href = url.toString();
     });
 
     syncBuyLabel();
+  })();
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /* Apparel thank-you page: show pending order ticket after Stripe redirect */
+  (function wireApparelThanks() {
+    var root = document.getElementById("apparelThanksDetails");
+    if (!root) return;
+    var ORDER_STORAGE_KEY = "tyl_apparel_pending_order_v1";
+    var data = null;
+    try {
+      data =
+        JSON.parse(sessionStorage.getItem(ORDER_STORAGE_KEY) || "null") ||
+        JSON.parse(localStorage.getItem(ORDER_STORAGE_KEY) || "null");
+    } catch (e) {
+      data = null;
+    }
+    if (!data) {
+      root.innerHTML =
+        "<p>Thanks for your order. Your shipping address was collected by Stripe — we’ll fulfill from that address.</p>";
+      return;
+    }
+    root.innerHTML =
+      "<dl class=\"apparel-thanks-dl\">" +
+      "<div><dt>Product</dt><dd>" +
+      escapeHtml(data.product) +
+      "</dd></div>" +
+      "<div><dt>SKU</dt><dd>" +
+      escapeHtml(data.sku) +
+      "</dd></div>" +
+      "<div><dt>Color / Size / Qty</dt><dd>" +
+      escapeHtml(data.color) +
+      " · " +
+      escapeHtml(data.size) +
+      " · " +
+      escapeHtml(String(data.qty)) +
+      "</dd></div>" +
+      "<div><dt>Logo</dt><dd>" +
+      escapeHtml(data.logo || "White") +
+      "</dd></div>" +
+      "<div><dt>Total</dt><dd>" +
+      escapeHtml("$" + Number(data.total).toFixed(2)) +
+      "</dd></div>" +
+      "<div><dt>Name</dt><dd>" +
+      escapeHtml(data.buyerName) +
+      "</dd></div>" +
+      "<div><dt>Email</dt><dd>" +
+      escapeHtml(data.buyerEmail) +
+      "</dd></div>" +
+      "<div><dt>Shipping</dt><dd>Address you entered on Stripe checkout (ships to you)</dd></div>" +
+      "<div><dt>Order ref</dt><dd><code>" +
+      escapeHtml(data.clientReferenceId) +
+      "</code></dd></div>" +
+      "</dl>";
   })();
 })();
