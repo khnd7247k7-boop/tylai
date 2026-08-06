@@ -55,3 +55,7 @@ maestro-report.xml
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Local tooling (do not ship)
+.eas-cache/
+.cursor/
