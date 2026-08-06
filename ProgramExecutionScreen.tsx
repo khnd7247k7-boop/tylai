@@ -19,6 +19,12 @@ import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exer
 import ExerciseVideoPlayer from './src/components/ExerciseVideoPlayer';
 import RestTimerModal, { REST_TIMER_ENABLED_STORAGE_KEY } from './src/components/RestTimerModal';
 import StretchHoldTracker from './src/components/StretchHoldTracker';
+import ExerciseNamePickerModal from './src/components/workout/ExerciseNamePickerModal';
+import { suggestExerciseNames } from './src/utils/exerciseNameMatch';
+import {
+  persistExerciseSubstitutionInSavedPlan,
+  type ExerciseSubstitutionPersistTarget,
+} from './src/utils/persistExerciseSubstitution';
 import { prefillNumericSetFromPrevious } from './src/utils/setLoggingPrefill';
 import {
   formatStretchProtocolLabel,
@@ -31,6 +37,7 @@ import {
   formatSupersetTag,
   getSupersetGroupIndices,
 } from './src/utils/workoutSupersets';
+import type { ActiveWorkoutSnapshot } from './src/context/ActiveWorkoutContext';
 // HealthService is imported dynamically to avoid errors if expo-health isn't installed
 let HealthService: any;
 try {
@@ -45,15 +52,38 @@ interface ProgramExecutionScreenProps {
   program: WorkoutProgram;
   onBack: () => void;
   onComplete: (session: WorkoutSession) => void;
+  /**
+   * When set (custom saved plans), offer to permanently write exercise
+   * substitutions back into the stored program.
+   */
+  persistTarget?: ExerciseSubstitutionPersistTarget | null;
+  /** Called after a permanent program update succeeds. */
+  onProgramPermanentlyUpdated?: (updatedPlan: any) => void;
+  /** Restore an in-progress session (keeps workout alive across navigation). */
+  resumeSnapshot?: ActiveWorkoutSnapshot | null;
+  /** Persist live progress so leaving the screen does not lose the session. */
+  onProgressChange?: (patch: Partial<ActiveWorkoutSnapshot>) => void;
 }
 
-export default function ProgramExecutionScreen({ program, onBack, onComplete }: ProgramExecutionScreenProps) {
+export default function ProgramExecutionScreen({
+  program,
+  onBack,
+  onComplete,
+  persistTarget = null,
+  onProgramPermanentlyUpdated,
+  resumeSnapshot = null,
+  onProgressChange,
+}: ProgramExecutionScreenProps) {
   console.log('ProgramExecutionScreen rendered with program:', program);
   const { onWorkoutSessionSaved } = useSmallWins();
 
   // All hooks must be called in the same order every time
-  const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
-  const [currentSetIndex, setCurrentSetIndex] = useState(0);
+  const [currentExerciseIndex, setCurrentExerciseIndex] = useState(
+    () => resumeSnapshot?.currentExerciseIndex ?? 0
+  );
+  const [currentSetIndex, setCurrentSetIndex] = useState(
+    () => resumeSnapshot?.currentSetIndex ?? 0
+  );
   const [exerciseData, setExerciseData] = useState<Array<{
     exerciseId: string;
     name: string;
@@ -66,15 +96,19 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       completed: boolean;
       rir?: number;
     }>;
-  }>>([]);
-  const [notes, setNotes] = useState('');
-  const [startTime, setStartTime] = useState<Date>(new Date());
+  }>>(() => resumeSnapshot?.exerciseData ?? []);
+  const [notes, setNotes] = useState(() => resumeSnapshot?.notes ?? '');
+  const [startTime, setStartTime] = useState<Date>(
+    () => (resumeSnapshot?.startTimeIso ? new Date(resumeSnapshot.startTimeIso) : new Date())
+  );
   const [isFinishingWorkout, setIsFinishingWorkout] = useState(false);
   const finishingWorkoutRef = useRef(false);
   const [showSubstitutionModal, setShowSubstitutionModal] = useState(false);
   const [substitutionExerciseIndex, setSubstitutionExerciseIndex] = useState<number | null>(null);
   const [substitutionAlternatives, setSubstitutionAlternatives] = useState<ExerciseData[]>([]);
-  const [modifiedProgram, setModifiedProgram] = useState<WorkoutProgram | null>(null);
+  const [modifiedProgram, setModifiedProgram] = useState<WorkoutProgram | null>(
+    () => resumeSnapshot?.modifiedProgram ?? null
+  );
   const [previousWorkoutData, setPreviousWorkoutData] = useState<Map<string, Array<{ setNumber: number; weight: number; reps: number }>>>(new Map());
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | undefined>(undefined);
@@ -83,13 +117,79 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   const [restTimerEnabled, setRestTimerEnabled] = useState(true);
   const [restModalVisible, setRestModalVisible] = useState(false);
   const [restModalSeconds, setRestModalSeconds] = useState(90);
+  const initializedProgramIdRef = useRef<string | null>(
+    resumeSnapshot ? program.id : null
+  );
+  const skipNextProgressSyncRef = useRef(Boolean(resumeSnapshot));
+  const onProgressChangeRef = useRef(onProgressChange);
+  onProgressChangeRef.current = onProgressChange;
 
-  // Reset modifiedProgram when program prop changes
+  // Only reset when a different workout program is loaded — not on every parent re-render.
   useEffect(() => {
-    if (program) {
-      setModifiedProgram(null);
+    if (!program?.id) return;
+    if (initializedProgramIdRef.current === program.id) return;
+    initializedProgramIdRef.current = program.id;
+    setModifiedProgram(null);
+
+    try {
+      if (!program.exercises || program.exercises.length === 0) {
+        console.error('Invalid program data:', program);
+        setExerciseData([]);
+        return;
+      }
+
+      const initialData = program.exercises.map((exercise) => ({
+        exerciseId: exercise.id,
+        name: exercise.name,
+        sets: Array.from({ length: exercise.sets }, (_, index) => ({
+          setNumber: index + 1,
+          reps: exercise.reps,
+          weight: exercise.weight || 0,
+          restTime: exercise.restTime,
+          completed: false,
+        })),
+      }));
+      setExerciseData(initialData);
+      setCurrentSetIndex(0);
+      setCurrentExerciseIndex(0);
+      setStartTime(new Date());
+      setNotes('');
+    } catch (error) {
+      console.error('Error initializing exercise data:', error);
+      setExerciseData([]);
+      setCurrentSetIndex(0);
+      setCurrentExerciseIndex(0);
     }
   }, [program]);
+
+  // Keep live progress in the active-workout store so tab switches can resume.
+  useEffect(() => {
+    if (!onProgressChangeRef.current) return;
+    if (skipNextProgressSyncRef.current) {
+      skipNextProgressSyncRef.current = false;
+      return;
+    }
+    if (!exerciseData.length) return;
+    onProgressChangeRef.current({
+      exerciseData,
+      currentExerciseIndex,
+      currentSetIndex,
+      notes,
+      startTimeIso: startTime.toISOString(),
+      modifiedProgram,
+      program,
+      persistTarget: persistTarget ?? null,
+    });
+  }, [
+    exerciseData,
+    currentExerciseIndex,
+    currentSetIndex,
+    notes,
+    startTime,
+    modifiedProgram,
+    program,
+    persistTarget,
+  ]);
 
   useEffect(() => {
     AsyncStorage.getItem(REST_TIMER_ENABLED_STORAGE_KEY).then((v) => {
@@ -218,53 +318,14 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
   
   const currentProgram = modifiedProgram || program;
 
-  useEffect(() => {
-    // Initialize exercise data with error handling
-    // Always use the current program (modifiedProgram if exists, otherwise original program)
-    const programToUse = modifiedProgram || program;
-    
-    try {
-      if (!programToUse || !programToUse.exercises || programToUse.exercises.length === 0) {
-        console.error('Invalid program data:', programToUse);
-        setExerciseData([]);
-        return;
-      }
-
-      const initialData = programToUse.exercises.map(exercise => ({
-        exerciseId: exercise.id,
-        name: exercise.name,
-        sets: Array.from({ length: exercise.sets }, (_, index) => ({
-          setNumber: index + 1,
-          reps: exercise.reps,
-          weight: exercise.weight || 0,
-          restTime: exercise.restTime,
-          completed: false,
-        })),
-      }));
-      setExerciseData(initialData);
-      setCurrentSetIndex(0); // Reset to first set
-      setCurrentExerciseIndex(0); // Reset to first exercise
-    } catch (error) {
-      console.error('Error initializing exercise data:', error);
-      setExerciseData([]);
-      setCurrentSetIndex(0);
-      setCurrentExerciseIndex(0);
-    }
-  }, [program, modifiedProgram]);
-
   // Function to find similar exercises for substitution
   const findSimilarExercises = (exerciseName: string): ExerciseData[] => {
     const currentExercise = getExerciseData(exerciseName);
-    if (!currentExercise) {
-      return [];
-    }
-
     const alternatives: ExerciseData[] = [];
     const seenNames = new Set<string>();
 
-    // 1. Get exercises from the alternatives array
-    if (currentExercise.alternatives && currentExercise.alternatives.length > 0) {
-      currentExercise.alternatives.forEach(altName => {
+    if (currentExercise?.alternatives?.length) {
+      currentExercise.alternatives.forEach((altName) => {
         const altExercise = getExerciseData(altName);
         if (altExercise && !seenNames.has(altExercise.name)) {
           alternatives.push(altExercise);
@@ -273,36 +334,22 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       });
     }
 
-    // 2. Find exercises with same primary muscle group and muscle region
-    exerciseDatabase.forEach(ex => {
-      if (
-        ex.name.toLowerCase() !== exerciseName.toLowerCase() &&
-        !seenNames.has(ex.name) &&
-        ex.primaryMuscleGroup.toLowerCase() === currentExercise.primaryMuscleGroup.toLowerCase() &&
-        ex.muscleRegion === currentExercise.muscleRegion &&
-        ex.category === currentExercise.category
-      ) {
-        alternatives.push(ex);
-        seenNames.add(ex.name);
+    // Fuzzy suggestions work even when the logged name isn't in the catalog
+    suggestExerciseNames(exerciseName, 10).forEach((s) => {
+      if (s.name.toLowerCase() === exerciseName.toLowerCase()) return;
+      if (seenNames.has(s.name)) return;
+      const entry = getExerciseData(s.name);
+      if (entry) {
+        alternatives.push(entry);
+        seenNames.add(entry.name);
       }
     });
 
-    // 3. Find exercises with same primary muscle group and movement pattern
-    exerciseDatabase.forEach(ex => {
-      if (
-        ex.name.toLowerCase() !== exerciseName.toLowerCase() &&
-        !seenNames.has(ex.name) &&
-        ex.primaryMuscleGroup.toLowerCase() === currentExercise.primaryMuscleGroup.toLowerCase() &&
-        ex.movementPattern === currentExercise.movementPattern &&
-        ex.category === currentExercise.category
-      ) {
-        alternatives.push(ex);
-        seenNames.add(ex.name);
-      }
-    });
+    if (!currentExercise) {
+      return alternatives.slice(0, 10);
+    }
 
-    // 4. Find exercises with same primary muscle group (broader match)
-    exerciseDatabase.forEach(ex => {
+    exerciseDatabase.forEach((ex) => {
       if (
         ex.name.toLowerCase() !== exerciseName.toLowerCase() &&
         !seenNames.has(ex.name) &&
@@ -314,64 +361,109 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
       }
     });
 
-    return alternatives.slice(0, 10); // Limit to 10 alternatives
+    return alternatives.slice(0, 10);
   };
 
   const handleSubstituteExercise = (exerciseIndex: number) => {
     const exercise = currentProgram.exercises[exerciseIndex];
+    if (!exercise) return;
     const alternatives = findSimilarExercises(exercise.name);
     setSubstitutionExerciseIndex(exerciseIndex);
     setSubstitutionAlternatives(alternatives);
     setShowSubstitutionModal(true);
   };
 
-  const handleSelectSubstitution = (alternativeExercise: ExerciseData) => {
+  /** Apply a substituted name without wiping completed sets / cursor. */
+  const handleSelectSubstitutionByName = (nextName: string) => {
     if (substitutionExerciseIndex === null) return;
+    const trimmed = nextName.trim();
+    if (!trimmed) return;
 
-    const oldExerciseName = currentProgram.exercises[substitutionExerciseIndex].name;
+    const catalog = getExerciseData(trimmed);
+    const nextId = catalog?.id ?? `custom-${Date.now()}-${substitutionExerciseIndex}`;
+    const idx = substitutionExerciseIndex;
+    const oldExerciseName = currentProgram.exercises[idx]?.name ?? 'Exercise';
 
-    // Update exercise data (this is what drives the UI)
-    const newExerciseData = [...exerciseData];
-    newExerciseData[substitutionExerciseIndex] = {
-      ...newExerciseData[substitutionExerciseIndex],
-      name: alternativeExercise.name,
-      exerciseId: alternativeExercise.id,
-    };
+    setExerciseData((prev) => {
+      const next = [...prev];
+      if (!next[idx]) return prev;
+      next[idx] = {
+        ...next[idx],
+        name: trimmed,
+        exerciseId: nextId,
+      };
+      return next;
+    });
 
-    // Update the program exercises array (create a new array)
-    const newExercises = [...currentProgram.exercises];
-    newExercises[substitutionExerciseIndex] = {
-      ...newExercises[substitutionExerciseIndex],
-      name: alternativeExercise.name,
-      id: alternativeExercise.id,
-    };
+    setModifiedProgram((prev) => {
+      const base = prev || program;
+      const newExercises = [...base.exercises];
+      if (!newExercises[idx]) return prev;
+      newExercises[idx] = {
+        ...newExercises[idx],
+        name: trimmed,
+        id: nextId,
+      };
+      return {
+        ...base,
+        exercises: newExercises,
+      };
+    });
 
-    // Create updated program
-    const updatedProgram: WorkoutProgram = {
-      ...currentProgram,
-      exercises: newExercises,
-    };
-    
-    // Reset modifiedProgram when program prop changes
-    if (modifiedProgram && modifiedProgram.id !== program.id) {
-      setModifiedProgram(null);
-    }
-
-    // Update state
-    setExerciseData(newExerciseData);
-    setModifiedProgram(updatedProgram);
-    
     setShowSubstitutionModal(false);
     setSubstitutionExerciseIndex(null);
     setSubstitutionAlternatives([]);
-    
+
+    if (!persistTarget?.planId) {
+      Alert.alert(
+        'Exercise updated',
+        `${oldExerciseName} → ${trimmed} for this session. Your logged sets were kept.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     Alert.alert(
-      'Exercise Substituted', 
-      `${oldExerciseName} has been replaced with ${alternativeExercise.name}`,
-      [{ text: 'OK' }]
+      'Would you like to permanently implement this exercise?',
+      `“${oldExerciseName}” has been changed to “${trimmed}” for this session.\n\nSave it to your program so future workouts use it too?`,
+      [
+        { text: 'No, this session only', style: 'cancel' },
+        {
+          text: 'Yes, save permanently',
+          onPress: () => {
+            void (async () => {
+              const result = await persistExerciseSubstitutionInSavedPlan({
+                planId: persistTarget.planId,
+                weekIndex: persistTarget.weekIndex,
+                dayIndex: persistTarget.dayIndex,
+                exerciseIndex: idx,
+                oldName: oldExerciseName,
+                newName: trimmed,
+                newExerciseId: nextId,
+              });
+              if (!result.ok) {
+                Alert.alert(
+                  'Couldn’t update program',
+                  result.error ||
+                    'The change still applies to this session. Try editing the plan from Build Your Own Workout.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              if (result.updatedPlan && onProgramPermanentlyUpdated) {
+                onProgramPermanentlyUpdated(result.updatedPlan);
+              }
+              Alert.alert(
+                'Program updated',
+                `“${trimmed}” is saved in your program. This session and future workouts will use it.`,
+                [{ text: 'OK' }]
+              );
+            })();
+          },
+        },
+      ]
     );
   };
-
 
   const isWorkoutFullyDone = useCallback(
     (
@@ -444,18 +536,22 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         };
 
         try {
-          const { loadUserData, saveUserData } = await import('./src/utils/userStorage');
-          const existingHistory =
-            (await loadUserData<WorkoutSession[]>('workoutHistory')) || [];
-          await saveUserData('workoutHistory', [session, ...existingHistory]);
+          const { appendCompletedWorkoutSession } = await import(
+            './src/utils/workoutHistoryStorage'
+          );
+          const { notifyUserDataReady } = await import('./src/utils/userDataEvents');
+          await appendCompletedWorkoutSession(session, { notify: false });
+
+          try {
+            await onWorkoutSessionSaved(session);
+          } catch (e) {
+            console.warn('Small wins hook:', e);
+          }
+
+          // After history + milestones are written, refresh Progress / Fitness.
+          notifyUserDataReady();
         } catch (error) {
           console.error('Error saving workout history:', error);
-        }
-
-        try {
-          await onWorkoutSessionSaved(session);
-        } catch (e) {
-          console.warn('Small wins hook:', e);
         }
 
         onComplete(session);
@@ -784,7 +880,7 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         {/* Current Exercise */}
         <View style={styles.currentExercise}>
           <View style={styles.exerciseTitleRow}>
-          <Text style={styles.exerciseTitle}>{currentExercise.name}</Text>
+            <Text style={styles.exerciseTitle}>{currentExercise.name}</Text>
             <View style={styles.exerciseActionButtons}>
               {(() => {
                 const exerciseInfo = getExerciseData(currentExercise.name);
@@ -796,6 +892,8 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                         setCurrentVideoUrl(exerciseInfo.videoUrl);
                         setShowVideoModal(true);
                       }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Play exercise video"
                     >
                       <Text style={styles.videoButtonText}>▶</Text>
                     </TouchableOpacity>
@@ -803,14 +901,17 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                 }
                 return null;
               })()}
-              <TouchableOpacity
-                style={styles.substituteButton}
-                onPress={() => handleSubstituteExercise(currentExerciseIndex)}
-              >
-                <Text style={styles.substituteButtonText}>Change Exercise</Text>
-              </TouchableOpacity>
             </View>
           </View>
+          <TouchableOpacity
+            style={styles.substituteButton}
+            onPress={() => handleSubstituteExercise(currentExerciseIndex)}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Change exercise"
+          >
+            <Text style={styles.substituteButtonText}>Change exercise</Text>
+          </TouchableOpacity>
           {currentExercise.supersetId ? (
             <Text style={styles.supersetBanner}>
               {(() => {
@@ -1078,58 +1179,84 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
                   !!exercise.supersetId && styles.exerciseItemSuperset,
                 ]}
                 onPress={() => handleNavigateToExercise(index)}
+                activeOpacity={0.85}
               >
-              <View style={styles.exerciseInfo}>
-                  <View style={styles.exerciseNameRow}>
-                <Text style={[styles.exerciseName, isSkipped && styles.exerciseNameSkipped]}>
-                      {ssTag ? `${ssTag} · ` : ''}{exercise.name}
-                      {isSkipped && ' (Skipped)'}
-                    </Text>
-                    {!isSkipped && (
-                      <TouchableOpacity
-                        style={styles.substituteButtonSmall}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          handleSubstituteExercise(index);
-                        }}
-                      >
-                        <Text style={styles.substituteButtonTextSmall}>Change</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                <Text style={[styles.exerciseSets, isSkipped && styles.exerciseSetsSkipped]}>
-                  {(() => {
-                    const protocol = getStretchProtocol(exercise);
-                    if (protocol) return formatStretchProtocolLabel(protocol);
-                    if (exercise.durationSeconds != null && exercise.durationSeconds > 0) {
-                      return `1 set • ${exercise.durationSeconds} sec`;
-                    }
-                    return `${exercise.sets} sets • ${exercise.reps} reps`;
-                  })()}
-                </Text>
-                  {!isSkipped && exerciseSets.length > 0 && (
+                <View
+                  style={[
+                    styles.exerciseStatus,
+                    isSkipped && styles.exerciseSkipped,
+                    allSetsCompleted && !isSkipped && styles.exerciseCompleted,
+                    index === currentExerciseIndex &&
+                      !allSetsCompleted &&
+                      !isSkipped &&
+                      styles.exerciseCurrent,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.exerciseStatusText,
+                      isSkipped && styles.exerciseStatusTextSkipped,
+                      allSetsCompleted && !isSkipped && styles.exerciseStatusTextCompleted,
+                      index === currentExerciseIndex &&
+                        !allSetsCompleted &&
+                        !isSkipped &&
+                        styles.exerciseStatusTextCurrent,
+                    ]}
+                  >
+                    {isSkipped
+                      ? '⊘'
+                      : allSetsCompleted
+                        ? '✓'
+                        : index === currentExerciseIndex
+                          ? '→'
+                          : '○'}
+                  </Text>
+                </View>
+
+                <View style={styles.exerciseInfo}>
+                  <Text
+                    style={[styles.exerciseName, isSkipped && styles.exerciseNameSkipped]}
+                    numberOfLines={2}
+                  >
+                    {ssTag ? `${ssTag} · ` : ''}
+                    {exercise.name}
+                    {isSkipped ? ' (Skipped)' : ''}
+                  </Text>
+                  <Text style={[styles.exerciseSets, isSkipped && styles.exerciseSetsSkipped]}>
+                    {(() => {
+                      const protocol = getStretchProtocol(exercise);
+                      if (protocol) return formatStretchProtocolLabel(protocol);
+                      if (exercise.durationSeconds != null && exercise.durationSeconds > 0) {
+                        return `1 set • ${exercise.durationSeconds} sec`;
+                      }
+                      return `${exercise.sets} sets • ${exercise.reps} reps`;
+                    })()}
+                  </Text>
+                  {!isSkipped && exerciseSets.length > 0 ? (
                     <Text style={styles.exerciseProgress}>
                       {isStretchLoggingExercise(exercise)
                         ? `${completedSets}/${exerciseSets.length} holds`
                         : `${completedSets}/${exerciseSets.length} sets completed`}
                     </Text>
-                  )}
-              </View>
-              <View style={[
-                styles.exerciseStatus,
-                isSkipped && styles.exerciseSkipped,
-                  allSetsCompleted && !isSkipped && styles.exerciseCompleted,
-                  index === currentExerciseIndex && !allSetsCompleted && !isSkipped && styles.exerciseCurrent
-                ]}>
-                  <Text style={[
-                    styles.exerciseStatusText,
-                    isSkipped && styles.exerciseStatusTextSkipped,
-                    allSetsCompleted && !isSkipped && styles.exerciseStatusTextCompleted,
-                    index === currentExerciseIndex && !allSetsCompleted && !isSkipped && styles.exerciseStatusTextCurrent
-                  ]}>
-                    {isSkipped ? '⊘' : allSetsCompleted ? '✓' : index === currentExerciseIndex ? '→' : '○'}
-                </Text>
-              </View>
+                  ) : null}
+                </View>
+
+                {!isSkipped ? (
+                  <TouchableOpacity
+                    style={styles.substituteButtonSmall}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleSubstituteExercise(index);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Change ${exercise.name}`}
+                    hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                  >
+                    <Text style={styles.substituteButtonTextSmall}>Change</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.substituteButtonSpacer} />
+                )}
               </TouchableOpacity>
             );
           }) || null;
@@ -1167,74 +1294,25 @@ export default function ProgramExecutionScreen({ program, onBack, onComplete }: 
         }}
       />
 
-      {/* Exercise Substitution Modal */}
-      <Modal
-        visible={showSubstitutionModal}
-        animationType="none"
-        transparent={true}
-        onRequestClose={() => {
-          setShowSubstitutionModal(false);
-          setSubstitutionExerciseIndex(null);
-          setSubstitutionAlternatives([]);
-        }}
-      >
-        <SafeAreaView style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Substitute Exercise</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowSubstitutionModal(false);
-                  setSubstitutionExerciseIndex(null);
-                  setSubstitutionAlternatives([]);
-                }}
-              >
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            
-            {substitutionExerciseIndex !== null && (
-              <Text style={styles.modalSubtitle}>
-                Replace "{currentProgram.exercises[substitutionExerciseIndex].name}" with:
-              </Text>
-            )}
-
-            <ScrollView style={styles.alternativesContainer} showsVerticalScrollIndicator={false}>
-              {substitutionAlternatives.length === 0 ? (
-                <View style={styles.emptyAlternatives}>
-                  <Text style={styles.emptyAlternativesText}>No similar exercises found</Text>
-                  <Text style={styles.emptyAlternativesSubtext}>
-                    Try searching for exercises manually
-                  </Text>
-                </View>
-              ) : (
-                substitutionAlternatives.map((altExercise, index) => (
-                  <TouchableOpacity
-                    key={altExercise.id || index}
-                    style={styles.alternativeCard}
-                    onPress={() => handleSelectSubstitution(altExercise)}
-                  >
-                    <View style={styles.alternativeInfo}>
-                      <Text style={styles.alternativeName}>{altExercise.name}</Text>
-                      <Text style={styles.alternativeDetails}>
-                        {altExercise.primaryMuscleGroup.charAt(0).toUpperCase() + altExercise.primaryMuscleGroup.slice(1)}
-                        {altExercise.muscleRegion && ` • ${altExercise.muscleRegion} region`}
-                        {altExercise.difficulty && ` • ${altExercise.difficulty}`}
-                      </Text>
-                      {altExercise.equipmentRequired && altExercise.equipmentRequired.length > 0 && (
-                        <Text style={styles.alternativeEquipment}>
-                          Equipment: {altExercise.equipmentRequired.join(', ')}
-                        </Text>
-                      )}
-                    </View>
-                    <Text style={styles.selectButton}>Select</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </SafeAreaView>
-      </Modal>
+      {/* Exercise Substitution Modal — full catalog search so changes always stick */}
+      {substitutionExerciseIndex !== null ? (
+        <ExerciseNamePickerModal
+          visible={showSubstitutionModal}
+          rawName={currentProgram.exercises[substitutionExerciseIndex]?.name ?? ''}
+          currentName={currentProgram.exercises[substitutionExerciseIndex]?.name ?? ''}
+          suggestions={substitutionAlternatives.map((a) => a.name)}
+          contextHint={`Replace: ${currentProgram.exercises[substitutionExerciseIndex]?.name ?? 'exercise'}`}
+          saveLabel="Save exercise"
+          onClose={() => {
+            setShowSubstitutionModal(false);
+            setSubstitutionExerciseIndex(null);
+            setSubstitutionAlternatives([]);
+          }}
+          onSelect={(name) => {
+            handleSelectSubstitutionByName(name);
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1761,8 +1839,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
-    padding: 15,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     marginBottom: 10,
+    gap: 12,
   },
   exerciseItemCurrent: {
     borderWidth: 2,
@@ -1770,24 +1850,28 @@ const styles = StyleSheet.create({
   },
   exerciseInfo: {
     flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
   },
   exerciseName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+    lineHeight: 21,
   },
   exerciseSets: {
     fontSize: 14,
     color: '#888',
-    marginTop: 2,
+    marginTop: 4,
   },
   exerciseStatus: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#333',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   exerciseCompleted: {
     backgroundColor: '#00ff88',
@@ -1796,7 +1880,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   exerciseStatusText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#888',
   },
@@ -2052,19 +2136,24 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   substituteButton: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    alignSelf: 'stretch',
+    backgroundColor: 'rgba(0, 255, 136, 0.16)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#00ff88',
+    marginTop: 10,
+    marginBottom: 12,
+    minHeight: 48,
   },
   substituteButtonText: {
     color: '#00ff88',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   restTimerRow: {
     flexDirection: 'row',
@@ -2090,20 +2179,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   substituteButtonSmall: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: 'rgba(0, 255, 136, 0.14)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#00ff88',
-    marginLeft: 8,
+    flexShrink: 0,
+    minWidth: 72,
+    minHeight: 40,
+  },
+  substituteButtonSpacer: {
+    width: 72,
+    flexShrink: 0,
   },
   substituteButtonTextSmall: {
     color: '#00ff88',
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '800',
   },
   alternativesContainer: {
     flexGrow: 1,

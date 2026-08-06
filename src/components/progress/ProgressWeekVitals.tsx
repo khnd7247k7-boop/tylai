@@ -97,6 +97,10 @@ export default function ProgressWeekVitals({
 }: ProgressWeekVitalsProps): React.ReactElement | null {
   if (!metrics) return null;
 
+  const extras = (metrics.extraMeasurements ?? []).filter(
+    (m) => m.status === 'available' && m.value != null
+  );
+
   return (
     <View style={styles.wrap}>
       <View style={styles.grid}>
@@ -104,6 +108,9 @@ export default function ProgressWeekVitals({
         <Vital metric={{ ...metrics.measurements, label: 'Waist', unit: '"' }} decimals={1} />
         <Vital metric={toBench(metrics)} decimals={0} />
         <Vital metric={{ ...metrics.recovery, label: 'Recovery' }} decimals={0} />
+        {extras.map((m) => (
+          <Vital key={`${m.label}-${m.unit ?? ''}`} metric={m} decimals={1} />
+        ))}
       </View>
     </View>
   );

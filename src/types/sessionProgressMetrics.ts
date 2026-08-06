@@ -19,6 +19,8 @@ export interface SessionProgressMetrics {
   date: string;
   weight: MetricValue;
   measurements: MetricValue;
+  /** Chest, hips, and any user-added custom measurements for this day. */
+  extraMeasurements?: MetricValue[];
   strength: MetricValue;
   calories: MetricValue;
   protein: MetricValue;

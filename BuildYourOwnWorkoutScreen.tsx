@@ -20,17 +20,19 @@ import {
   ScaleDecorator,
 } from 'react-native-draggable-flatlist';
 import { StatusBar } from 'expo-status-bar';
-import { WorkoutProgram, Exercise, WorkoutSession } from './data/workoutPrograms';
-import ProgramExecutionScreen from './ProgramExecutionScreen';
+import { WorkoutProgram, Exercise } from './data/workoutPrograms';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { useActiveWorkout } from './src/context/ActiveWorkoutContext';
+import { deleteSavedWorkoutPlan } from './src/utils/savedWorkoutPlanActions';
 import { exerciseDatabase } from './src/data/exerciseDatabase';
-import { useSmallWins } from './src/context/SmallWinsContext';
 import { AppTheme } from './src/theme/appVisualTheme';
 import {
   type CustomExercise,
   type DayWorkout,
   type PlanWeek,
   type CustomPlanScheduleMode,
+  type EditableSavedProgram,
+  cloneCustomExercises,
   cloneDayWorkoutsFromPreviousWeek,
   createFlexibleTrainingDays,
   createInitialProgramWeeks,
@@ -50,12 +52,15 @@ import {
 } from './src/utils/workoutSupersets';
 import { TOUR_TARGET_IDS } from './src/tour/tourTargets';
 import { useTourTargetRef } from './src/tour/useTourTargetRef';
+import ScanWorkoutSpreadsheetModal from './src/components/workout/ScanWorkoutSpreadsheetModal';
 
 interface BuildYourOwnWorkoutScreenProps {
   onBack: () => void;
   onWorkoutComplete?: () => void;
   /** When set, opens the builder in edit mode for an existing saved plan. */
   planToEdit?: any;
+  /** Called after a plan is deleted from edit mode so parent lists stay in sync. */
+  onPlanDeleted?: (planId: string) => void;
 }
 
 const MAX_PROGRAM_WEEKS = 12;
@@ -103,9 +108,10 @@ export default function BuildYourOwnWorkoutScreen({
   onBack,
   onWorkoutComplete,
   planToEdit,
+  onPlanDeleted,
 }: BuildYourOwnWorkoutScreenProps) {
   const fitnessBuildIntroRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessBuildIntro);
-  const { onWorkoutSessionSaved } = useSmallWins();
+  const { startActiveWorkout } = useActiveWorkout();
   const isEditMode = Boolean(planToEdit?.id);
   const [editingPlanId, setEditingPlanId] = useState<string | null>(planToEdit?.id ?? null);
   // Step 1: Basic Details
@@ -117,6 +123,10 @@ export default function BuildYourOwnWorkoutScreen({
   const [weekNames, setWeekNames] = useState<string[]>(['Week 1']);
   const [currentWeekIndex, setCurrentWeekIndex] = useState(-1);
   const [currentDayIndex, setCurrentDayIndex] = useState<number>(-1);
+  const [scanSpreadsheetVisible, setScanSpreadsheetVisible] = useState(false);
+  const [copyDaysModalVisible, setCopyDaysModalVisible] = useState(false);
+  const [copyTargetDayIndexes, setCopyTargetDayIndexes] = useState<number[]>([]);
+  const [copyAlsoName, setCopyAlsoName] = useState(false);
 
   const [programWeeks, setProgramWeeks] = useState<PlanWeek[]>([]);
   
@@ -143,8 +153,6 @@ export default function BuildYourOwnWorkoutScreen({
   /** Exercise ids selected for creating / ungrouping a superset. */
   const [supersetPickIds, setSupersetPickIds] = useState<string[]>([]);
   const [showMoreCommonExercises, setShowMoreCommonExercises] = useState(false);
-  
-  const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
 
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
@@ -302,6 +310,21 @@ export default function BuildYourOwnWorkoutScreen({
       syncWeekNamesFromCount(1);
     }
   };
+
+  const applyScannedProgram = useCallback((editable: EditableSavedProgram) => {
+    setWorkoutName(editable.workoutName);
+    setScheduleMode(editable.scheduleMode);
+    setFlexibleDayCount(editable.flexibleDayCount);
+    setTrainingDays(editable.trainingDays);
+    setNumWeeks(editable.numWeeks);
+    setWeekNames(editable.weekNames);
+    setProgramWeeks(editable.programWeeks);
+    setCurrentWeekIndex(-1);
+    setCurrentDayIndex(-2);
+    setCurrentDayExercises([]);
+    setSupersetPickIds([]);
+    setExerciseSearchQuery('');
+  }, []);
 
   const handleStartBuildingDays = () => {
     if (!workoutName.trim()) {
@@ -639,6 +662,110 @@ export default function BuildYourOwnWorkoutScreen({
     setCurrentDayIndex(-2);
   };
 
+  const openCopyToDaysModal = useCallback(() => {
+    if (currentDayExercises.length === 0) {
+      Alert.alert('Add exercises first', 'Build this workout, then copy it to other days.');
+      return;
+    }
+    if (trainingDays.length < 2) {
+      Alert.alert(
+        'Only one workout',
+        'Add more training days or workouts in rotation to copy this list elsewhere.'
+      );
+      return;
+    }
+    // Default: all other days in this week
+    const defaults = trainingDays
+      .map((_, i) => i)
+      .filter((i) => i !== currentDayIndex);
+    setCopyTargetDayIndexes(defaults);
+    setCopyAlsoName(false);
+    setCopyDaysModalVisible(true);
+  }, [currentDayExercises.length, trainingDays, currentDayIndex]);
+
+  const toggleCopyTargetDay = useCallback((dayIndex: number) => {
+    setCopyTargetDayIndexes((prev) =>
+      prev.includes(dayIndex) ? prev.filter((i) => i !== dayIndex) : [...prev, dayIndex].sort((a, b) => a - b)
+    );
+  }, []);
+
+  const applyCopyToSelectedDays = useCallback(() => {
+    if (copyTargetDayIndexes.length === 0) {
+      Alert.alert('Pick at least one day', 'Select which day(s) should get these exercises.');
+      return;
+    }
+    if (currentWeekIndex < 0 || currentDayExercises.length === 0) return;
+
+    const sourceName = dayNameDraft.trim() || programWeeks[currentWeekIndex]?.dayWorkouts[currentDayIndex]?.workoutName;
+    const targetsWithExisting = copyTargetDayIndexes.filter(
+      (i) => (programWeeks[currentWeekIndex]?.dayWorkouts[i]?.exercises?.length ?? 0) > 0
+    );
+
+    const runCopy = () => {
+      setProgramWeeks((prev) => {
+        const next = [...prev];
+        const week = next[currentWeekIndex];
+        if (!week) return prev;
+        const days = [...week.dayWorkouts];
+
+        // Persist current day first
+        days[currentDayIndex] = {
+          ...days[currentDayIndex],
+          exercises: [...currentDayExercises],
+          workoutName:
+            dayNameDraft.trim() || days[currentDayIndex].workoutName,
+        };
+
+        for (const targetIndex of copyTargetDayIndexes) {
+          if (targetIndex === currentDayIndex) continue;
+          if (!days[targetIndex]) continue;
+          days[targetIndex] = {
+            ...days[targetIndex],
+            exercises: cloneCustomExercises(currentDayExercises),
+            ...(copyAlsoName && sourceName
+              ? { workoutName: sourceName }
+              : {}),
+            completed: false,
+          };
+        }
+
+        next[currentWeekIndex] = { ...week, dayWorkouts: days, completed: false };
+        return next;
+      });
+      setCopyDaysModalVisible(false);
+      const labels = copyTargetDayIndexes
+        .map((i) => trainingDays[i])
+        .filter(Boolean)
+        .join(', ');
+      Alert.alert(
+        'Copied',
+        `Exercises copied to ${labels}. You can still tweak sets and reps on each day.`
+      );
+    };
+
+    if (targetsWithExisting.length > 0) {
+      Alert.alert(
+        'Replace exercises?',
+        `Some selected days already have exercises. Copying will replace them.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Replace', style: 'destructive', onPress: runCopy },
+        ]
+      );
+      return;
+    }
+    runCopy();
+  }, [
+    copyTargetDayIndexes,
+    currentWeekIndex,
+    currentDayIndex,
+    currentDayExercises,
+    dayNameDraft,
+    programWeeks,
+    copyAlsoName,
+    trainingDays,
+  ]);
+
   const handleBackToDay = (weekIndex: number, dayIndex: number) => {
     setCurrentWeekIndex(weekIndex);
     setCurrentDayIndex(dayIndex);
@@ -709,31 +836,38 @@ export default function BuildYourOwnWorkoutScreen({
       equipment: [],
     };
 
-    setSelectedProgram(program);
+    startActiveWorkout({
+      program,
+      onSessionComplete: async () => {
+        if (onWorkoutComplete) {
+          onWorkoutComplete();
+        }
+      },
+    });
   };
 
-  const handleWorkoutComplete = async (session: WorkoutSession) => {
-    try {
-      console.log('Saving workout session:', session);
-      console.log('Session exercises:', session.exercises);
-      const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
-      const updatedHistory = [session, ...existingHistory]; // Add to beginning for most recent first
-      await saveUserData('workoutHistory', updatedHistory);
-      console.log('Workout history saved successfully');
-    } catch (error) {
-      console.error('Error saving workout history:', error);
-    }
-
-    try {
-      await onWorkoutSessionSaved(session);
-    } catch {
-      /* ignore */
-    }
-
-    setSelectedProgram(null);
-    if (onWorkoutComplete) {
-      onWorkoutComplete();
-    }
+  const handleDeleteProgram = () => {
+    if (!editingPlanId) return;
+    Alert.alert(
+      'Delete Program',
+      'Are you sure you want to delete this workout plan? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSavedWorkoutPlan(editingPlanId);
+              onPlanDeleted?.(editingPlanId);
+            } catch (error) {
+              console.error('Error deleting plan:', error);
+              Alert.alert('Error', 'Failed to delete workout plan. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSaveWorkout = async () => {
@@ -811,16 +945,6 @@ export default function BuildYourOwnWorkoutScreen({
     }
   };
 
-  if (selectedProgram) {
-    return (
-      <ProgramExecutionScreen
-        program={selectedProgram}
-        onBack={() => setSelectedProgram(null)}
-        onComplete={handleWorkoutComplete}
-      />
-    );
-  }
-
   // Step 1: Basic Details
   if (currentDayIndex === -1) {
     return (
@@ -839,10 +963,40 @@ export default function BuildYourOwnWorkoutScreen({
           <Text style={styles.headerTitle}>
             {isEditMode ? 'Edit Program' : 'Build Your Own Workout'}
           </Text>
-          <View style={styles.placeholder} />
+          {isEditMode ? (
+            <TouchableOpacity
+              style={styles.headerDeleteBtn}
+              onPress={handleDeleteProgram}
+              accessibilityRole="button"
+              accessibilityLabel="Delete program"
+            >
+              <Text style={styles.headerDeleteBtnText}>Delete</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.placeholder} />
+          )}
         </View>
 
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          {!isEditMode ? (
+            <View style={styles.section}>
+              <Text style={styles.label}>Scan a workout</Text>
+              <Text style={styles.hint}>
+                Photograph a spreadsheet, printed plan, or handwritten pen-and-paper log. AI extracts
+                exercises, sets, and reps into this builder.
+              </Text>
+              <TouchableOpacity
+                style={styles.scanSpreadsheetBtn}
+                onPress={() => setScanSpreadsheetVisible(true)}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel="Scan workout from photo"
+              >
+                <Text style={styles.scanSpreadsheetBtnText}>Scan workout from photo</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           <View style={styles.section}>
             <Text style={styles.label}>Program Name</Text>
             <TextInput
@@ -1036,6 +1190,12 @@ export default function BuildYourOwnWorkoutScreen({
             </Text>
           )}
         </ScrollView>
+
+        <ScanWorkoutSpreadsheetModal
+          visible={scanSpreadsheetVisible}
+          onClose={() => setScanSpreadsheetVisible(false)}
+          onApply={applyScannedProgram}
+        />
       </SafeAreaView>
     );
   }
@@ -1321,6 +1481,18 @@ export default function BuildYourOwnWorkoutScreen({
                 </View>
               )}
 
+              {currentDayExercises.length > 0 && trainingDays.length > 1 ? (
+                <TouchableOpacity
+                  style={styles.copyToDaysButton}
+                  onPress={openCopyToDaysModal}
+                  activeOpacity={0.88}
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy exercises to other days"
+                >
+                  <Text style={styles.copyToDaysButtonText}>Copy to day(s)…</Text>
+                </TouchableOpacity>
+              ) : null}
+
               <TouchableOpacity
                 style={[
                   styles.completeDayButton,
@@ -1558,6 +1730,117 @@ export default function BuildYourOwnWorkoutScreen({
             </KeyboardAvoidingView>
           </View>
         </Modal>
+
+        <Modal
+          visible={copyDaysModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setCopyDaysModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.copyDaysModalCard}>
+              <Text style={styles.modalTitle}>Copy to day(s)</Text>
+              <Text style={styles.copyDaysIntro}>
+                Copy the {currentDayExercises.length} exercise
+                {currentDayExercises.length === 1 ? '' : 's'} from{' '}
+                {trainingDays[currentDayIndex] || 'this workout'} onto the days you select.
+                Existing exercises on those days will be replaced.
+              </Text>
+
+              <View style={styles.copyDaysSelectRow}>
+                <TouchableOpacity
+                  onPress={() =>
+                    setCopyTargetDayIndexes(
+                      trainingDays.map((_, i) => i).filter((i) => i !== currentDayIndex)
+                    )
+                  }
+                  hitSlop={8}
+                >
+                  <Text style={styles.copyDaysSelectLink}>Select all</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setCopyTargetDayIndexes([])} hitSlop={8}>
+                  <Text style={styles.copyDaysSelectLink}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.copyDaysList}>
+                {trainingDays.map((label, index) => {
+                  if (index === currentDayIndex) {
+                    return (
+                      <View key={`copy-src-${label}`} style={[styles.copyDayRow, styles.copyDayRowDisabled]}>
+                        <Text style={styles.copyDayLabel}>{label}</Text>
+                        <Text style={styles.copyDayMeta}>Source</Text>
+                      </View>
+                    );
+                  }
+                  const selected = copyTargetDayIndexes.includes(index);
+                  const existingCount =
+                    programWeeks[currentWeekIndex]?.dayWorkouts[index]?.exercises?.length ?? 0;
+                  return (
+                    <TouchableOpacity
+                      key={`copy-tgt-${label}`}
+                      style={[styles.copyDayRow, selected && styles.copyDayRowSelected]}
+                      onPress={() => toggleCopyTargetDay(index)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={[styles.copyDayCheck, selected && styles.copyDayCheckOn]}>
+                        {selected ? <Text style={styles.copyDayCheckMark}>✓</Text> : null}
+                      </View>
+                      <View style={styles.copyDayTextCol}>
+                        <Text
+                          style={[styles.copyDayLabel, selected && styles.copyDayLabelSelected]}
+                        >
+                          {label}
+                        </Text>
+                        {existingCount > 0 ? (
+                          <Text style={styles.copyDayMeta}>
+                            {existingCount} exercise{existingCount === 1 ? '' : 's'} (will replace)
+                          </Text>
+                        ) : (
+                          <Text style={styles.copyDayMeta}>Empty</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.copyAlsoNameRow, copyAlsoName && styles.copyAlsoNameRowOn]}
+                onPress={() => setCopyAlsoName((v) => !v)}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.copyDayCheck, copyAlsoName && styles.copyDayCheckOn]}>
+                  {copyAlsoName ? <Text style={styles.copyDayCheckMark}>✓</Text> : null}
+                </View>
+                <Text style={styles.copyAlsoNameText}>Also copy workout name</Text>
+              </TouchableOpacity>
+
+              <View style={styles.copyDaysActions}>
+                <TouchableOpacity
+                  style={styles.copyDaysCancelBtn}
+                  onPress={() => setCopyDaysModalVisible(false)}
+                >
+                  <Text style={styles.copyDaysCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.copyDaysConfirmBtn,
+                    copyTargetDayIndexes.length === 0 && styles.copyDaysConfirmBtnDisabled,
+                  ]}
+                  onPress={applyCopyToSelectedDays}
+                  disabled={copyTargetDayIndexes.length === 0}
+                >
+                  <Text style={styles.copyDaysConfirmText}>
+                    Copy to {copyTargetDayIndexes.length || '…'} day
+                    {copyTargetDayIndexes.length === 1 ? '' : 's'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {renameModal}
       </SafeAreaView>
     );
@@ -1586,7 +1869,18 @@ export default function BuildYourOwnWorkoutScreen({
         <Text style={styles.headerTitle}>
           {isEditMode ? 'Edit Program' : 'Review Program'}
         </Text>
-        <View style={styles.placeholder} />
+        {isEditMode ? (
+          <TouchableOpacity
+            style={styles.headerDeleteBtn}
+            onPress={handleDeleteProgram}
+            accessibilityRole="button"
+            accessibilityLabel="Delete program"
+          >
+            <Text style={styles.headerDeleteBtnText}>Delete</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.placeholder} />
+        )}
       </View>
 
       <NestableScrollContainer
@@ -1728,6 +2022,16 @@ export default function BuildYourOwnWorkoutScreen({
                 {isEditMode ? 'Save Changes' : 'Save Program'}
               </Text>
             </TouchableOpacity>
+            {isEditMode ? (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.deleteProgramButton]}
+                onPress={handleDeleteProgram}
+                accessibilityRole="button"
+                accessibilityLabel="Delete program"
+              >
+                <Text style={styles.deleteProgramButtonText}>Delete Program</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </NestableScrollContainer>
@@ -2019,6 +2323,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: AppTheme.border,
     padding: 14,
+  },
+  scanSpreadsheetBtn: {
+    backgroundColor: 'rgba(0, 255, 136, 0.12)',
+    borderWidth: 1,
+    borderColor: AppTheme.accent,
+    borderRadius: AppTheme.radiusButton,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  scanSpreadsheetBtnText: {
+    color: AppTheme.accent,
+    fontSize: 15,
+    fontWeight: '700',
   },
   label: {
     fontSize: 18,
@@ -2467,6 +2784,149 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
+  copyToDaysButton: {
+    borderWidth: 1,
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  copyToDaysButtonText: {
+    color: AppTheme.accent,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  copyDaysModalCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    padding: 18,
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '86%',
+  },
+  copyDaysIntro: {
+    color: AppTheme.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  copyDaysSelectRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  copyDaysSelectLink: {
+    color: AppTheme.accent,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  copyDaysList: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  copyDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: '#121212',
+  },
+  copyDayRowSelected: {
+    borderColor: AppTheme.accent,
+    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+  },
+  copyDayRowDisabled: {
+    opacity: 0.55,
+  },
+  copyDayCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#555',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  copyDayCheckOn: {
+    borderColor: AppTheme.accent,
+    backgroundColor: AppTheme.accent,
+  },
+  copyDayCheckMark: {
+    color: '#0a0a0a',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  copyDayTextCol: {
+    flex: 1,
+  },
+  copyDayLabel: {
+    color: AppTheme.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  copyDayLabelSelected: {
+    color: AppTheme.accent,
+  },
+  copyDayMeta: {
+    color: AppTheme.textFaint,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  copyAlsoNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  copyAlsoNameRowOn: {},
+  copyAlsoNameText: {
+    color: AppTheme.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  copyDaysActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  copyDaysCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+  },
+  copyDaysCancelText: {
+    color: AppTheme.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  copyDaysConfirmBtn: {
+    flex: 1.4,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: AppTheme.accent,
+    alignItems: 'center',
+  },
+  copyDaysConfirmBtnDisabled: {
+    opacity: 0.4,
+  },
+  copyDaysConfirmText: {
+    color: AppTheme.accentDark,
+    fontSize: 14,
+    fontWeight: '800',
+  },
   reviewDayCard: {
     backgroundColor: '#2a2a2a',
     borderRadius: 12,
@@ -2567,6 +3027,29 @@ const styles = StyleSheet.create({
     color: '#00ff88',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  deleteProgramButton: {
+    marginTop: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#ff4444',
+  },
+  deleteProgramButtonText: {
+    color: '#ff6666',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  headerDeleteBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ff4444',
+  },
+  headerDeleteBtnText: {
+    color: '#ff6666',
+    fontSize: 13,
+    fontWeight: '700',
   },
   nextButton: {
     backgroundColor: '#4ADE80',

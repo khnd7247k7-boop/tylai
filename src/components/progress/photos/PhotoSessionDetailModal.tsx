@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   View,
@@ -11,7 +11,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import type { PhotoSession } from '../../../types/progressPhotos';
+import type { PhotoPose, PhotoSession } from '../../../types/progressPhotos';
 import { PHOTO_POSES, PHOTO_POSE_LABELS } from '../../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../../types/sessionProgressMetrics';
 import { formatSessionStamp } from '../../../services/PhotoService';
@@ -22,6 +22,8 @@ interface PhotoSessionDetailModalProps {
   session: PhotoSession | null;
   metrics: SessionProgressMetrics | null;
   onClose: () => void;
+  initialPose?: PhotoPose;
+  onPoseChange?: (pose: PhotoPose) => void;
 }
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -31,9 +33,24 @@ export default function PhotoSessionDetailModal({
   session,
   metrics,
   onClose,
+  initialPose = 'front',
+  onPoseChange,
 }: PhotoSessionDetailModalProps): React.ReactElement {
-  const [poseIndex, setPoseIndex] = useState(0);
+  const [poseIndex, setPoseIndex] = useState(() =>
+    Math.max(0, PHOTO_POSES.indexOf(initialPose))
+  );
   const pose = PHOTO_POSES[poseIndex];
+
+  useEffect(() => {
+    if (!visible) return;
+    const idx = PHOTO_POSES.indexOf(initialPose);
+    if (idx >= 0) setPoseIndex(idx);
+  }, [visible, initialPose, session?.id]);
+
+  const selectPose = (index: number) => {
+    setPoseIndex(index);
+    onPoseChange?.(PHOTO_POSES[index]);
+  };
 
   const workoutLine = useMemo(() => {
     if (!metrics) return '—';
@@ -77,7 +94,7 @@ export default function PhotoSessionDetailModal({
               <TouchableOpacity
                 key={p}
                 style={[styles.poseChip, i === poseIndex && styles.poseChipActive]}
-                onPress={() => setPoseIndex(i)}
+                onPress={() => selectPose(i)}
               >
                 <Text style={[styles.poseChipText, i === poseIndex && styles.poseChipTextActive]}>
                   {PHOTO_POSE_LABELS[p]}
@@ -89,7 +106,12 @@ export default function PhotoSessionDetailModal({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Body & training</Text>
             <DetailRow label="Weight" value={formatMetric(metrics?.weight)} />
-            <DetailRow label="Measurements" value={formatMetric(metrics?.measurements)} />
+            <DetailRow label="Waist" value={formatMetric(metrics?.measurements)} />
+            {(metrics?.extraMeasurements ?? [])
+              .filter((m) => m.status === 'available')
+              .map((m) => (
+                <DetailRow key={m.label} label={m.label} value={formatMetric(m)} />
+              ))}
             <DetailRow label="Strength" value={formatMetric(metrics?.strength)} />
             <DetailRow label="Calories" value={formatMetric(metrics?.calories)} />
             <DetailRow label="Protein" value={formatMetric(metrics?.protein)} />

@@ -56,14 +56,14 @@ export function createAppTourSteps(nav: TourNavHandlers): TourStep[] {
     {
       id: 'fitness-my-plans',
       targetSelector: tourSelector(TOUR_TARGET_IDS.fitnessMyPlans),
-      title: 'My Plans',
+      title: 'Log Workout',
       content:
-        'Tap to expand your saved and active workout programs — switch plans, review AI suggestions, and open any plan to start a session.',
+        'Log a past session or a one-off daily workout when you train something different from your saved plan.',
       placement: 'top',
       requireActualClick: true,
       spotlightPadding: 10,
-      emoji: '📂',
-      tapPrompt: 'Tap My Plans to continue.',
+      emoji: '📝',
+      tapPrompt: 'Tap Log Workout to continue.',
       prepare: async () => {
         await nav.ensureWorkoutsHome();
         await tourPause();
@@ -80,7 +80,7 @@ export function createAppTourSteps(nav: TourNavHandlers): TourStep[] {
       spotlightPadding: 12,
       emoji: '✅',
       prepare: async () => {
-        await nav.ensureMyPlansOpen();
+        await nav.ensureWorkoutsHome();
         await tourPause(TOUR_MODAL_SETTLE_MS);
       },
     },

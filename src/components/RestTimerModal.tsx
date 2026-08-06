@@ -1,5 +1,19 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Modal,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  AppState,
+  type AppStateStatus,
+} from 'react-native';
+import {
+  cancelRestCompleteNotification,
+  rescheduleRestCompleteNotification,
+  scheduleRestCompleteNotification,
+} from '../utils/restTimerNotifications';
+import { useUserSettings } from '../../SettingsProvider';
 
 export const REST_TIMER_ENABLED_STORAGE_KEY = 'restTimerEnabled';
 
@@ -15,52 +29,112 @@ function formatTime(totalSeconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function RestTimerModal({ visible, seconds: initialSeconds, onDismiss }: RestTimerModalProps) {
+function remainingFromEndsAt(endsAtMs: number): number {
+  return Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000));
+}
+
+export default function RestTimerModal({
+  visible,
+  seconds: initialSeconds,
+  onDismiss,
+}: RestTimerModalProps) {
+  const { restTimerAlert } = useUserSettings();
   const [remaining, setRemaining] = useState(initialSeconds);
+  const endsAtRef = useRef<number>(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completedRef = useRef(false);
   const onDismissRef = useRef(onDismiss);
+  const restTimerAlertRef = useRef(restTimerAlert);
   onDismissRef.current = onDismiss;
+  restTimerAlertRef.current = restTimerAlert;
 
-  useEffect(() => {
-    if (!visible) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-    setRemaining(initialSeconds);
-    intervalRef.current = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-          onDismissRef.current();
-          return 0;
-        }
-        return r - 1;
-      });
-    }, 1000);
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [visible, initialSeconds]);
-
-  const handleSkip = () => {
+  const clearTick = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+  }, []);
+
+  const finish = useCallback(async () => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    clearTick();
+    // Still in foreground — cancel so we don't double-alert; background cases keep the notif.
+    if (AppState.currentState === 'active') {
+      await cancelRestCompleteNotification();
+    }
+    onDismissRef.current();
+  }, [clearTick]);
+
+  const syncFromWallClock = useCallback(() => {
+    if (!endsAtRef.current) return;
+    const left = remainingFromEndsAt(endsAtRef.current);
+    setRemaining(left);
+    if (left <= 0) {
+      void finish();
+    }
+  }, [finish]);
+
+  useEffect(() => {
+    if (!visible) {
+      clearTick();
+      void cancelRestCompleteNotification();
+      completedRef.current = false;
+      endsAtRef.current = 0;
+      return;
+    }
+
+    completedRef.current = false;
+    const endsAt = Date.now() + Math.max(1, initialSeconds) * 1000;
+    endsAtRef.current = endsAt;
+    setRemaining(remainingFromEndsAt(endsAt));
+    if (restTimerAlertRef.current) {
+      void scheduleRestCompleteNotification(endsAt);
+    } else {
+      void cancelRestCompleteNotification();
+    }
+
+    clearTick();
+    intervalRef.current = setInterval(() => {
+      if (AppState.currentState !== 'active') return;
+      syncFromWallClock();
+    }, 250);
+
+    const onAppState = (next: AppStateStatus) => {
+      if (next === 'active') {
+        syncFromWallClock();
+      }
+    };
+    const sub = AppState.addEventListener('change', onAppState);
+
+    return () => {
+      clearTick();
+      sub.remove();
+      // Leaving mid-rest (navigate away / unmount): drop the pending alert.
+      if (!completedRef.current) {
+        void cancelRestCompleteNotification();
+      }
+    };
+  }, [visible, initialSeconds, clearTick, syncFromWallClock]);
+
+  const handleSkip = () => {
+    completedRef.current = true;
+    clearTick();
+    void cancelRestCompleteNotification();
     onDismiss();
   };
 
   const addTime = () => {
-    setRemaining((r) => r + 15);
+    if (completedRef.current) return;
+    const base = Math.max(endsAtRef.current, Date.now());
+    const nextEnds = base + 15_000;
+    endsAtRef.current = nextEnds;
+    setRemaining(remainingFromEndsAt(nextEnds));
+    if (restTimerAlertRef.current) {
+      void rescheduleRestCompleteNotification(nextEnds);
+    } else {
+      void cancelRestCompleteNotification();
+    }
   };
 
   return (

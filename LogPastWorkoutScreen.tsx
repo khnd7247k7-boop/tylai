@@ -29,6 +29,10 @@ import { useSmallWins } from './src/context/SmallWinsContext';
 interface LogPastWorkoutScreenProps {
   onBack: () => void;
   onComplete: (session: WorkoutSession) => void;
+  /** past = previous session with date picker; daily = today's one-off session. */
+  mode?: 'past' | 'daily';
+  /** Called after the user opts to save a daily workout as a reusable program. */
+  onProgramsChanged?: () => void;
 }
 
 interface ExerciseEntry {
@@ -56,37 +60,61 @@ function exerciseTrackingSummary(ex: ExerciseEntry): string {
   return `${ex.sets.length} set${ex.sets.length === 1 ? '' : 's'} · ${parts.join(', ')}`;
 }
 
-export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWorkoutScreenProps) {
-  const { onWorkoutSessionSaved } = useSmallWins();
-  const [selectedDate, setSelectedDate] = useState<Date>(() => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday;
+function formatDailyWorkoutTitle(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
   });
-  const [workoutName, setWorkoutName] = useState('');
+}
+
+export default function LogPastWorkoutScreen({
+  onBack,
+  onComplete,
+  mode = 'past',
+  onProgramsChanged,
+}: LogPastWorkoutScreenProps) {
+  const isDaily = mode === 'daily';
+  const { onWorkoutSessionSaved } = useSmallWins();
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+  const [workoutName, setWorkoutName] = useState(() =>
+    mode === 'daily' ? formatDailyWorkoutTitle(new Date()) : ''
+  );
   const [exercises, setExercises] = useState<ExerciseEntry[]>([]);
   const [exerciseSearch, setExerciseSearch] = useState('');
   const deferredExerciseSearch = useDeferredValue(exerciseSearch);
   const [savedPlans, setSavedPlans] = useState<any[]>([]);
-  const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
+  /** Cloned snapshot for day-picker UI only — never written back to storage. */
+  const [templatePlan, setTemplatePlan] = useState<any | null>(null);
+  const [templatePlanId, setTemplatePlanId] = useState<string | null>(null);
+  const [templatePlanName, setTemplatePlanName] = useState<string | null>(null);
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
   const [customExercises, setCustomExercises] = useState<ExerciseData[]>([]);
   const [showAddCustomModal, setShowAddCustomModal] = useState(false);
   const [customExerciseName, setCustomExerciseName] = useState('');
   const [customExerciseSaving, setCustomExerciseSaving] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
-  const [draftDate, setDraftDate] = useState<Date>(() => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday;
-  });
-  /** Exercises stay expanded while logging; only collapse when the user taps Minimize. */
+  const [draftDate, setDraftDate] = useState<Date>(() => new Date());
+  /** Remount wheel pickers each open so dials land on the preset date. */
+  const [datePickerKey, setDatePickerKey] = useState(0);
+  /** Manual adds default expanded; plan-loaded rows start collapsed until the user expands. */
   const [expandOverride, setExpandOverride] = useState<Record<string, boolean>>({});
 
   const isExerciseExpanded = useCallback(
     (ex: ExerciseEntry) => expandOverride[ex.id] !== false,
     [expandOverride]
   );
+
+  const setAllExercisesExpanded = useCallback((expanded: boolean) => {
+    setExpandOverride((prev) => {
+      const next = { ...prev };
+      for (const ex of exercises) {
+        next[ex.id] = expanded;
+      }
+      return next;
+    });
+  }, [exercises]);
 
   const refreshCustomExercises = useCallback(async () => {
     try {
@@ -112,12 +140,15 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
   };
 
   const openDateModal = () => {
-    setDraftDate(new Date(selectedDate));
+    // Seed dials from the date shown in "When was this workout?" (defaults to today).
+    const preset = new Date(selectedDate.getTime());
+    setDraftDate(preset);
+    setDatePickerKey((k) => k + 1);
     setShowDateModal(true);
   };
 
   const applyDraftDate = () => {
-    setSelectedDate(new Date(draftDate));
+    setSelectedDate(new Date(draftDate.getTime()));
     setShowDateModal(false);
   };
 
@@ -144,9 +175,9 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
             }
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityLabel={expanded ? 'Minimize exercise sets' : 'Show exercise sets and weights'}
+            accessibilityLabel={expanded ? 'Hide exercise details' : 'Show exercise sets and weights'}
           >
-            <Text style={styles.expandToggleBtnText}>{expanded ? 'Minimize' : 'Show sets'}</Text>
+            <Text style={styles.expandToggleBtnText}>{expanded ? 'Hide details' : 'Show details'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.removeButton}
@@ -241,6 +272,7 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
     };
 
     setExercises((prev) => [...prev, newExercise]);
+    setExpandOverride((o) => ({ ...o, [newExercise.id]: true }));
     setExerciseSearch('');
   };
 
@@ -338,32 +370,45 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
     }));
   };
 
+  const clonePlanForTemplate = (plan: any) => {
+    try {
+      return JSON.parse(JSON.stringify(plan));
+    } catch {
+      return { ...plan, weeklyPlan: plan?.weeklyPlan ? { ...plan.weeklyPlan } : plan?.weeklyPlan };
+    }
+  };
+
   const handleLoadPlan = (plan: any) => {
-    setSelectedPlan(plan);
-    setWorkoutName(plan.name);
+    // Copy only — edits in this screen must never mutate the saved program.
+    const cloned = clonePlanForTemplate(plan);
+    setTemplatePlan(cloned);
+    setTemplatePlanId(typeof plan?.id === 'string' ? plan.id : null);
+    setTemplatePlanName(typeof plan?.name === 'string' ? plan.name : null);
+    // Daily logs keep the date title (or whatever the user typed) — never the plan name.
+    if (!isDaily) {
+      setWorkoutName(plan.name || '');
+    }
     setSelectedDayIndex(null);
     setExercises([]);
-    
-    // If plan has multiple days, don't load exercises yet - wait for day selection
-    if (plan.weeklyPlan && plan.weeklyPlan.weekDays && plan.weeklyPlan.weekDays.length > 1) {
-      // User needs to select a day first
+    setExpandOverride({});
+
+    if (cloned.weeklyPlan?.weekDays?.length > 1) {
       return;
     }
-    
-    // Load exercises from plan (single day or no weekly plan)
-    loadExercisesFromPlan(plan, 0);
+
+    loadExercisesFromPlan(cloned, 0);
   };
 
   const loadExercisesFromPlan = (plan: any, dayIndex: number) => {
     const planExercises: ExerciseEntry[] = [];
-    
-    if (plan.weeklyPlan && plan.weeklyPlan.weekDays && plan.weeklyPlan.weekDays.length > 0) {
-      // Use selected day's exercises
-      const dayExercises = plan.weeklyPlan.weekDays[dayIndex].exercises;
+
+    if (plan.weeklyPlan?.weekDays?.length > 0) {
+      const dayExercises = plan.weeklyPlan.weekDays[dayIndex]?.exercises ?? [];
       dayExercises.forEach((ex: any, idx: number) => {
         planExercises.push({
-          id: `plan-${dayIndex}-${idx}`,
-          name: ex.name,
+          // Fresh ids so this log is not linked to saved-plan exercise rows
+          id: `log-${Date.now()}-${dayIndex}-${idx}`,
+          name: String(ex?.name || `Exercise ${idx + 1}`),
           sets: Array.from({ length: ex.sets || 3 }, (_, i) => ({
             setNumber: i + 1,
             weight: '',
@@ -372,14 +417,15 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
           })),
         });
       });
-      // Update workout name to include day name
       const dayName = plan.weeklyPlan.weekDays[dayIndex].dayName || `Day ${dayIndex + 1}`;
-      setWorkoutName(`${plan.name} - ${dayName}`);
-    } else if (plan.exercises) {
+      if (!isDaily) {
+        setWorkoutName(`${plan.name} - ${dayName}`);
+      }
+    } else if (Array.isArray(plan.exercises)) {
       plan.exercises.forEach((ex: any, idx: number) => {
         planExercises.push({
-          id: `plan-${idx}`,
-          name: ex.name,
+          id: `log-${Date.now()}-${idx}`,
+          name: String(ex?.name || `Exercise ${idx + 1}`),
           sets: Array.from({ length: ex.sets || 3 }, (_, i) => ({
             setNumber: i + 1,
             weight: '',
@@ -389,14 +435,20 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
         });
       });
     }
-    
+
     setExercises(planExercises);
+    // Start minimized so the list is scannable; user expands sets when ready to log.
+    const collapsed: Record<string, boolean> = {};
+    for (const ex of planExercises) {
+      collapsed[ex.id] = false;
+    }
+    setExpandOverride(collapsed);
   };
 
   const handleSelectDay = (dayIndex: number) => {
-    if (!selectedPlan) return;
+    if (!templatePlan) return;
     setSelectedDayIndex(dayIndex);
-    loadExercisesFromPlan(selectedPlan, dayIndex);
+    loadExercisesFromPlan(templatePlan, dayIndex);
   };
 
   const handleSave = async () => {
@@ -446,20 +498,25 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
 
     const session: WorkoutSession = {
       id: Date.now().toString(),
-      programId: selectedPlan?.id || 'manual',
+      // Daily logs never use the source plan id — exercise edits stay on this session only.
+      programId: isDaily ? `daily-${Date.now()}` : templatePlanId || 'manual',
       programName: workoutName,
       date: dateString,
       duration: completedExercises.length * 5, // Estimate 5 min per exercise
       exercises: completedExercises,
-      notes: '',
+      notes: isDaily
+        ? templatePlanName
+          ? `Daily workout (started from ${templatePlanName})`
+          : 'Daily workout'
+        : '',
       completed: true,
     };
 
-    // Save to history
+    // Save to history + refresh Progress / Fitness
     try {
-      const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
-      const updatedHistory = [session, ...existingHistory];
-      await saveUserData('workoutHistory', updatedHistory);
+      const { appendCompletedWorkoutSession } = await import('./src/utils/workoutHistoryStorage');
+      const { notifyUserDataReady } = await import('./src/utils/userDataEvents');
+      await appendCompletedWorkoutSession(session, { notify: false });
 
       try {
         await onWorkoutSessionSaved(session);
@@ -467,19 +524,120 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
         /* ignore gamification errors */
       }
 
-      Alert.alert('Success', 'Workout saved successfully!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            onComplete(session);
-            onBack();
+      notifyUserDataReady();
+
+      const finish = () => {
+        onComplete(session);
+        onBack();
+      };
+
+      if (isDaily) {
+        Alert.alert(
+          'Workout saved',
+          'Logged to your history. Save this session as a reusable program?',
+          [
+            { text: 'Not now', style: 'cancel', onPress: finish },
+            {
+              text: 'Save as program',
+              onPress: async () => {
+                try {
+                  await saveDailyAsProgram(workoutName.trim(), completedExercises);
+                  onProgramsChanged?.();
+                  Alert.alert('Program saved', 'Added to Saved Programs.', [
+                    { text: 'OK', onPress: finish },
+                  ]);
+                } catch (error) {
+                  console.error('Error saving daily workout as program:', error);
+                  Alert.alert('Saved to history', 'Could not also save as a program.', [
+                    { text: 'OK', onPress: finish },
+                  ]);
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Success', 'Workout saved successfully!', [
+          {
+            text: 'OK',
+            onPress: finish,
           },
-        },
-      ]);
+        ]);
+      }
     } catch (error) {
       console.error('Error saving past workout:', error);
       Alert.alert('Error', 'Failed to save workout');
     }
+  };
+
+  const saveDailyAsProgram = async (
+    name: string,
+    completedExercises: Array<{
+      exerciseId: string;
+      name: string;
+      sets: Array<{
+        setNumber: number;
+        weight: number;
+        reps: number;
+        restTime: number;
+        completed: boolean;
+      }>;
+    }>
+  ) => {
+    const planExercises = completedExercises.map((ex, index) => {
+      const setCount = Math.max(1, ex.sets.length);
+      const avgReps = Math.round(
+        ex.sets.reduce((sum, s) => sum + (s.reps || 0), 0) / setCount
+      );
+      const maxWeight = Math.max(0, ...ex.sets.map((s) => s.weight || 0));
+      return {
+        id: ex.exerciseId || `ex-${Date.now()}-${index}`,
+        name: ex.name,
+        sets: setCount,
+        reps: avgReps || 10,
+        weight: maxWeight,
+        restTime: 60,
+        notes: '',
+      };
+    });
+
+    const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const weekDay = {
+      day: 1,
+      dayName,
+      workoutName: name,
+      focus: 'Custom daily workout',
+      duration: Math.max(15, planExercises.length * 5),
+      exercises: planExercises,
+    };
+
+    const savedPlan = {
+      id: `custom-daily-${Date.now()}`,
+      name,
+      level: 'intermediate' as const,
+      goal: 'strength' as const,
+      exercises: planExercises,
+      duration: weekDay.duration,
+      daysPerWeek: 1,
+      totalWeeks: 1,
+      programWeeks: [
+        {
+          weekNumber: 1,
+          name: 'Week 1',
+          weekDays: [weekDay],
+        },
+      ],
+      trainingDays: [dayName],
+      scheduleMode: 'flexible_days' as const,
+      flexibleDayCount: 1,
+      weeklyPlan: { weekDays: [weekDay] },
+      isCustom: true,
+      savedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const existingPlans = (await loadUserData<any[]>('savedWorkoutPlans')) || [];
+    await saveUserData('savedWorkoutPlans', [...existingPlans, savedPlan]);
   };
 
   const formatDateTime = (date: Date) => {
@@ -506,7 +664,7 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
         >
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Previous</Text>
+        <Text style={styles.headerTitle}>{isDaily ? 'Daily Workout' : 'Past Workout'}</Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -521,6 +679,18 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
+          {isDaily ? (
+            <View style={styles.section}>
+              <Text style={styles.hintText}>
+                Log a one-off session for today — different from your saved plan. Add each exercise
+                with weight and reps, then save. You can also keep it as a reusable program.
+              </Text>
+              <View style={styles.dateFieldButton}>
+                <Text style={styles.dateFieldLabel}>Workout date</Text>
+                <Text style={styles.dateFieldValue}>{formatDateTime(selectedDate)}</Text>
+              </View>
+            </View>
+          ) : (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Date & Time</Text>
             <TouchableOpacity style={styles.dateFieldButton} onPress={openDateModal} activeOpacity={0.85}>
@@ -529,12 +699,17 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
               <Text style={styles.dateFieldAction}>Change</Text>
             </TouchableOpacity>
           </View>
+          )}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Workout Name</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g., Upper Body, Leg Day, Full Body"
+              placeholder={
+                isDaily
+                  ? "Defaults to today's date — rename anytime"
+                  : 'e.g., Upper Body, Leg Day, Full Body'
+              }
               value={workoutName}
               onChangeText={setWorkoutName}
               autoCapitalize="words"
@@ -543,12 +718,20 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
 
           {savedPlans.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Load from Saved Plan (Optional)</Text>
+              <Text style={styles.sectionTitle}>
+                {isDaily ? 'Start from a saved plan (optional)' : 'Load from Saved Plan (Optional)'}
+              </Text>
+              {isDaily ? (
+                <Text style={styles.hintText}>
+                  This only copies exercises into today&apos;s log. Changing or removing them here
+                  will not edit your saved program.
+                </Text>
+              ) : null}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.plansScroll}>
                 {savedPlans.slice(0, 5).map(plan => (
                   <TouchableOpacity
                     key={plan.id}
-                    style={[styles.planCard, selectedPlan?.id === plan.id && styles.planCardSelected]}
+                    style={[styles.planCard, templatePlanId === plan.id && styles.planCardSelected]}
                     onPress={() => handleLoadPlan(plan)}
                   >
                     <Text style={styles.planCardName}>{plan.name}</Text>
@@ -563,11 +746,11 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
             </View>
           )}
 
-          {selectedPlan && selectedPlan.weeklyPlan && selectedPlan.weeklyPlan.weekDays && selectedPlan.weeklyPlan.weekDays.length > 1 && (
+          {templatePlan && templatePlan.weeklyPlan && templatePlan.weeklyPlan.weekDays && templatePlan.weeklyPlan.weekDays.length > 1 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Workout Day</Text>
               <View style={styles.daySelector}>
-                {selectedPlan.weeklyPlan.weekDays.map((day: any, index: number) => (
+                {templatePlan.weeklyPlan.weekDays.map((day: any, index: number) => (
                   <TouchableOpacity
                     key={index}
                     style={[
@@ -640,7 +823,32 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
 
           {exercises.length > 0 ? (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Exercises ({exercises.length})</Text>
+              <View style={styles.exercisesSectionHeader}>
+                <Text style={[styles.sectionTitle, styles.exercisesSectionTitle]}>
+                  Exercises ({exercises.length})
+                </Text>
+                {exercises.length > 1 ? (
+                  <View style={styles.expandAllRow}>
+                    <TouchableOpacity
+                      onPress={() => setAllExercisesExpanded(true)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Show details for all exercises"
+                    >
+                      <Text style={styles.expandAllText}>Show all</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.expandAllDivider}>·</Text>
+                    <TouchableOpacity
+                      onPress={() => setAllExercisesExpanded(false)}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Hide details for all exercises"
+                    >
+                      <Text style={styles.expandAllText}>Hide all</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
               {exercises.map((exercise) => renderExerciseCard(exercise))}
             </View>
           ) : (
@@ -652,7 +860,9 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
           )}
 
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <Text style={styles.saveButtonText}>Save Workout</Text>
+            <Text style={styles.saveButtonText}>
+              {isDaily ? 'Finish & Save' : 'Save Workout'}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -669,6 +879,7 @@ export default function LogPastWorkoutScreen({ onBack, onComplete }: LogPastWork
             <Text style={styles.dateModalTitle}>Select date & time</Text>
             <View style={styles.pickerGroup}>
               <DateTimeWheelPicker
+                key={datePickerKey}
                 value={draftDate}
                 onChange={setDraftDate}
                 maximumDate={new Date()}
@@ -785,6 +996,37 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 15,
+  },
+  exercisesSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 15,
+  },
+  exercisesSectionTitle: {
+    marginBottom: 0,
+  },
+  expandAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  expandAllText: {
+    color: '#00ff88',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  expandAllDivider: {
+    color: '#555',
+    fontSize: 13,
+  },
+  hintText: {
+    fontSize: 14,
+    color: '#aaa',
+    lineHeight: 20,
+    marginBottom: 12,
   },
   selectedDateText: {
     color: '#ccc',

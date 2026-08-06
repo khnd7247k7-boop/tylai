@@ -1,11 +1,14 @@
 /**
  * User Data Initializer Service
  *
- * This service ensures all user data is automatically loaded when a user logs in.
- * It initializes data for all screens and categories.
+ * Ensures durable user data is recovered and cloud-synced when a user logs in.
  */
 
-import { loadUserData, tryRecoverOrphanedUserDataOnDevice } from '../utils/userStorage';
+import {
+  loadUserData,
+  tryRecoverOrphanedUserDataOnDevice,
+  flushPendingUserDataWrites,
+} from '../utils/userStorage';
 import WellnessDataManager from './WellnessDataManager';
 import { notifyUserDataReady } from '../utils/userDataEvents';
 
@@ -29,6 +32,8 @@ class UserDataInitializer {
 
     let keysCopied = 0;
     try {
+      await flushPendingUserDataWrites();
+
       const recovery = await tryRecoverOrphanedUserDataOnDevice();
       keysCopied = recovery.keysCopied;
       if (recovery.recovered) {
@@ -37,17 +42,19 @@ class UserDataInitializer {
         );
       }
 
-      // Pull saved workouts (and other synced keys) from Firestore so devices share plans.
+      // Pull durable user saves from Firestore (workouts, meals, history, settings, …).
       // Cap wait time — offline Firestore getDoc can hang and used to block app boot.
       try {
-        const { syncCloudSyncedKeysFromServer } = await import('./userCloudSync');
+        const { syncCloudSyncedKeysFromServer, scheduleBackgroundCloudSync } = await import(
+          './userCloudSync'
+        );
         const cloud = await Promise.race([
           syncCloudSyncedKeysFromServer(),
           new Promise<{ updatedKeys: string[] }>((resolve) =>
             setTimeout(() => {
               console.warn('[UserDataInitializer] Cloud sync timed out; continuing with local data');
               resolve({ updatedKeys: [] });
-            }, 8000)
+            }, 10000)
           ),
         ]);
         if (cloud.updatedKeys.length > 0) {
@@ -55,31 +62,34 @@ class UserDataInitializer {
             `[UserDataInitializer] Synced from cloud: ${cloud.updatedKeys.join(', ')}`
           );
         }
+        // Finish any remaining keys after UI is up.
+        scheduleBackgroundCloudSync();
       } catch (syncError) {
         console.warn('[UserDataInitializer] Cloud sync skipped', syncError);
       }
 
-      // Initialize Wellness Data Manager (for AI sync)
+      await flushPendingUserDataWrites();
+
       await WellnessDataManager.initialize();
 
-      // Load and verify data exists for all categories
       const dataChecks = await Promise.all([
         this.checkDataExists('workoutHistory'),
         this.checkDataExists('meals'),
         this.checkDataExists('savedMeals'),
         this.checkDataExists('nutritionGoals'),
         this.checkDataExists('savedWorkoutPlans'),
+        this.checkDataExists('activeWorkoutPlans'),
         this.checkDataExists('moodEntries'),
         this.checkDataExists('emotionalExercises'),
-        this.checkDataExists('breathingExercises'),
-        this.checkDataExists('visualizationExercises'),
-        this.checkDataExists('mindfulnessExercises'),
+        this.checkDataExists('mentalExercises'),
         this.checkDataExists('dailyMentalProgress'),
         this.checkDataExists('gratitudeEntries'),
         this.checkDataExists('affirmationEntries'),
         this.checkDataExists('reflectionEntries'),
-        this.checkDataExists('dashboardTasks'),
-        this.checkDataExists('dailyCheckIn'),
+        this.checkDataExists('userProfile'),
+        this.checkDataExists('coachingProfile'),
+        this.checkDataExists('completedTasks'),
+        this.checkDataExists('weightEntries'),
       ]);
 
       const existingData = dataChecks.filter(Boolean).length;
@@ -100,28 +110,19 @@ class UserDataInitializer {
     }
   }
 
-  /**
-   * Check if data exists for a given key
-   */
   private async checkDataExists(key: string): Promise<boolean> {
     try {
       const data = await loadUserData(key);
       return data !== null && data !== undefined;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
 
-  /**
-   * Get initialization state
-   */
   getInitializationState(): UserDataState {
     return { ...this.initializationState };
   }
 
-  /**
-   * Reset initialization state (call on logout)
-   */
   reset(): void {
     this.initializationState = {
       isInitialized: false,

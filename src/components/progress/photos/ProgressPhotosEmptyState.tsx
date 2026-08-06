@@ -5,10 +5,12 @@ import FadeInCard from './FadeInCard';
 
 interface ProgressPhotosEmptyStateProps {
   onTakePhotos: () => void;
+  onUploadFromLibrary?: () => void;
 }
 
 export default function ProgressPhotosEmptyState({
   onTakePhotos,
+  onUploadFromLibrary,
 }: ProgressPhotosEmptyStateProps): React.ReactElement {
   const pulse = useRef(new Animated.Value(0.55)).current;
 
@@ -38,11 +40,21 @@ export default function ProgressPhotosEmptyState({
       <Text style={styles.title}>Add photos to the journey</Text>
       <Text style={styles.body}>
         Weekly front / side / back shots are a solid baseline to see change. Want to track faster?
-        You can take progress photos any day — including every day.
+        You can take progress photos any day — including every day. Already took them outside the
+        app? Upload from your camera roll and we&apos;ll place them by the photo date.
       </Text>
       <TouchableOpacity style={styles.cta} onPress={onTakePhotos} activeOpacity={0.85}>
         <Text style={styles.ctaText}>Take photos</Text>
       </TouchableOpacity>
+      {onUploadFromLibrary ? (
+        <TouchableOpacity
+          style={styles.secondaryCta}
+          onPress={onUploadFromLibrary}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.secondaryCtaText}>Upload from library</Text>
+        </TouchableOpacity>
+      ) : null}
     </FadeInCard>
   );
 }
@@ -137,5 +149,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: AppTheme.accentDark,
+  },
+  secondaryCta: {
+    marginTop: 10,
+    borderRadius: AppTheme.radiusPill,
+    paddingVertical: 13,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.bgElevated,
+  },
+  secondaryCtaText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
   },
 });

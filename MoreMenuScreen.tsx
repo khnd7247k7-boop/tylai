@@ -25,8 +25,7 @@ type MoreTarget =
   | 'emotional'
   | 'mental'
   | 'workout'
-  | 'nutritionSearch'
-  | 'appGuide';
+  | 'nutritionSearch';
 
 type RowDef = {
   key: MoreTarget | 'premium' | 'support' | 'feedback';
@@ -98,7 +97,6 @@ const SECTIONS: SectionDef[] = [
   {
     title: 'Help',
     rows: [
-      { key: 'appGuide', title: 'App Guide', subtitle: 'Quick tour of the main tabs' },
       { key: 'legal', title: 'Legal', subtitle: 'Privacy, disclaimers, and licenses' },
       { key: 'support', title: 'Support', subtitle: 'Get help with your account or billing' },
       { key: 'feedback', title: 'Feedback', subtitle: 'Share ideas and report issues' },

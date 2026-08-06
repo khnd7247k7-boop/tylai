@@ -48,12 +48,14 @@ export function ScrollWheelPicker({
   fontSize = 18,
 }: ScrollWheelPickerProps) {
   const scrollRef = useRef<ScrollView>(null);
-  const [focusedIndex, setFocusedIndex] = useState(() => clampIndex(selectedIndex, items.length));
+  const initialIndex = clampIndex(selectedIndex, items.length);
+  const [focusedIndex, setFocusedIndex] = useState(initialIndex);
 
   const interactingRef = useRef(false);
-  const committedIndexRef = useRef(clampIndex(selectedIndex, items.length));
+  const committedIndexRef = useRef(initialIndex);
   const skipNextSyncRef = useRef(false);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasLaidOutRef = useRef(false);
 
   const scrollToIndex = useCallback(
     (index: number, animated: boolean) => {
@@ -65,17 +67,26 @@ export function ScrollWheelPicker({
     [itemHeight, items.length]
   );
 
+  const syncToSelected = useCallback(
+    (animated: boolean, force = false) => {
+      if (items.length === 0) return;
+      if (interactingRef.current) return;
+      if (skipNextSyncRef.current) {
+        skipNextSyncRef.current = false;
+        return;
+      }
+      const clamped = clampIndex(selectedIndex, items.length);
+      // Always position after first layout — matching committedIndex alone used to skip the
+      // first scroll, leaving wheels stuck at index 0 while selection expected "today".
+      if (!force && hasLaidOutRef.current && clamped === committedIndexRef.current) return;
+      scrollToIndex(clamped, animated);
+    },
+    [items.length, scrollToIndex, selectedIndex]
+  );
+
   useEffect(() => {
-    if (items.length === 0) return;
-    if (interactingRef.current) return;
-    if (skipNextSyncRef.current) {
-      skipNextSyncRef.current = false;
-      return;
-    }
-    const clamped = clampIndex(selectedIndex, items.length);
-    if (clamped === committedIndexRef.current) return;
-    scrollToIndex(clamped, false);
-  }, [items.length, selectedIndex, scrollToIndex]);
+    syncToSelected(false);
+  }, [syncToSelected]);
 
   const commitOffset = useCallback(
     (y: number) => {
@@ -136,6 +147,7 @@ export function ScrollWheelPicker({
   }
 
   const wheelHeight = itemHeight * (paddingItems * 2 + 1);
+  const initialOffsetY = initialIndex * itemHeight;
 
   return (
     <View style={[styles.container, { width, height: wheelHeight }]}>
@@ -148,7 +160,13 @@ export function ScrollWheelPicker({
         nestedScrollEnabled
         bounces={false}
         scrollEventThrottle={32}
+        contentOffset={{ x: 0, y: initialOffsetY }}
         contentContainerStyle={{ paddingVertical: itemHeight * paddingItems }}
+        onLayout={() => {
+          const firstLayout = !hasLaidOutRef.current;
+          hasLaidOutRef.current = true;
+          syncToSelected(false, firstLayout);
+        }}
         onScrollBeginDrag={() => {
           interactingRef.current = true;
           if (settleTimerRef.current) {

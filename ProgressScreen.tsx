@@ -29,6 +29,8 @@ import ProgressJourney, {
   type ProgressJourneyDataBundle,
 } from './src/components/progress/ProgressJourney';
 import { subscribeUserDataReady } from './src/utils/userDataEvents';
+import { loadDedupedWorkoutHistory } from './src/utils/workoutHistoryStorage';
+import type { MeasurementEntry } from './src/types/bodyMeasurements';
 
 type MoodEntry = { date?: string; sleepQuality?: number };
 
@@ -57,10 +59,11 @@ export default function ProgressScreen(): React.ReactElement {
     setLoading(true);
     try {
       const [
-        workoutHistory,
+        workoutHistoryRaw,
         meals,
         nutritionGoals,
         weightEntries,
+        measurementEntries,
         milestones,
         completedTasks,
         moodEntries,
@@ -68,10 +71,11 @@ export default function ProgressScreen(): React.ReactElement {
         gratitudeEntries,
         coachingProfile,
       ] = await Promise.all([
-        loadUserData<WorkoutSession[]>('workoutHistory'),
+        loadDedupedWorkoutHistory(),
         loadUserData<LoggedMeal[]>('meals'),
         loadPersistedNutritionGoals(),
         loadUserData<WeightEntry[]>('weightEntries'),
+        loadUserData<MeasurementEntry[]>('measurementEntries'),
         loadUserData<UserMilestones>('userMilestones'),
         loadUserData<Array<{ category?: string; completed?: boolean; date?: string }>>(
           'completedTasks'
@@ -84,7 +88,7 @@ export default function ProgressScreen(): React.ReactElement {
 
       const daysPerWeek = resolveTrainingDaysPerWeek(coachingProfile, null);
       const input: ScoreInput = {
-        workoutHistory: workoutHistory ?? [],
+        workoutHistory: workoutHistoryRaw,
         meals: meals ?? [],
         nutritionGoals,
         weightEntries: weightEntries ?? [],
@@ -102,6 +106,7 @@ export default function ProgressScreen(): React.ReactElement {
         workoutHistory: input.workoutHistory,
         meals: input.meals,
         weightEntries: input.weightEntries,
+        measurementEntries: measurementEntries ?? [],
         moodEntries: input.moodEntries,
         reflectionDates: (reflectionEntries ?? [])
           .map((r) => r.date?.slice(0, 10))

@@ -7,6 +7,8 @@ export type UserPreferences = {
   showPredictiveWeight: boolean;
   enableMacroPreview: boolean;
   autoRestTimer: boolean;
+  /** Local notification / alert when rest timer reaches zero. */
+  restTimerAlert: boolean;
 };
 
 type UserSettingsContextValue = UserPreferences & {
@@ -22,6 +24,7 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   showPredictiveWeight: true,
   enableMacroPreview: true,
   autoRestTimer: true,
+  restTimerAlert: true,
 };
 
 const UserSettingsContext = createContext<UserSettingsContextValue | null>(null);
@@ -31,6 +34,7 @@ function normalizePreferences(raw: Partial<UserPreferences> | null | undefined):
     showPredictiveWeight: raw?.showPredictiveWeight ?? DEFAULT_PREFERENCES.showPredictiveWeight,
     enableMacroPreview: raw?.enableMacroPreview ?? DEFAULT_PREFERENCES.enableMacroPreview,
     autoRestTimer: raw?.autoRestTimer ?? DEFAULT_PREFERENCES.autoRestTimer,
+    restTimerAlert: raw?.restTimerAlert ?? DEFAULT_PREFERENCES.restTimerAlert,
   };
 }
 

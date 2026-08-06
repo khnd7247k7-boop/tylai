@@ -11,7 +11,7 @@ import {
   NativeScrollEvent,
 } from 'react-native';
 import { AppTheme } from '../../../theme/appVisualTheme';
-import type { PhotoSession } from '../../../types/progressPhotos';
+import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../../types/sessionProgressMetrics';
 import { formatTimelineLabel } from '../../../services/PhotoService';
 import { computeSessionCompleteness } from '../../../utils/sessionCompleteness';
@@ -29,6 +29,8 @@ interface PhotoTimelineProps {
   onScrubIndex?: (index: number) => void;
   /** Page-level journey scrubber copy (not a photos-only control). */
   pageScrubber?: boolean;
+  /** Thumbnail pose so week nodes match the selected angle. */
+  thumbPose?: PhotoPose;
 }
 
 function localDateKey(): string {
@@ -51,6 +53,7 @@ export default function PhotoTimeline({
   onSelect,
   onScrubIndex,
   pageScrubber = false,
+  thumbPose = 'front',
 }: PhotoTimelineProps): React.ReactElement {
   const scrollRef = useRef<ScrollView>(null);
   const today = localDateKey();
@@ -140,7 +143,7 @@ export default function PhotoTimeline({
                 key={session.id}
                 label={label}
                 selected={selected}
-                thumbUri={session.photos.front}
+                thumbUri={session.photos[thumbPose] || session.photos.front}
                 filled={completeness.ratio}
                 onPress={() => onSelect(session)}
               />

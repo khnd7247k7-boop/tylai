@@ -62,10 +62,24 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 }
 
+/** Cancel scheduled notifications except active one-shot timers (rest / micro nudges). */
 export async function cancelAllNotifications() {
   const Notifications = await getNotifications();
   if (!Notifications) return;
-  await Notifications.cancelAllScheduledNotificationsAsync();
+
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const keepTypes = new Set(['rest_timer_complete', 'micro_goal_nudge']);
+  await Promise.all(
+    scheduled.map(async (item) => {
+      const type = (item.content?.data as { type?: string } | undefined)?.type;
+      if (type && keepTypes.has(type)) return;
+      try {
+        await Notifications.cancelScheduledNotificationAsync(item.identifier);
+      } catch {
+        /* ignore */
+      }
+    })
+  );
 }
 
 export async function scheduleDailyNotification(time: string = '09:00') {

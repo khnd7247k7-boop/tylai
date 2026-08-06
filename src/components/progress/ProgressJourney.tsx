@@ -7,7 +7,7 @@ import {
   Alert,
   TouchableOpacity,
 } from 'react-native';
-import type { PhotoSession } from '../../types/progressPhotos';
+import type { PhotoSession, PhotoPose } from '../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../types/sessionProgressMetrics';
 import type { WorkoutSession } from '../../../data/workoutPrograms';
 import type { LoggedMeal } from '../../utils/loggedMeals';
@@ -21,7 +21,7 @@ import {
   selectDefaultSession,
   formatTimelineLabel,
 } from '../../services/PhotoService';
-import { buildMetricsBySessionId } from '../../services/sessionProgressMetricsService';
+import { buildMetricsBySessionId, buildBodyVitalsForDate } from '../../services/sessionProgressMetricsService';
 import {
   isMediaLibraryAvailable,
   mediaLibraryUnavailableMessage,
@@ -39,17 +39,22 @@ import OverallProgressCard from './OverallProgressCard';
 import ProgressWeekVitals from './ProgressWeekVitals';
 import PhotoTimeline from './photos/PhotoTimeline';
 import PhotoCaptureFlow from './photos/PhotoCaptureFlow';
+import PhotoLibraryImportFlow from './photos/PhotoLibraryImportFlow';
+import type { LibraryImportResult } from './photos/PhotoLibraryImportFlow';
 import ProgressPhotoCameraRollPrompt from './photos/ProgressPhotoCameraRollPrompt';
 import ProgressReplayControls from './photos/ProgressReplayControls';
 import PhotoSessionDetailModal from './photos/PhotoSessionDetailModal';
 import PhotoHeroCard from './photos/PhotoHeroCard';
 import ProgressPhotosEmptyState from './photos/ProgressPhotosEmptyState';
 import HistoryLineChart from '../HistoryLineChart';
+import ProgressBodyMetricsModal from './ProgressBodyMetricsModal';
+import type { MeasurementEntry } from '../../types/bodyMeasurements';
 
 export interface ProgressJourneyDataBundle {
   workoutHistory: WorkoutSession[];
   meals: LoggedMeal[];
   weightEntries: WeightEntry[];
+  measurementEntries?: MeasurementEntry[];
   moodEntries: Array<{ date?: string; sleepQuality?: number }>;
   reflectionDates?: string[];
 }
@@ -99,9 +104,12 @@ export default function ProgressJourney({
   const [sessions, setSessions] = useState<PhotoSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [captureVisible, setCaptureVisible] = useState(false);
+  const [libraryImportVisible, setLibraryImportVisible] = useState(false);
   const [retakeMode, setRetakeMode] = useState(false);
   const [showCameraRollPrompt, setShowCameraRollPrompt] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
+  const [selectedPose, setSelectedPose] = useState<PhotoPose>('front');
+  const [metricsModalVisible, setMetricsModalVisible] = useState(false);
   const [inlineCompare, setInlineCompare] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayLabel, setReplayLabel] = useState('');
@@ -161,6 +169,7 @@ export default function ProgressJourney({
     if (!dataBundle) return new Map<string, SessionProgressMetrics>();
     return buildMetricsBySessionId(sessions, {
       weightEntries: dataBundle.weightEntries,
+      measurementEntries: dataBundle.measurementEntries ?? [],
       meals: dataBundle.meals,
       workoutHistory: dataBundle.workoutHistory,
       moodEntries: dataBundle.moodEntries,
@@ -176,6 +185,29 @@ export default function ProgressJourney({
     ? metricsMap.get(selectedSession.id) ?? null
     : null;
 
+  const focusDate =
+    selectedSession?.date?.slice(0, 10) ??
+    selectedProgressDate?.slice(0, 10) ??
+    localDateKey();
+
+  /** Always resolve body metrics for the focused day so Save → vitals works without photos. */
+  const displayMetrics = useMemo((): SessionProgressMetrics | null => {
+    if (!dataBundle) return selectedMetrics;
+    const body = buildBodyVitalsForDate(focusDate, {
+      weightEntries: dataBundle.weightEntries,
+      measurementEntries: dataBundle.measurementEntries ?? [],
+    });
+    if (selectedMetrics) {
+      return {
+        ...selectedMetrics,
+        weight: body.weight,
+        measurements: body.measurements,
+        extraMeasurements: body.extraMeasurements,
+      };
+    }
+    return body;
+  }, [dataBundle, focusDate, selectedMetrics]);
+
   const selectedIndex = selectedSession
     ? sortedSessions.findIndex((s) => s.id === selectedSession.id)
     : -1;
@@ -184,7 +216,7 @@ export default function ProgressJourney({
     selectedIndex > 0 && sortedSessions.length > 1 ? sortedSessions[0] : null;
 
   const completeness = selectedSession
-    ? computeSessionCompleteness(selectedSession, selectedMetrics, {
+    ? computeSessionCompleteness(selectedSession, displayMetrics, {
         hasReflection: reflectionSet.has(selectedSession.date),
       })
     : null;
@@ -221,11 +253,23 @@ export default function ProgressJourney({
     setCaptureVisible(true);
   };
 
+  const openLibraryImport = () => {
+    setLibraryImportVisible(true);
+  };
+
   const handleCaptureComplete = async (
     captures: Parameters<typeof createSessionFromCaptures>[0]
   ) => {
-    // createSessionFromCaptures keeps all prior dates; only replaces today's session.
     const session = await createSessionFromCaptures(captures);
+    await reload();
+    setSelectedId(session.id);
+  };
+
+  const handleLibraryImportComplete = async (result: LibraryImportResult) => {
+    const session = await createSessionFromCaptures(result.captures, {
+      date: result.date,
+      timestamp: result.timestamp,
+    });
     await reload();
     setSelectedId(session.id);
   };
@@ -333,6 +377,7 @@ export default function ProgressJourney({
             selectedId={selectedSession?.id ?? ''}
             metricsById={metricsMap}
             reflectionDates={reflectionSet}
+            thumbPose={selectedPose}
             pageScrubber
             onSelect={(s) => {
               stopReplay();
@@ -353,13 +398,18 @@ export default function ProgressJourney({
           compareSession={compareSession}
           compareMode={inlineCompare}
           onCompareModeChange={setInlineCompare}
+          pose={selectedPose}
+          onPoseChange={setSelectedPose}
           onOpenDetails={() => setDetailVisible(true)}
           onSwipeSession={handleSwipeSession}
           canSwipePrev={selectedIndex > 0}
           canSwipeNext={selectedIndex >= 0 && selectedIndex < sortedSessions.length - 1}
         />
       ) : (
-        <ProgressPhotosEmptyState onTakePhotos={() => openCapture(false)} />
+        <ProgressPhotosEmptyState
+          onTakePhotos={() => openCapture(false)}
+          onUploadFromLibrary={openLibraryImport}
+        />
       )}
 
       {hasSessions ? (
@@ -371,13 +421,29 @@ export default function ProgressJourney({
           >
             <Text style={styles.photoActionPrimaryText}>{stats.buttonLabel}</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.photoActionSecondary}
+            onPress={openLibraryImport}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.photoActionSecondaryText}>Upload from library</Text>
+          </TouchableOpacity>
           <Text style={styles.photoCadenceHint}>
-            Weekly photos are a great baseline — take them daily anytime you want.
+            Weekly photos are a great baseline — take them daily anytime you want. Library uploads
+            use each photo&apos;s date so past shots land in the right place on your timeline.
           </Text>
         </View>
       ) : null}
 
-      <ProgressWeekVitals metrics={selectedMetrics} />
+      <ProgressWeekVitals metrics={displayMetrics} />
+
+      <TouchableOpacity
+        style={styles.logMetricsBtn}
+        onPress={() => setMetricsModalVisible(true)}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.logMetricsBtnText}>Log weight & measurements</Text>
+      </TouchableOpacity>
 
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>Weight</Text>
@@ -405,6 +471,12 @@ export default function ProgressJourney({
         onComplete={handleCaptureComplete}
       />
 
+      <PhotoLibraryImportFlow
+        visible={libraryImportVisible}
+        onClose={() => setLibraryImportVisible(false)}
+        onComplete={handleLibraryImportComplete}
+      />
+
       <ProgressPhotoCameraRollPrompt
         visible={showCameraRollPrompt}
         onSaveToCameraRoll={handleSaveToCameraRoll}
@@ -417,8 +489,19 @@ export default function ProgressJourney({
       <PhotoSessionDetailModal
         visible={detailVisible}
         session={selectedSession}
-        metrics={selectedMetrics}
+        metrics={displayMetrics}
+        initialPose={selectedPose}
+        onPoseChange={setSelectedPose}
         onClose={() => setDetailVisible(false)}
+      />
+
+      <ProgressBodyMetricsModal
+        visible={metricsModalVisible}
+        initialDate={focusDate}
+        onClose={() => setMetricsModalVisible(false)}
+        onSaved={(savedDate) => {
+          if (savedDate) onProgressDateChange(savedDate);
+        }}
       />
     </View>
   );
@@ -449,12 +532,42 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: AppTheme.accentDark,
   },
+  photoActionSecondary: {
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: AppTheme.radiusPill,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.card,
+    alignItems: 'center',
+  },
+  photoActionSecondaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
+  },
   photoCadenceHint: {
     fontSize: 12,
     lineHeight: 17,
     color: AppTheme.textMuted,
     textAlign: 'center',
     paddingHorizontal: 8,
+  },
+  logMetricsBtn: {
+    alignSelf: 'stretch',
+    marginBottom: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: AppTheme.radiusPill,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.card,
+    alignItems: 'center',
+  },
+  logMetricsBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
   },
   chartCard: {
     backgroundColor: AppTheme.card,

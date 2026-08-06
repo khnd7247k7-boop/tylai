@@ -8,6 +8,7 @@ import type { LoggedMeal } from '../utils/loggedMeals';
 import type { WeightEntry } from '../utils/workoutHistoryChartData';
 import type { PhotoSession } from '../types/progressPhotos';
 import type { SessionProgressMetrics, MetricValue } from '../types/sessionProgressMetrics';
+import type { MeasurementEntry } from '../types/bodyMeasurements';
 import { realizedE1RM } from '../utils/strengthMetrics';
 
 export interface SessionMetricsInput {
@@ -17,8 +18,7 @@ export interface SessionMetricsInput {
   meals: LoggedMeal[];
   workoutHistory: WorkoutSession[];
   moodEntries: Array<{ date?: string; sleepQuality?: number }>;
-  /** Optional future measurement logs keyed by date. */
-  measurementEntries?: Array<{ date: string; waistIn?: number; chestIn?: number; hipsIn?: number }>;
+  measurementEntries?: MeasurementEntry[];
 }
 
 function toDayKey(raw: string | undefined | null): string | null {
@@ -47,6 +47,163 @@ function dayWeight(entries: WeightEntry[], dateKey: string): number | null {
     return best?.w ?? null;
   }
   return sameDay.reduce((a, b) => a + b, 0) / sameDay.length;
+}
+
+function dayWaist(entries: MeasurementEntry[], dateKey: string): number | null {
+  const sameDay = entries.find(
+    (e) => toDayKey(e.date) === dateKey && e.waistIn != null && e.waistIn > 0
+  );
+  if (sameDay?.waistIn != null) return sameDay.waistIn;
+
+  const target = new Date(`${dateKey}T12:00:00`).getTime();
+  let best: { w: number; dist: number } | null = null;
+  for (const e of entries) {
+    const k = toDayKey(e.date);
+    if (!k || !(e.waistIn != null && e.waistIn > 0)) continue;
+    const dist = Math.abs(new Date(`${k}T12:00:00`).getTime() - target);
+    if (dist > 3 * 86400000) continue;
+    if (!best || dist < best.dist) best = { w: e.waistIn, dist };
+  }
+  return best?.w ?? null;
+}
+
+function dayMeasurementField(
+  entries: MeasurementEntry[],
+  dateKey: string,
+  field: 'chestIn' | 'hipsIn'
+): number | null {
+  const sameDay = entries.find(
+    (e) => toDayKey(e.date) === dateKey && e[field] != null && (e[field] as number) > 0
+  );
+  if (sameDay?.[field] != null) return sameDay[field] as number;
+
+  const target = new Date(`${dateKey}T12:00:00`).getTime();
+  let best: { w: number; dist: number } | null = null;
+  for (const e of entries) {
+    const k = toDayKey(e.date);
+    const val = e[field];
+    if (!k || !(val != null && val > 0)) continue;
+    const dist = Math.abs(new Date(`${k}T12:00:00`).getTime() - target);
+    if (dist > 3 * 86400000) continue;
+    if (!best || dist < best.dist) best = { w: val, dist };
+  }
+  return best?.w ?? null;
+}
+
+function nearestMeasurementEntry(
+  entries: MeasurementEntry[],
+  dateKey: string
+): MeasurementEntry | null {
+  const sameDay = entries.find((e) => toDayKey(e.date) === dateKey);
+  if (sameDay) return sameDay;
+
+  const target = new Date(`${dateKey}T12:00:00`).getTime();
+  let best: { entry: MeasurementEntry; dist: number } | null = null;
+  for (const e of entries) {
+    const k = toDayKey(e.date);
+    if (!k) continue;
+    const dist = Math.abs(new Date(`${k}T12:00:00`).getTime() - target);
+    if (dist > 3 * 86400000) continue;
+    if (!best || dist < best.dist) best = { entry: e, dist };
+  }
+  return best?.entry ?? null;
+}
+
+function dayCustomMeasurements(
+  entries: MeasurementEntry[],
+  dateKey: string,
+  prevDate: string | null
+): MetricValue[] {
+  const entry = nearestMeasurementEntry(entries, dateKey);
+  const prevEntry = prevDate ? nearestMeasurementEntry(entries, prevDate) : null;
+  if (!entry?.custom?.length) return [];
+
+  return entry.custom
+    .filter((c) => c.label?.trim() && Number.isFinite(c.value) && c.value > 0)
+    .map((c) => {
+      const label = c.label.trim();
+      const prev = prevEntry?.custom?.find(
+        (p) => p.label.trim().toLowerCase() === label.toLowerCase()
+      );
+      return metric(label, c.value, {
+        unit: c.unit?.trim() || 'in',
+        prev: prev?.value ?? null,
+      });
+    });
+}
+
+function buildExtraMeasurements(
+  entries: MeasurementEntry[],
+  dateKey: string,
+  prevDate: string | null
+): MetricValue[] {
+  const chest = dayMeasurementField(entries, dateKey, 'chestIn');
+  const prevChest = prevDate ? dayMeasurementField(entries, prevDate, 'chestIn') : null;
+  const hips = dayMeasurementField(entries, dateKey, 'hipsIn');
+  const prevHips = prevDate ? dayMeasurementField(entries, prevDate, 'hipsIn') : null;
+
+  const extraMeasurements: MetricValue[] = [];
+  if (chest != null) {
+    extraMeasurements.push(metric('Chest', chest, { unit: 'in', prev: prevChest }));
+  }
+  if (hips != null) {
+    extraMeasurements.push(metric('Hips', hips, { unit: 'in', prev: prevHips }));
+  }
+  extraMeasurements.push(...dayCustomMeasurements(entries, dateKey, prevDate));
+  return extraMeasurements;
+}
+
+/**
+ * Body vitals for a calendar day — works even when there is no progress photo session.
+ * Used so logged weight / waist / custom measurements always appear on Progress.
+ */
+export function buildBodyVitalsForDate(
+  dateKey: string,
+  data: {
+    weightEntries: WeightEntry[];
+    measurementEntries?: MeasurementEntry[];
+    previousDateKey?: string | null;
+  }
+): Pick<
+  SessionProgressMetrics,
+  'sessionId' | 'date' | 'weight' | 'measurements' | 'extraMeasurements' | 'strength' | 'recovery' | 'calories' | 'protein' | 'workoutSummary' | 'coachNotes' | 'aiInsightsPlaceholder'
+> {
+  const entries = data.measurementEntries ?? [];
+  const prevDate = data.previousDateKey ?? null;
+  const weight = dayWeight(data.weightEntries, dateKey);
+  const prevWeight = prevDate ? dayWeight(data.weightEntries, prevDate) : null;
+  const waist = dayWaist(entries, dateKey);
+  const prevWaist = prevDate ? dayWaist(entries, prevDate) : null;
+  const extras = buildExtraMeasurements(entries, dateKey, prevDate);
+
+  return {
+    sessionId: `body-${dateKey}`,
+    date: dateKey,
+    weight: metric('Weight', weight, {
+      unit: 'lb',
+      prev: prevWeight,
+      emptyHint: 'Log weight to sync with this day',
+    }),
+    measurements: metric('Waist', waist, {
+      unit: 'in',
+      prev: prevWaist,
+      emptyHint: 'Log waist to track measurements',
+    }),
+    extraMeasurements: extras.length ? extras : undefined,
+    strength: metric('Bench', null, { unit: 'lb', emptyHint: 'Log a press this week' }),
+    recovery: metric('Recovery', null, { unit: '/100', emptyHint: 'Log sleep/mood to track recovery' }),
+    calories: metric('Calories', null, { unit: 'kcal', emptyHint: 'Log meals on this day' }),
+    protein: metric('Protein', null, { unit: 'g', emptyHint: 'Log meals on this day' }),
+    workoutSummary: {
+      completedSessions: 0,
+      totalSets: 0,
+      totalVolume: 0,
+      topLiftName: null,
+      topLiftWeight: null,
+    },
+    coachNotes: null,
+    aiInsightsPlaceholder: '',
+  };
 }
 
 function dayMeals(
@@ -171,14 +328,13 @@ export function buildSessionProgressMetrics(input: SessionMetricsInput): Session
   const recovery = dayRecovery(moodEntries, date);
   const prevRecovery = prevDate ? dayRecovery(moodEntries, prevDate) : null;
 
-  const measurementLog = (input.measurementEntries ?? []).find(
-    (m) => toDayKey(m.date) === date
+  const waist = dayWaist(input.measurementEntries ?? [], date);
+  const prevWaist = prevDate ? dayWaist(input.measurementEntries ?? [], prevDate) : null;
+  const extraMeasurements = buildExtraMeasurements(
+    input.measurementEntries ?? [],
+    date,
+    prevDate
   );
-  const prevMeasurement = prevDate
-    ? (input.measurementEntries ?? []).find((m) => toDayKey(m.date) === prevDate)
-    : null;
-  const waist = measurementLog?.waistIn ?? null;
-  const prevWaist = prevMeasurement?.waistIn ?? null;
 
   const metaWeight =
     typeof session.metadata?.weight === 'number' ? (session.metadata.weight as number) : null;
@@ -194,9 +350,9 @@ export function buildSessionProgressMetrics(input: SessionMetricsInput): Session
     measurements: metric('Waist', waist, {
       unit: 'in',
       prev: prevWaist,
-      pending: !input.measurementEntries?.length && waist == null,
-      emptyHint: 'Measurements will appear when logging is added',
+      emptyHint: 'Log waist to track measurements',
     }),
+    extraMeasurements: extraMeasurements.length ? extraMeasurements : undefined,
     strength: metric('Est. peak strength', workout.peakE1rm, {
       unit: 'lb',
       prev: prevWorkout?.peakE1rm ?? null,

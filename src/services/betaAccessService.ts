@@ -66,15 +66,9 @@ function unverifiedStatus(): StripeSubscriptionStatus {
 export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptionStatus> {
   const user = auth?.currentUser;
   if (!user?.email || auth?._isMock) {
-    // No signed-in account — treat as a verified unpaid result.
-    return {
-      verified: true,
-      paid: false,
-      active: false,
-      plan: null,
-      subscriptionStatus: null,
-      cancelAtPeriodEnd: false,
-    };
+    // Auth not ready / signed out — NOT a verified unpaid result.
+    // Treating this as unpaid was wiping Premium on cold start before Firebase restored.
+    return unverifiedStatus();
   }
 
   try {

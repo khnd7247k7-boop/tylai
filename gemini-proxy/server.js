@@ -28,7 +28,7 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '4mb' }));
 
 let jwks = null;
 function getJwks() {
@@ -154,6 +154,155 @@ app.post('/api/gemini', requireAuth, geminiLimiter, async (req, res) => {
     }
 
     return res.status(500).json({ error: 'Gemini proxy request failed.', details: message });
+  }
+});
+
+const WORKOUT_SPREADSHEET_SYSTEM = `You are a strength-training coach OCR engine.
+Extract workout programs from photos of:
+- Printed or digital spreadsheets / tables
+- Whiteboards and gym boards
+- Typed or printed workout plans
+- Handwritten pen-and-paper logs, notebooks, journals, and scrap notes
+
+Handwriting rules:
+- Carefully read cursive and print handwriting, including messy gym-log shorthand.
+- Expand common abbreviations when confident (e.g. BP→Bench Press, OHP→Overhead Press, SQ→Squat, DL→Deadlift, RDL→Romanian Deadlift, DB→Dumbbell, BB→Barbell, PU→Pull-up, BR→Bent Over Row, Lat PD→Lat Pulldown).
+- If a handwritten name is ambiguous, keep the closest readable spelling; do not invent a different exercise.
+- Crossed-out lines are ignored unless clearly replaced by a correction above/beside them.
+- Dates, bodyweight, mood, or personal notes go in notes fields — not as exercises.
+- Sets×reps shorthand like "3x10", "3x8-12", "4×5" maps to sets + reps.
+- Load shorthand like "135", "135x5", "BW", "bodyweight" maps to weight when numeric; use null for bodyweight.
+- RPE/RIR written as "@8", "RPE 8", "2 RIR" maps to rpe/rir.
+
+General rules:
+- Return ONLY valid JSON (no markdown). Never invent exercises that are not visible.
+- If a cell/line is blank or unreadable, use null for that field.
+- Prefer common English exercise names.
+- Convert rest like "90s" or "1:30" to restSeconds as an integer (seconds).
+- Rep ranges stay as strings (e.g. "8-12"). Single reps as a string number (e.g. "10").`;
+
+const WORKOUT_SPREADSHEET_SCHEMA_HINT = `{
+  "name": string,
+  "notes": string|null,
+  "days": [
+    {
+      "name": string,
+      "exercises": [
+        {
+          "name": string,
+          "sets": number|null,
+          "reps": string|null,
+          "weight": number|null,
+          "restSeconds": number|null,
+          "rpe": number|null,
+          "rir": number|null,
+          "notes": string|null
+        }
+      ]
+    }
+  ]
+}`;
+
+function extractJsonObject(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* fall through */
+  }
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Vision parse: workout spreadsheet / program photo → structured routine JSON.
+ * Auth: Firebase JWT (same as /api/gemini).
+ */
+app.post('/api/workouts/parse-spreadsheet', requireAuth, geminiLimiter, async (req, res) => {
+  try {
+    const image = req.body?.image;
+    if (
+      !image ||
+      typeof image !== 'object' ||
+      typeof image.data !== 'string' ||
+      !image.data.trim() ||
+      typeof image.mimeType !== 'string' ||
+      !image.mimeType.trim()
+    ) {
+      return res.status(400).json({
+        error: 'Missing image payload. Expected { image: { mimeType, data } } with base64 data.',
+      });
+    }
+
+    const mimeType = String(image.mimeType).trim();
+    const data = String(image.data).replace(/^data:[^;]+;base64,/, '').trim();
+    if (!data) {
+      return res.status(400).json({ error: 'image.data must be non-empty base64.' });
+    }
+    // ~3MB base64 ceiling after client compression
+    if (data.length > 4_000_000) {
+      return res.status(413).json({ error: 'Image too large. Compress and try again.' });
+    }
+
+    const model =
+      typeof req.body?.model === 'string' && req.body.model.trim()
+        ? req.body.model.trim()
+        : DEFAULT_MODEL;
+
+    const prompt = `[system]\n${WORKOUT_SPREADSHEET_SYSTEM}\n\n[user]\nExtract the workout program from this image (printed spreadsheet, whiteboard, OR handwritten pen-and-paper log).
+Return JSON matching this schema exactly:
+${WORKOUT_SPREADSHEET_SCHEMA_HINT}
+
+Group rows into days/sessions when the page has multiple days, dated entries, or titled blocks.
+If there is only one untitled list, use a single day named "Workout 1".
+For multi-page style notes in one photo, include every readable session in days[].`;
+
+    const modelClient = genAI.getGenerativeModel({
+      model,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.2,
+      },
+    });
+
+    const result = await modelClient.generateContent([
+      { text: prompt },
+      { inlineData: { mimeType, data } },
+    ]);
+    const text = result.response?.text?.() || '';
+    const routine = extractJsonObject(text);
+    if (!routine || typeof routine !== 'object') {
+      return res.status(502).json({
+        error: 'Vision model returned unparseable JSON.',
+        details: text.slice(0, 500),
+      });
+    }
+
+    return res.json({ routine, model });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/PERMISSION_DENIED|403/i.test(message)) {
+      return res.status(403).json({
+        error: 'Gemini access denied. Check project API enablement, key restrictions, and billing.',
+        details: message,
+      });
+    }
+    if (/429|RESOURCE_EXHAUSTED/i.test(message)) {
+      return res.status(429).json({ error: 'Gemini quota/rate limit reached.', details: message });
+    }
+    return res.status(500).json({
+      error: 'Workout spreadsheet parse failed.',
+      details: message,
+    });
   }
 });
 

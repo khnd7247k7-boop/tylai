@@ -127,7 +127,8 @@ export default function SettingsScreen({
   initialTab = 'profile',
   standaloneSection = false,
 }: SettingsScreenProps) {
-  const { showPredictiveWeight, enableMacroPreview, autoRestTimer, setPreference } = useUserSettings();
+  const { showPredictiveWeight, enableMacroPreview, autoRestTimer, restTimerAlert, setPreference } =
+    useUserSettings();
   const {
     tier,
     isPremium,
@@ -713,7 +714,8 @@ export default function SettingsScreen({
           <View style={styles.settingLabelContainer}>
             <Text style={styles.settingLabel}>Auto rest timer after set log</Text>
             <Text style={styles.settingDescription}>
-              Automatically starts a 2:00 timer when a set is logged.
+              Automatically starts a 2:00 timer when a set is logged. The timer keeps running if you
+              lock your phone or leave the app.
             </Text>
           </View>
           <Switch
@@ -721,6 +723,21 @@ export default function SettingsScreen({
             onValueChange={(value) => setPreference('autoRestTimer', value)}
             trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={autoRestTimer ? '#fff' : '#888'}
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Alert when rest timer finishes</Text>
+            <Text style={styles.settingDescription}>
+              Sends a notification when rest is over so you know it’s time for the next set.
+            </Text>
+          </View>
+          <Switch
+            value={restTimerAlert}
+            onValueChange={(value) => setPreference('restTimerAlert', value)}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={restTimerAlert ? '#fff' : '#888'}
           />
         </View>
 

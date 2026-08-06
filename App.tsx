@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -63,6 +63,7 @@ import {
   DismissKeyboardSurface,
 } from './src/keyboard';
 import { SmallWinsProvider } from './src/context/SmallWinsContext';
+import { ActiveWorkoutProvider, useActiveWorkout } from './src/context/ActiveWorkoutContext';
 import MedicalDisclaimerGate, {
   MEDICAL_DISCLAIMER_DEVICE_KEY,
 } from './src/components/MedicalDisclaimerGate';
@@ -70,9 +71,7 @@ import OnboardingWizard from './src/components/onboarding/OnboardingWizard';
 import NutritionQuestionnaireWizard from './src/components/onboarding/NutritionQuestionnaireWizard';
 import AdvancedNutritionQuestionnaireWizard from './src/components/onboarding/AdvancedNutritionQuestionnaireWizard';
 import NutritionBodyProfilePrompt from './src/components/NutritionBodyProfilePrompt';
-import PlatformAppGuide from './src/tour/PlatformAppGuide';
-import type { TourNavHandlers, TourFitnessIntent, TourLogFoodIntent } from './src/tour/types';
-import { shouldShowAppGuide } from './src/utils/appGuide';
+import type { TourFitnessIntent, TourLogFoodIntent } from './src/tour/types';
 import { shouldShowOnboardingWizard, isPendingFirstWorkoutPlan, shouldShowNutritionBodyProfilePrompt, loadCoachingProfile } from './src/services/CoachingProfileService';
 import {
   isInitialNutritionSetupComplete,
@@ -123,6 +122,7 @@ function AppInner() {
   const insets = useSafeAreaInsets();
   const { showToast, showNotification, dismissNotification } = useToast();
   const { isOnline } = useNetworkStatus(); // Monitor network connectivity
+  const { activeWorkout, presentActiveWorkout } = useActiveWorkout();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<'login' | LoggedInScreen>('login');
   const [navigationHistory, setNavigationHistory] = useState<Array<'login' | LoggedInScreen>>(['login']);
@@ -154,10 +154,9 @@ function AppInner() {
     useState(false);
   const [pendingNutritionSuggestion, setPendingNutritionSuggestion] =
     useState<PendingNutritionSuggestion | null>(null);
-  const [appGuideVisible, setAppGuideVisible] = useState(false);
-  const nutritionNoticeIdRef = useRef<string | null>(null);
   const [tourLogFoodIntent, setTourLogFoodIntent] = useState<TourLogFoodIntent | null>(null);
   const [tourFitnessIntent, setTourFitnessIntent] = useState<TourFitnessIntent | null>(null);
+  const nutritionNoticeIdRef = useRef<string | null>(null);
   const [rememberPassword, setRememberPassword] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   /** True when the current sub-screen was opened from MoreMenuScreen (not dashboard shortcuts). */
@@ -199,7 +198,6 @@ function AppInner() {
       setInitialPlanSetupPending(false);
       setNutritionBodyPromptVisible(false);
       setPendingNutritionSuggestion(null);
-      setAppGuideVisible(false);
       return;
     }
     let cancelled = false;
@@ -237,7 +235,6 @@ function AppInner() {
         const show = await shouldShowOnboardingWizard();
         if (cancelled) return;
         if (show) {
-          setAppGuideVisible(false);
           setOnboardingWizardMode('onboarding');
           onboardingWizardUserOpenedRef.current = false;
           setOnboardingWizardVisible(true);
@@ -254,7 +251,6 @@ function AppInner() {
         }
       } catch {
         if (!cancelled) {
-          setAppGuideVisible(false);
           setOnboardingWizardMode('onboarding');
           setOnboardingWizardVisible(true);
         }
@@ -310,42 +306,6 @@ function AppInner() {
     onboardingGateResolved,
     onboardingWizardVisible,
     initialPlanSetupPending,
-  ]);
-
-  useEffect(() => {
-    if (!isLoggedIn || !medicalDisclaimerResolved || medicalDisclaimerGate || !onboardingGateResolved) {
-      return;
-    }
-    if (onboardingWizardVisible || initialPlanSetupPending || nutritionBodyPromptVisible) {
-      setAppGuideVisible(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const show = await shouldShowAppGuide();
-        if (!cancelled && show) {
-          setCurrentScreen('dashboard');
-          setAppGuideVisible(true);
-        }
-      } catch {
-        if (!cancelled) {
-          setCurrentScreen('dashboard');
-          setAppGuideVisible(true);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    isLoggedIn,
-    medicalDisclaimerGate,
-    medicalDisclaimerResolved,
-    onboardingGateResolved,
-    onboardingWizardVisible,
-    initialPlanSetupPending,
-    nutritionBodyPromptVisible,
   ]);
 
   const refreshPendingNutritionSuggestion = useCallback(async () => {
@@ -1010,7 +970,6 @@ function AppInner() {
     onboardingWizardUserOpenedRef.current = false;
     setOnboardingWizardVisible(false);
     setOnboardingWizardMode('onboarding');
-    setAppGuideVisible(false);
     if (wasEdit) {
       return;
     }
@@ -1141,102 +1100,9 @@ function AppInner() {
     }
   }, [currentScreen, navigationHistory, returnToMoreHub]);
 
-  const openAppGuide = () => {
-    if (onboardingWizardVisible || initialPlanSetupPending) {
-      return;
-    }
-    if (!openedFromMoreMenuRef.current) {
-      navigateToScreen('dashboard');
-    }
-    setAppGuideVisible(true);
-  };
-
   const handleInitialPlanSaved = useCallback(() => {
     setInitialPlanSetupPending(false);
-    setAppGuideVisible(false);
-    void (async () => {
-      try {
-        const show = await shouldShowAppGuide();
-        if (show) {
-          if (!openedFromMoreMenuRef.current) {
-            navigateToScreen('dashboard');
-          }
-          setAppGuideVisible(true);
-        }
-      } catch {
-        /* non-critical */
-      }
-    })();
-  }, [navigateToScreen]);
-
-  const appTourNav = useMemo<TourNavHandlers>(
-    () => ({
-      ensureDashboard: () => {
-        navigateToScreen('dashboard');
-      },
-      ensureWorkouts: () => {
-        setFitnessSyncedTab('workouts');
-        setFitnessSurfaceNonce((n) => n + 1);
-        navigateToScreen('fitness');
-      },
-      ensureNutrition: () => {
-        setTourFitnessIntent({ id: Date.now(), closeAll: true });
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setFitnessSyncedTab('nutrition');
-        navigateToScreen('fitness');
-      },
-      ensureMore: () => {
-        openedFromMoreMenuRef.current = false;
-        navigateToScreen('moreHub');
-      },
-      ensureLogFoodOpen: (mode = 'precision') => {
-        setTourFitnessIntent({ id: Date.now(), closeAll: true });
-        setFitnessSyncedTab('nutrition');
-        navigateToScreen('fitness');
-        setTourLogFoodIntent({ id: Date.now(), open: true, mode });
-      },
-      closeLogFood: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-      },
-      ensureWorkoutsHome: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setTourFitnessIntent({ id: Date.now(), closeAll: true });
-        setFitnessSyncedTab('workouts');
-        navigateToScreen('fitness');
-      },
-      ensureMyPlansOpen: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setTourFitnessIntent({ id: Date.now(), myPlansPanel: true });
-        setFitnessSyncedTab('workouts');
-        navigateToScreen('fitness');
-      },
-      ensureBuildWorkoutOpen: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setTourFitnessIntent({ id: Date.now(), buildWorkout: true });
-        setFitnessSyncedTab('workouts');
-        navigateToScreen('fitness');
-      },
-      ensureAiWorkoutOpen: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setTourFitnessIntent({ id: Date.now(), aiWorkout: true });
-        setFitnessSyncedTab('workouts');
-        navigateToScreen('fitness');
-      },
-      ensurePlanPreviewOpen: () => {
-        setTourLogFoodIntent({ id: Date.now(), open: false });
-        setTourFitnessIntent({ id: Date.now(), planPreview: true });
-        setFitnessSyncedTab('workouts');
-        navigateToScreen('fitness');
-      },
-      closeWorkoutTour: () => {
-        setTourFitnessIntent({ id: Date.now(), closeAll: true });
-      },
-      dismissFitnessOverlays: () => {
-        setFitnessSurfaceNonce((n) => n + 1);
-      },
-    }),
-    []
-  );
+  }, []);
 
   const openScreenFromMoreMenu = (screen: LoggedInScreen) => {
     openedFromMoreMenuRef.current = true;
@@ -1262,6 +1128,8 @@ function AppInner() {
         case 'dashboard':
           return 'dashboard';
         case 'fitness':
+          // Live workout UI is always a Workouts surface, even if Nutrition was open before Resume.
+          if (activeWorkout?.isPresented) return 'workouts';
           return fitnessSyncedTab === 'nutrition' ? 'nutrition' : 'workouts';
         case 'progress':
           return 'progress';
@@ -1506,10 +1374,6 @@ function AppInner() {
                   case 'nutritionSearch':
                     openScreenFromMoreMenu('nutritionSearch');
                     break;
-                  case 'appGuide':
-                    openedFromMoreMenuRef.current = true;
-                    openAppGuide();
-                    break;
                 }
               }}
             />
@@ -1527,6 +1391,17 @@ function AppInner() {
 
     const blockMainChrome = medicalDisclaimerGate || onboardingWizardVisible;
 
+    const showingLiveWorkout =
+      currentScreen === 'fitness' && Boolean(activeWorkout?.isPresented);
+    const showActiveWorkoutBanner =
+      Boolean(activeWorkout) && !showingLiveWorkout && !blockMainChrome;
+
+    const resumeActiveWorkoutFromBanner = () => {
+      setFitnessSyncedTab('workouts');
+      presentActiveWorkout();
+      navigatePrimaryTab('fitness');
+    };
+
     return (
       <SmallWinsProvider>
       <View style={{ flex: 1, backgroundColor: '#0d0d0d' }}>
@@ -1536,6 +1411,26 @@ function AppInner() {
         >
           {body}
         </View>
+        {showActiveWorkoutBanner ? (
+          <TouchableOpacity
+            style={[
+              styles.activeWorkoutBanner,
+              { bottom: mainTabBarBottomReserve + 8 },
+            ]}
+            onPress={resumeActiveWorkoutFromBanner}
+            accessibilityRole="button"
+            accessibilityLabel="Resume workout in progress"
+            activeOpacity={0.9}
+          >
+            <View style={styles.activeWorkoutBannerTextCol}>
+              <Text style={styles.activeWorkoutBannerTitle}>Workout in progress</Text>
+              <Text style={styles.activeWorkoutBannerSubtitle} numberOfLines={1}>
+                {activeWorkout?.program?.name || 'Tap to resume'}
+              </Text>
+            </View>
+            <Text style={styles.activeWorkoutBannerAction}>Resume →</Text>
+          </TouchableOpacity>
+        ) : null}
         <View
           pointerEvents={blockMainChrome ? 'none' : 'box-none'}
           style={{
@@ -1576,17 +1471,6 @@ function AppInner() {
             refreshPendingNutritionSuggestion().catch(console.error);
           }}
           onDismiss={() => setNutritionBodyPromptVisible(false)}
-        />
-        <PlatformAppGuide
-          visible={
-            appGuideVisible &&
-            !onboardingWizardVisible &&
-            !initialPlanSetupPending &&
-            !nutritionBodyPromptVisible &&
-            !medicalDisclaimerGate
-          }
-          onClose={() => setAppGuideVisible(false)}
-          nav={appTourNav}
         />
       </View>
       </SmallWinsProvider>
@@ -1834,6 +1718,7 @@ export default function App() {
             <ToastProvider>
               <SettingsProvider>
                 <SubscriptionProvider>
+                <ActiveWorkoutProvider>
                 {!firebaseEnvConfigured ? (
                   <View style={styles.configErrorScreen}>
                     <Text style={styles.configErrorTitle}>Configuration needed</Text>
@@ -1849,6 +1734,7 @@ export default function App() {
                 ) : (
                   <AppInner />
                 )}
+                </ActiveWorkoutProvider>
                 </SubscriptionProvider>
               </SettingsProvider>
             </ToastProvider>
@@ -1882,6 +1768,42 @@ const styles = StyleSheet.create({
     color: '#9ae6b4',
     fontSize: 14,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  activeWorkoutBanner: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 100001,
+    elevation: 100001,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#1a2e24',
+    borderWidth: 1,
+    borderColor: '#00ff88',
+  },
+  activeWorkoutBannerTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  activeWorkoutBannerTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  activeWorkoutBannerSubtitle: {
+    color: '#9ca3af',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  activeWorkoutBannerAction: {
+    color: '#00ff88',
+    fontSize: 15,
+    fontWeight: '700',
   },
   container: {
     flex: 1,

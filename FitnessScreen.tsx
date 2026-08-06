@@ -72,7 +72,7 @@ import {
 } from './src/utils/logFoodFormFromDatabase';
 import { logFoodFormHasMicronutrients } from './src/utils/fdcMicronutrients';
 
-type WorkoutQuickPanel = 'myPlans' | 'templates' | null;
+type WorkoutQuickPanel = 'templates' | null;
 import { tapOutsideToDismissKeyboard } from './src/keyboard';
 import { SimplePortionControl } from './src/components/nutrition/SimplePortionControl';
 import { ServingTypeWheelPicker } from './src/components/nutrition/ServingTypeWheelPicker';
@@ -95,6 +95,7 @@ import {
   type LogFoodServingUnit,
 } from './src/utils/logFoodPortionScale';
 import { saveUserData, loadUserData } from './src/utils/userStorage';
+import { useActiveWorkout } from './src/context/ActiveWorkoutContext';
 import { getProgramWeeksFromSavedPlan, inferScheduleMode, getSuggestedFlexibleRotation, getFlexibleRotationSlots, getLastCompletedFlexibleDayIndex, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
 import {
   DEFAULT_NUTRITION_GOALS,
@@ -115,6 +116,12 @@ import {
   dateKeyToLocalNoonIso,
   resolveLoggedMealSlot,
 } from './src/utils/loggedMeals';
+import {
+  materializeRecurringMeals,
+  templateFromLoggedMeal,
+} from './src/utils/recurringMealsStorage';
+import RecurringMealScheduleModal from './src/components/nutrition/RecurringMealScheduleModal';
+import type { RecurringMealTemplate } from './src/types/recurringMeals';
 import AIService, { ProgramAdaptation } from './AIService';
 import HealthService from './src/services/HealthService';
 import { AppTheme } from './src/theme/appVisualTheme';
@@ -266,6 +273,8 @@ interface Meal {
   /** Optional label from Dashboard edit / future log-food parity */
   servingAmount?: string;
   servingUnit?: string;
+  /** Generated from a recurring meal schedule. */
+  recurringRuleId?: string;
 }
 
 interface WorkoutHistory {
@@ -318,6 +327,16 @@ export default function FitnessScreen({
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { isPremium, presentUpgrade } = useSubscription();
   const { showToast, showNotification, dismissNotification } = useToast();
+  const {
+    activeWorkout,
+    startActiveWorkout,
+    updateActiveWorkout,
+    presentActiveWorkout,
+    minimizeActiveWorkout,
+    clearActiveWorkout,
+    completeActiveWorkout,
+    notifyProgramPermanentlyUpdated,
+  } = useActiveWorkout();
   const copyMealNoticeIdRef = useRef<string | null>(null);
   const fitnessStartRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessStart);
   const fitnessTodayCardRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessTodayCard);
@@ -343,8 +362,25 @@ export default function FitnessScreen({
   };
 
   const handleInternalBack = () => {
-    if (selectedProgram) {
-      setSelectedProgram(null);
+    if (activeWorkout?.isPresented) {
+      Alert.alert('Leave workout?', 'Your progress is saved. You can resume anytime from Workouts.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue later',
+          onPress: () => {
+            minimizeActiveWorkout();
+            setSelectedSavedPlan(null);
+            setShowBuildYourOwnScreen(false);
+            setShowWorkoutScreen(false);
+            setPlanToEdit(null);
+          },
+        },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => clearActiveWorkout(),
+        },
+      ]);
     } else if (selectedHistorySession) {
       setSelectedHistorySession(null);
     } else if (selectedSavedPlan) {
@@ -410,8 +446,15 @@ export default function FitnessScreen({
     setPlanToEdit(null);
     setSelectedSavedPlan(null);
     setSelectedHistorySession(null);
-    setSelectedProgram(null);
     setWorkoutQuickPanel(null);
+    // Keep an in-progress workout alive; only hide it when leaving the Workouts tab.
+    if (activeWorkout) {
+      if (syncedFitnessTab === 'workouts') {
+        presentActiveWorkout();
+      } else {
+        minimizeActiveWorkout();
+      }
+    }
   }, [fitnessSurfaceNonce]);
   const [macroLogs, setMacroLogs] = useState<MacroLog[]>([]);
   const [meals, setMeals] = useState<Meal[]>([]);
@@ -495,7 +538,6 @@ export default function FitnessScreen({
   const [showWorkoutScreen, setShowWorkoutScreen] = useState(false);
   const [showBuildYourOwnScreen, setShowBuildYourOwnScreen] = useState(false);
   const [planToEdit, setPlanToEdit] = useState<any | null>(null);
-  const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
   const [selectedSavedPlan, setSelectedSavedPlan] = useState<any | null>(null);
   const [savedPlanAutoStartSuggested, setSavedPlanAutoStartSuggested] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'strength' | 'muscle_building' | 'cardio' | 'bodyweight' | null>(null);
@@ -518,6 +560,11 @@ export default function FitnessScreen({
   const [showMealCopySlotPicker, setShowMealCopySlotPicker] = useState(false);
   /** Preferred paste slot = original meal time (user can still pick another). */
   const [mealCopyPreferredSlot, setMealCopyPreferredSlot] = useState<MealSlot | null>(null);
+  const [recurringScheduleVisible, setRecurringScheduleVisible] = useState(false);
+  const [recurringScheduleMeal, setRecurringScheduleMeal] = useState<Meal | null>(null);
+  const [recurringScheduleSlot, setRecurringScheduleSlot] = useState<MealSlot | null>(null);
+  const [recurringScheduleTemplate, setRecurringScheduleTemplate] =
+    useState<RecurringMealTemplate | null>(null);
 
   const endCopyMode = useCallback(() => {
     setMealCopyPending(null);
@@ -532,13 +579,14 @@ export default function FitnessScreen({
   }, [dismissNotification]);
 
   const [showLogPastWorkout, setShowLogPastWorkout] = useState(false);
+  const [logWorkoutMode, setLogWorkoutMode] = useState<'past' | 'daily'>('past');
 
   React.useEffect(() => {
     (FitnessScreen as any).internalBackHandler = handleInternalBack;
     return () => {
       delete (FitnessScreen as any).internalBackHandler;
     };
-  }, [selectedProgram, selectedHistorySession, selectedSavedPlan, showBuildYourOwnScreen, showWorkoutScreen, showLogPastWorkout]);
+  }, [activeWorkout?.isPresented, selectedHistorySession, selectedSavedPlan, showBuildYourOwnScreen, showWorkoutScreen, showLogPastWorkout]);
 
   const [savedWorkoutPlans, setSavedWorkoutPlans] = useState<any[]>([]);
   const [activePlans, setActivePlans] = useState<string[]>([]);
@@ -688,17 +736,39 @@ export default function FitnessScreen({
 
   const togglePlanActive = async (planId: string) => {
     try {
-      let updatedActive = [...activePlans];
-      if (updatedActive.includes(planId)) {
-        updatedActive = updatedActive.filter(id => id !== planId);
-      } else {
-        updatedActive.push(planId);
+      if (activePlans.includes(planId)) {
+        const updatedActive = activePlans.filter((id) => id !== planId);
+        setActivePlans(updatedActive);
+        await saveUserData('activeWorkoutPlans', updatedActive);
+        return;
       }
+      // Newly active plans go first so Start Workout + Saved Programs list them first.
+      const { setPrimaryActiveWorkoutPlan } = await import('./src/utils/savedWorkoutPlanActions');
+      const updatedActive = await setPrimaryActiveWorkoutPlan(planId);
       setActivePlans(updatedActive);
-      await saveUserData('activeWorkoutPlans', updatedActive);
     } catch (error) {
       console.error('Error toggling active plan:', error);
     }
+  };
+
+  const openLogWorkoutPicker = () => {
+    Alert.alert('Log workout', 'Choose how you want to log this session.', [
+      {
+        text: 'Past workout',
+        onPress: () => {
+          setLogWorkoutMode('past');
+          setShowLogPastWorkout(true);
+        },
+      },
+      {
+        text: 'Daily workout',
+        onPress: () => {
+          setLogWorkoutMode('daily');
+          setShowLogPastWorkout(true);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const deletePlan = async (planId: string) => {
@@ -712,23 +782,22 @@ export default function FitnessScreen({
           style: 'destructive',
           onPress: async () => {
             try {
-              // Remove from saved plans
-              const updatedPlans = savedWorkoutPlans.filter(p => p.id !== planId);
-              await saveUserData('savedWorkoutPlans', updatedPlans);
-              setSavedWorkoutPlans(updatedPlans);
-              
-              // Remove from active plans if it was active
-              const updatedActive = activePlans.filter(id => id !== planId);
-              if (updatedActive.length !== activePlans.length) {
-                setActivePlans(updatedActive);
-                await saveUserData('activeWorkoutPlans', updatedActive);
-              }
-              
-              // Close the saved plan view if it's open
+              const { deleteSavedWorkoutPlan } = await import(
+                './src/utils/savedWorkoutPlanActions'
+              );
+              await deleteSavedWorkoutPlan(planId);
+
+              setSavedWorkoutPlans((prev) => prev.filter((p) => p.id !== planId));
+              setActivePlans((prev) => prev.filter((id) => id !== planId));
+
               if (selectedSavedPlan && selectedSavedPlan.id === planId) {
                 setSelectedSavedPlan(null);
               }
-              
+              if (planToEdit?.id === planId) {
+                setPlanToEdit(null);
+                setShowBuildYourOwnScreen(false);
+              }
+
               Alert.alert('Success', 'Workout plan deleted successfully');
             } catch (error) {
               console.error('Error deleting plan:', error);
@@ -742,22 +811,9 @@ export default function FitnessScreen({
 
   const loadWorkoutHistory = async () => {
     try {
-      const parsedHistory = await loadUserData<WorkoutSession[]>('workoutHistory');
-      console.log('Loading workout history:', parsedHistory);
-      if (parsedHistory) {
-        console.log('Parsed workout history:', parsedHistory);
-        const seen = new Set<string>();
-        const deduped = parsedHistory.filter((s) => {
-          const k = `${s.id}|${s.date}`;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
-        if (deduped.length < parsedHistory.length) {
-          await saveUserData('workoutHistory', deduped);
-        }
-        setWorkoutHistory(deduped);
-      }
+      const { loadDedupedWorkoutHistory } = await import('./src/utils/workoutHistoryStorage');
+      const deduped = await loadDedupedWorkoutHistory();
+      setWorkoutHistory(deduped);
     } catch (error) {
       console.error('Error loading workout history:', error);
     }
@@ -810,12 +866,8 @@ export default function FitnessScreen({
 
   const loadMeals = async () => {
     try {
-      const parsedMeals = await loadUserData<Meal[]>('meals');
-      console.log('Loading meals:', parsedMeals);
-      if (parsedMeals) {
-        console.log('Parsed meals:', parsedMeals);
-        setMeals(parsedMeals);
-      }
+      const parsedMeals = (await materializeRecurringMeals()) as Meal[];
+      setMeals(parsedMeals);
     } catch (error) {
       console.error('Error loading meals:', error);
     }
@@ -1351,6 +1403,38 @@ export default function FitnessScreen({
       'success',
       3500
     );
+  };
+
+  /** One-tap: log this meal again for today in the same meal time. */
+  const repeatMealForToday = async (meal: Meal, preferredSlot?: MealSlot) => {
+    const slot = preferredSlot ?? inferMealSlot(meal);
+    const todayKey = getTodayDateKey();
+    const result = await duplicateLoggedMealToDate(meal.id, todayKey, { mealSlot: slot });
+    if (!result) {
+      showToast('That meal was not found.', 'error');
+      return;
+    }
+    setMeals(result.meals as Meal[]);
+    setSelectedCalendarDate(todayKey);
+    setExpandedDayItems(new Set([`nutrition-${todayKey}`]));
+    setMealSlotSheet(slot);
+    setHistoryMealSlotSheet(null);
+    if (activeTab !== 'nutrition') {
+      updateFitnessTab('nutrition');
+    }
+    showToast(
+      `“${meal.name}” repeated for today · ${mealSlotLabel(slot)}.`,
+      'success',
+      3500
+    );
+  };
+
+  const openRepeatSchedule = (meal: Meal, preferredSlot?: MealSlot) => {
+    const slot = preferredSlot ?? inferMealSlot(meal);
+    setRecurringScheduleMeal(meal);
+    setRecurringScheduleSlot(slot);
+    setRecurringScheduleTemplate(templateFromLoggedMeal(meal, slot));
+    setRecurringScheduleVisible(true);
   };
 
   const formatHistoryDateLabel = (dateKey: string) => {
@@ -1897,7 +1981,7 @@ export default function FitnessScreen({
 
   const handleProgramSelect = (program: WorkoutProgram) => {
     console.log('Selected program:', program);
-    setSelectedProgram(program);
+    startActiveWorkout({ program });
   };
 
   const handleWorkoutComplete = async (session: WorkoutSession) => {
@@ -1917,8 +2001,6 @@ export default function FitnessScreen({
     } catch (error) {
       console.error('Error reloading workout history:', error);
     }
-    
-    setSelectedProgram(null);
     
     // Automatically complete fitness tasks when workout is finished
     onCompleteTask('workout');
@@ -2147,7 +2229,6 @@ export default function FitnessScreen({
           setShowWorkoutScreen(false);
           setShowBuildYourOwnScreen(false);
           setSelectedSavedPlan(null);
-          setSelectedProgram(null);
           setWorkoutQuickPanel(null);
           setPlanToEdit(null);
           tourPlanPreviewPendingRef.current = false;
@@ -2158,14 +2239,12 @@ export default function FitnessScreen({
             setShowWorkoutScreen(false);
             setShowBuildYourOwnScreen(false);
             setSelectedSavedPlan(null);
-            setSelectedProgram(null);
             setPlanToEdit(null);
-            setWorkoutQuickPanel('myPlans');
+            setWorkoutQuickPanel(null);
           }
           if (tourFitnessIntent.buildWorkout) {
             setShowWorkoutScreen(false);
             setSelectedSavedPlan(null);
-            setSelectedProgram(null);
             setWorkoutQuickPanel(null);
             setPlanToEdit(null);
             setShowBuildYourOwnScreen(true);
@@ -2173,7 +2252,6 @@ export default function FitnessScreen({
           if (tourFitnessIntent.aiWorkout) {
             setShowBuildYourOwnScreen(false);
             setSelectedSavedPlan(null);
-            setSelectedProgram(null);
             setWorkoutQuickPanel(null);
             setShowWorkoutScreen(true);
           }
@@ -2184,7 +2262,11 @@ export default function FitnessScreen({
             setPlanToEdit(null);
             tourStartTodayPendingRef.current = false;
             const plan =
-              savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? savedWorkoutPlans[0] ?? null;
+              activePlans
+                .map((id) => savedWorkoutPlans.find((p) => p.id === id))
+                .find(Boolean) ??
+              savedWorkoutPlans[0] ??
+              null;
             if (plan) {
               setSelectedSavedPlan(plan);
               tourPlanPreviewPendingRef.current = false;
@@ -2198,7 +2280,10 @@ export default function FitnessScreen({
             setWorkoutQuickPanel(null);
             setPlanToEdit(null);
             tourPlanPreviewPendingRef.current = false;
-            const plan = savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? null;
+            const plan =
+              activePlans
+                .map((id) => savedWorkoutPlans.find((p) => p.id === id))
+                .find(Boolean) ?? null;
             if (plan) {
               setSavedPlanAutoStartSuggested(true);
               setSelectedSavedPlan(plan);
@@ -2214,7 +2299,11 @@ export default function FitnessScreen({
 
     if (tourPlanPreviewPendingRef.current && !selectedSavedPlan) {
       const plan =
-        savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? savedWorkoutPlans[0] ?? null;
+        activePlans
+          .map((id) => savedWorkoutPlans.find((p) => p.id === id))
+          .find(Boolean) ??
+        savedWorkoutPlans[0] ??
+        null;
       if (plan) {
         setSelectedSavedPlan(plan);
         tourPlanPreviewPendingRef.current = false;
@@ -2222,7 +2311,10 @@ export default function FitnessScreen({
     }
 
     if (tourStartTodayPendingRef.current && !selectedSavedPlan) {
-      const plan = savedWorkoutPlans.find((p) => activePlans.includes(p.id)) ?? null;
+      const plan =
+        activePlans
+          .map((id) => savedWorkoutPlans.find((p) => p.id === id))
+          .find(Boolean) ?? null;
       if (plan) {
         setSavedPlanAutoStartSuggested(true);
         setSelectedSavedPlan(plan);
@@ -2493,7 +2585,9 @@ export default function FitnessScreen({
       ? workoutPrograms.filter((p) => p.category === selectedCategory)
       : workoutPrograms;
 
-    const currentPlans = savedWorkoutPlans.filter((plan) => activePlans.includes(plan.id));
+    const currentPlans = activePlans
+      .map((id) => savedWorkoutPlans.find((plan) => plan.id === id))
+      .filter(Boolean) as any[];
     const primaryPlan = currentPlans[0] ?? null;
 
     const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -2640,7 +2734,7 @@ export default function FitnessScreen({
       }
       Alert.alert(
         'Choose a workout',
-        'Open My Plans, browse program templates below, or use AI / Build to create a plan.',
+        'Open a plan under Saved Programs, browse Program templates, or use AI / Build to create one.',
         [{ text: 'OK' }]
       );
     };
@@ -2724,21 +2818,17 @@ export default function FitnessScreen({
             </View>
             <View style={[styles.nuQuickRow, styles.woQuickRowLast]}>
               <TouchableOpacity
-                style={[
-                  styles.nuQuickTile,
-                  styles.nuQuickPurple,
-                  workoutQuickPanel === 'myPlans' && styles.nuQuickTileActivePurple,
-                ]}
+                style={[styles.nuQuickTile, styles.nuQuickPurple]}
                 ref={fitnessMyPlansRef}
                 onPress={() => {
-                  toggleWorkoutQuickPanel('myPlans');
+                  openLogWorkoutPicker();
                   fireTourTargetIfNeeded(TOUR_TARGET_IDS.fitnessMyPlans);
                 }}
                 activeOpacity={0.85}
                 nativeID={TOUR_TARGET_IDS.fitnessMyPlans}
               >
-                <Text style={styles.nuQuickIcon}>📋</Text>
-                <Text style={styles.nuQuickLabel}>My Plans</Text>
+                <Text style={styles.nuQuickIcon}>📝</Text>
+                <Text style={styles.nuQuickLabel}>Log Workout</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -2830,105 +2920,11 @@ export default function FitnessScreen({
             </View>
           )}
 
-          {workoutQuickPanel === 'myPlans' && (
-            <View style={styles.woExpandBlock} ref={fitnessMyPlansPanelRef} nativeID={TOUR_TARGET_IDS.fitnessMyPlansPanel}>
-              <Text style={styles.nuSectionTitle}>My plans</Text>
-              {currentPlans.length > 0 ? (
-                <>
-                  <Text style={styles.woPlanSectionSub}>Active ({currentPlans.length})</Text>
-                  {currentPlans.map((plan) => (
-                    <TouchableOpacity
-                      key={plan.id}
-                      style={styles.programCard}
-                      onPress={() => setSelectedSavedPlan(plan)}
-                    >
-                      <View style={styles.planHeader}>
-                        <View style={styles.planHeaderLeft}>
-                          <Text style={styles.programTitle}>{plan.name}</Text>
-                          <View style={styles.badgeRow}>
-                            <Text style={styles.activePlanBadge}>Active</Text>
-                            {planAdaptations.get(plan.id) && planAdaptations.get(plan.id)!.length > 0 && (
-                              <View style={styles.adaptationIndicator}>
-                                <Text style={styles.adaptationIndicatorText}>
-                                  {planAdaptations.get(plan.id)!.length} AI Suggestions
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.activeToggle}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            togglePlanActive(plan.id);
-                          }}
-                        >
-                          <Text style={styles.activeToggleText}>Remove</Text>
-                        </TouchableOpacity>
-                      </View>
-                      <Text style={styles.programDescription}>
-                        {plan.level || 'Custom'} • {(plan.goal || 'strength').replace('_', ' ')} •{' '}
-                        {plan.daysPerWeek || (plan.trainingDays && plan.trainingDays.length) || 'N/A'} days/week
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </>
-              ) : (
-                <Text style={styles.emptyStateText}>No active plans</Text>
-              )}
-              {savedWorkoutPlans.filter((p) => !activePlans.includes(p.id)).length > 0 && (
-                <>
-                  <Text style={[styles.woPlanSectionSub, { marginTop: 10 }]}>
-                    Saved ({savedWorkoutPlans.filter((p) => !activePlans.includes(p.id)).length})
-                  </Text>
-                  {savedWorkoutPlans
-                    .filter((plan) => !activePlans.includes(plan.id))
-                    .map((plan) => (
-                      <TouchableOpacity
-                        key={plan.id}
-                        style={styles.programCard}
-                        onPress={() => setSelectedSavedPlan(plan)}
-                      >
-                        <View style={styles.planHeader}>
-                          <View style={styles.planHeaderLeft}>
-                            <Text style={styles.programTitle}>{plan.name}</Text>
-                            {planAdaptations.get(plan.id) && planAdaptations.get(plan.id)!.length > 0 && (
-                              <View style={styles.adaptationIndicator}>
-                                <Text style={styles.adaptationIndicatorText}>
-                                  {planAdaptations.get(plan.id)!.length} AI Suggestions
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                          <TouchableOpacity
-                            style={[styles.activeToggle, styles.activeToggleInactive]}
-                            onPress={() => togglePlanActive(plan.id)}
-                          >
-                            <Text style={[styles.activeToggleText, { color: '#00ff88' }]}>Set Active</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <Text style={styles.programDescription}>
-                          {plan.level || 'Custom'} • {(plan.goal || 'strength').replace('_', ' ')} •{' '}
-                          {plan.daysPerWeek || (plan.trainingDays && plan.trainingDays.length) || 'N/A'} days/week
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                </>
-              )}
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={styles.woPreviousButton}
-            onPress={() => setShowLogPastWorkout(true)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.woPreviousButtonText}>Log previous workout</Text>
-          </TouchableOpacity>
-
           {orderedSaved.length > 0 && (
             <>
-              <Text style={[styles.nuSectionTitle, { marginTop: 6 }]}>Saved Programs</Text>
+              <View ref={fitnessMyPlansPanelRef} nativeID={TOUR_TARGET_IDS.fitnessMyPlansPanel}>
+                <Text style={[styles.nuSectionTitle, { marginTop: 6 }]}>Saved Programs</Text>
+              </View>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -2959,7 +2955,7 @@ export default function FitnessScreen({
                       </View>
                       <Text style={styles.woProgMeta}>
                         {isActive
-                          ? `Completed ${Math.min(done, totalDays)}/${totalDays} logged`
+                          ? `Active · ${Math.min(done, totalDays)}/${totalDays} logged`
                           : 'Saved plan'}
                       </Text>
                       <Text style={styles.woProgLink}>
@@ -3639,17 +3635,32 @@ export default function FitnessScreen({
                                 </View>
                                 <Text style={styles.nuChevron}>›</Text>
                               </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.mealCopyBtnCompact}
-                                onPress={() => {
-                                  setHistoryMealSlotSheet(null);
-                                  startCopyMealToDay(meal, historyMealSlotSheet ?? undefined);
-                                }}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                accessibilityLabel={`Copy ${meal.name} to another day or meal time`}
-                              >
-                                <Text style={styles.mealCopyBtnText}>Copy</Text>
-                              </TouchableOpacity>
+                              <View style={styles.mealSlotItemActions}>
+                                <TouchableOpacity
+                                  style={styles.mealRepeatBtnCompact}
+                                  onPress={() => {
+                                    openRepeatSchedule(
+                                      meal,
+                                      historyMealSlotSheet ?? undefined
+                                    );
+                                  }}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityLabel={`Schedule repeating ${meal.name}`}
+                                >
+                                  <Text style={styles.mealRepeatBtnText}>Repeat</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.mealCopyBtnCompact}
+                                  onPress={() => {
+                                    setHistoryMealSlotSheet(null);
+                                    startCopyMealToDay(meal, historyMealSlotSheet ?? undefined);
+                                  }}
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  accessibilityLabel={`Copy ${meal.name} to another day or meal time`}
+                                >
+                                  <Text style={styles.mealCopyBtnText}>Copy</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           );
                         })}
@@ -5709,17 +5720,29 @@ export default function FitnessScreen({
                                   </View>
                                   <Text style={styles.nuChevron}>›</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity
-                                  style={styles.mealCopyBtnCompact}
-                                  onPress={() => {
-                                    setMealSlotSheet(null);
-                                    startCopyMealToDay(meal, mealSlotSheet ?? undefined);
-                                  }}
-                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                  accessibilityLabel={`Copy ${meal.name} to another day or meal time`}
-                                >
-                                  <Text style={styles.mealCopyBtnText}>Copy</Text>
-                                </TouchableOpacity>
+                                <View style={styles.mealSlotItemActions}>
+                                  <TouchableOpacity
+                                    style={styles.mealRepeatBtnCompact}
+                                    onPress={() => {
+                                      openRepeatSchedule(meal, mealSlotSheet ?? undefined);
+                                    }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    accessibilityLabel={`Schedule repeating ${meal.name}`}
+                                  >
+                                    <Text style={styles.mealRepeatBtnText}>Repeat</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={styles.mealCopyBtnCompact}
+                                    onPress={() => {
+                                      setMealSlotSheet(null);
+                                      startCopyMealToDay(meal, mealSlotSheet ?? undefined);
+                                    }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    accessibilityLabel={`Copy ${meal.name} to another day or meal time`}
+                                  >
+                                    <Text style={styles.mealCopyBtnText}>Copy</Text>
+                                  </TouchableOpacity>
+                                </View>
                               </View>
                             );
                           })}
@@ -6041,7 +6064,48 @@ export default function FitnessScreen({
     );
   };
 
-  if (showWorkoutScreen) {
+  if (activeWorkout?.isPresented) {
+    return (
+      <ProgramExecutionScreen
+        program={activeWorkout.program}
+        persistTarget={activeWorkout.persistTarget}
+        resumeSnapshot={activeWorkout}
+        onProgressChange={updateActiveWorkout}
+        onProgramPermanentlyUpdated={notifyProgramPermanentlyUpdated}
+        onBack={() => {
+          Alert.alert(
+            'Leave workout?',
+            'Your progress is saved. You can resume anytime from Workouts.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Continue later',
+                onPress: () => {
+                  minimizeActiveWorkout();
+                  setSelectedSavedPlan(null);
+                  setShowBuildYourOwnScreen(false);
+                  setShowWorkoutScreen(false);
+                  setPlanToEdit(null);
+                },
+              },
+              {
+                text: 'Discard',
+                style: 'destructive',
+                onPress: () => clearActiveWorkout(),
+              },
+            ]
+          );
+        }}
+        onComplete={async (session) => {
+          await completeActiveWorkout(session);
+          await handleWorkoutComplete(session);
+        }}
+      />
+    );
+  }
+
+  // Don't open nested plan builders while a session is minimized — resume banner first.
+  if (!activeWorkout && showWorkoutScreen) {
     return (
       <WorkoutScreen 
         onBack={() => {
@@ -6056,16 +6120,21 @@ export default function FitnessScreen({
   if (showLogPastWorkout) {
     return (
       <LogPastWorkoutScreen
+        mode={logWorkoutMode}
         onBack={() => {
           setShowLogPastWorkout(false);
           loadWorkoutHistory();
         }}
         onComplete={handleWorkoutComplete}
+        onProgramsChanged={() => {
+          loadSavedWorkoutPlans();
+          loadActivePlans();
+        }}
       />
     );
   }
 
-  if (showBuildYourOwnScreen) {
+  if (!activeWorkout && showBuildYourOwnScreen) {
     return (
       <BuildYourOwnWorkoutScreen 
         planToEdit={planToEdit ?? undefined}
@@ -6075,6 +6144,14 @@ export default function FitnessScreen({
           loadSavedWorkoutPlans();
           loadActivePlans();
         }}
+        onPlanDeleted={(planId) => {
+          setSavedWorkoutPlans((prev) => prev.filter((p) => p.id !== planId));
+          setActivePlans((prev) => prev.filter((id) => id !== planId));
+          setPlanToEdit(null);
+          setSelectedSavedPlan(null);
+          setShowBuildYourOwnScreen(false);
+          showToast('Workout plan deleted', 'success', 2500);
+        }}
         onWorkoutComplete={() => {
           loadWorkoutHistory();
           loadSavedWorkoutPlans();
@@ -6083,12 +6160,15 @@ export default function FitnessScreen({
     );
   }
 
-  if (selectedSavedPlan) {
+  if (!activeWorkout && selectedSavedPlan) {
     return (
       <SavedPlanViewScreen
         plan={selectedSavedPlan}
         autoStartSuggested={savedPlanAutoStartSuggested}
         onBack={clearSavedPlanNavigation}
+        onActivePlansChanged={(ids) => {
+          setActivePlans(ids);
+        }}
         onEditPlan={(plan) => {
           setSavedPlanAutoStartSuggested(false);
           setSelectedSavedPlan(null);
@@ -6108,16 +6188,6 @@ export default function FitnessScreen({
       <WorkoutHistoryDetailScreen
         session={selectedHistorySession}
         onBack={() => setSelectedHistorySession(null)}
-      />
-    );
-  }
-
-  if (selectedProgram) {
-    return (
-      <ProgramExecutionScreen
-        program={selectedProgram}
-        onBack={() => setSelectedProgram(null)}
-        onComplete={handleWorkoutComplete}
       />
     );
   }
@@ -6166,6 +6236,36 @@ export default function FitnessScreen({
         onFoodScanned={handleFoodScanned}
         onScanNotFound={handleBarcodeScanNotFound}
         onScanError={handleBarcodeScanError}
+      />
+
+      <RecurringMealScheduleModal
+        visible={recurringScheduleVisible}
+        mealName={recurringScheduleMeal?.name ?? 'Meal'}
+        template={recurringScheduleTemplate}
+        onClose={() => {
+          setRecurringScheduleVisible(false);
+          setRecurringScheduleMeal(null);
+          setRecurringScheduleTemplate(null);
+          setRecurringScheduleSlot(null);
+        }}
+        onOnceToday={() => {
+          if (recurringScheduleMeal) {
+            void repeatMealForToday(
+              recurringScheduleMeal,
+              recurringScheduleSlot ?? undefined
+            );
+          }
+        }}
+        onSaved={async () => {
+          await loadMeals();
+          const slot = recurringScheduleSlot ?? recurringScheduleTemplate?.mealSlot;
+          if (slot) setMealSlotSheet(slot);
+          showToast(
+            `“${recurringScheduleMeal?.name ?? 'Meal'}” will repeat on your schedule.`,
+            'success',
+            3500
+          );
+        }}
       />
 
       {/* notifications removed */}
@@ -8024,6 +8124,29 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 20,
   },
+  activeWorkoutBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#1a2e24',
+    borderWidth: 1,
+    borderColor: '#00ff88',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  activeWorkoutBannerTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  activeWorkoutBannerAction: {
+    color: '#00ff88',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   historySectionHint: {
     fontSize: 13,
     color: '#9ca3af',
@@ -8673,6 +8796,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
     alignSelf: 'center',
+  },
+  mealSlotItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  mealRepeatBtnCompact: {
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.accent,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    alignSelf: 'center',
+  },
+  mealRepeatBtnText: {
+    color: AppTheme.accentDark,
+    fontSize: 12,
+    fontWeight: '800',
   },
   mealCopyBtnText: {
     color: '#00ff88',

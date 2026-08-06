@@ -29,6 +29,7 @@ import Svg, {
 } from 'react-native-svg';
 import { AppTheme } from './src/theme/appVisualTheme';
 import { loadUserData, saveUserData } from './src/utils/userStorage';
+import { notifyUserDataReady } from './src/utils/userDataEvents';
 import HistoryLineChart from './src/components/HistoryLineChart';
 import {
   sessionsToPeakSetWeightPoints,
@@ -490,6 +491,7 @@ export default function HealthScreen({ onBack, initialTrendGraph }: HealthScreen
     setWeightEntries(updatedEntries);
     await saveUserData('weightEntries', updatedEntries);
     setShowWeightModal(false);
+    notifyUserDataReady();
   };
 
   const primaryLiftSeries = useMemo(

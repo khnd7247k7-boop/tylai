@@ -47,10 +47,6 @@ export default function PhotoViewer({
   const uri = session.photos[pose];
 
   useEffect(() => {
-    setPoseIndex(0);
-  }, [session.id]);
-
-  useEffect(() => {
     setLoading(true);
     if (!animate) {
       setDisplayUri(uri);
@@ -88,6 +84,12 @@ export default function PhotoViewer({
       bounciness: 4,
     }).start();
   };
+
+  // Keep the selected pose when changing weeks — same angle over time.
+  useEffect(() => {
+    resetZoom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id]);
 
   const pan = useMemo(
     () =>

@@ -115,8 +115,8 @@ function getTodayWorkoutLabel(
   activeIds: string[],
   workoutHistory: WorkoutSession[] = []
 ): string {
-  const active = savedPlans.filter((p) => activeIds.includes(p.id));
-  const plan = active[0];
+  const plan =
+    activeIds.map((id) => savedPlans.find((p) => p.id === id)).find(Boolean) || null;
   if (!plan) return 'Workout';
 
   const weeks = getProgramWeeksFromSavedPlan(plan);

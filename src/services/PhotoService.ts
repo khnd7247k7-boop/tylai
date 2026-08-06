@@ -22,6 +22,11 @@ import { PHOTO_POSES } from '../types/progressPhotos';
 const STORAGE_KEY = 'progressPhotoSessions';
 const PHOTO_DIR = 'progress-photos';
 
+/** Local calendar YYYY-MM-DD (not UTC). Used for timeline placement. */
+export function toProgressPhotoLocalDateKey(d: Date = new Date()): string {
+  return localDateKey(d);
+}
+
 function localDateKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -262,13 +267,28 @@ export async function getSessionForDate(dateKey: string): Promise<PhotoSession |
 }
 
 /**
- * Save a new progress session for today.
- * Replaces only today's session if one exists — all previous dates stay stored.
+ * Save a progress session for a given day (defaults to today).
+ * Replaces only that day's session if one exists — all other dates stay stored.
+ *
+ * Pass `date` / `timestamp` when importing library photos so the session lands on
+ * the photo's capture day in the timeline (not "today").
  */
 export async function createSessionFromCaptures(
-  captures: Record<PhotoPose, string>
+  captures: Record<PhotoPose, string>,
+  opts?: { date?: string; timestamp?: string | Date }
 ): Promise<PhotoSession> {
-  const date = localDateKey();
+  const stampDate =
+    opts?.timestamp instanceof Date
+      ? opts.timestamp
+      : typeof opts?.timestamp === 'string'
+        ? new Date(opts.timestamp)
+        : new Date();
+  const safeStamp = Number.isNaN(stampDate.getTime()) ? new Date() : stampDate;
+  const date =
+    typeof opts?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(opts.date)
+      ? opts.date
+      : localDateKey(safeStamp);
+  const timestamp = safeStamp.toISOString();
   const id = `ps_${Date.now()}`;
 
   const photosRelative = {
@@ -280,14 +300,15 @@ export async function createSessionFromCaptures(
   const session: PhotoSession = {
     id,
     date,
-    timestamp: new Date().toISOString(),
+    timestamp,
     photos: photosRelative,
+    metadata: opts?.date || opts?.timestamp ? { importedFromLibrary: true } : undefined,
   };
 
   const existing = await loadUserData<PhotoSession[]>(STORAGE_KEY);
   const prior = Array.isArray(existing) ? existing : [];
-  const replacedToday = prior.filter((s) => s.date === date);
-  for (const old of replacedToday) {
+  const replacedSameDay = prior.filter((s) => s.date === date);
+  for (const old of replacedSameDay) {
     if (old.id !== id) await deleteSessionFiles(old.id);
   }
 

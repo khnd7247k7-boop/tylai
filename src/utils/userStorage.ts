@@ -1,7 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '../../firebaseConfig';
+import { USER_DATA_BASE_KEYS } from './durableUserDataKeys';
 
 const AUTH_WAIT_MS = 8000;
+
+type PendingWrite = { baseKey: string; data: unknown };
+const pendingWrites: PendingWrite[] = [];
+let flushingPending = false;
 
 /**
  * Get the current user's ID for storage key prefixing
@@ -42,31 +47,72 @@ export const getUserStorageKeySync = (baseKey: string): string | null => {
   return `user_${userId}_${baseKey}`;
 };
 
+async function writeUserDataNow<T>(baseKey: string, data: T, storageKey: string): Promise<void> {
+  await AsyncStorage.setItem(storageKey, JSON.stringify(data));
+  try {
+    const { isCloudSyncedKey, pushUserDataToCloud } = await import('../services/userCloudSync');
+    if (isCloudSyncedKey(baseKey)) {
+      await AsyncStorage.setItem(`${storageKey}__updatedAt`, new Date().toISOString());
+      // Don't block the UI on Firestore; local write already survives app updates.
+      void pushUserDataToCloud(baseKey, data);
+    }
+  } catch (syncError) {
+    console.warn(`[userStorage] cloud sync skipped for ${baseKey}`, syncError);
+  }
+}
+
 /**
- * Save data with user-specific key
+ * Save data with user-specific key.
+ * If auth is not ready yet, queues the write and flushes after login.
  */
 export const saveUserData = async <T>(baseKey: string, data: T): Promise<void> => {
   const key = await getUserStorageKey(baseKey);
   if (!key) {
-    console.warn(`[userStorage] Could not save "${baseKey}" — no authenticated user`);
+    pendingWrites.push({ baseKey, data });
+    console.warn(
+      `[userStorage] Queued save for "${baseKey}" until auth is ready (${pendingWrites.length} pending)`
+    );
     return;
   }
   try {
-    await AsyncStorage.setItem(key, JSON.stringify(data));
-    // Cross-device sync for selected keys (saved workouts, etc.)
-    try {
-      const { isCloudSyncedKey, pushUserDataToCloud } = await import('../services/userCloudSync');
-      if (isCloudSyncedKey(baseKey)) {
-        void pushUserDataToCloud(baseKey, data);
-      }
-    } catch (syncError) {
-      console.warn(`[userStorage] cloud sync skipped for ${baseKey}`, syncError);
-    }
+    await writeUserDataNow(baseKey, data, key);
   } catch (error) {
     console.error(`Error saving user data for key ${baseKey}:`, error);
     throw error;
   }
 };
+
+/** Flush writes that were queued before Firebase auth was ready. */
+export async function flushPendingUserDataWrites(): Promise<number> {
+  if (flushingPending || pendingWrites.length === 0) return 0;
+  flushingPending = true;
+  let flushed = 0;
+  try {
+    while (pendingWrites.length > 0) {
+      const next = pendingWrites.shift();
+      if (!next) break;
+      const key = await getUserStorageKey(next.baseKey);
+      if (!key) {
+        pendingWrites.unshift(next);
+        break;
+      }
+      try {
+        await writeUserDataNow(next.baseKey, next.data, key);
+        flushed += 1;
+      } catch (error) {
+        console.warn(`[userStorage] Failed to flush pending "${next.baseKey}"`, error);
+        pendingWrites.unshift(next);
+        break;
+      }
+    }
+  } finally {
+    flushingPending = false;
+  }
+  if (flushed > 0) {
+    console.log(`[userStorage] Flushed ${flushed} pending write(s)`);
+  }
+  return flushed;
+}
 
 /**
  * Load data with user-specific key
@@ -90,15 +136,15 @@ export const removeUserData = async (baseKey: string): Promise<void> => {
   const key = await getUserStorageKey(baseKey);
   if (!key) return;
   try {
-    await AsyncStorage.removeItem(key);
+    await AsyncStorage.multiRemove([key, `${key}__updatedAt`]);
   } catch (error) {
     console.error(`Error removing user data for key ${baseKey}:`, error);
   }
 };
 
 /**
- * Clear all data for current user
- * Call this on logout
+ * Clear all data for current user on this device.
+ * (Does not sign the user out; cloud copies remain until overwritten.)
  */
 export const clearAllUserData = async (): Promise<void> => {
   const userId = getCurrentUserId();
@@ -106,7 +152,7 @@ export const clearAllUserData = async (): Promise<void> => {
 
   try {
     const allKeys = await AsyncStorage.getAllKeys();
-    const userKeys = allKeys.filter(key => key.startsWith(`user_${userId}_`));
+    const userKeys = allKeys.filter((key) => key.startsWith(`user_${userId}_`));
     if (userKeys.length > 0) {
       await AsyncStorage.multiRemove(userKeys);
     }
@@ -128,52 +174,6 @@ export const getAllStoredKeys = async (): Promise<string[]> => {
     return [];
   }
 };
-
-/** Base keys used with user_{uid}_{baseKey} — keep in sync with app data categories. */
-const USER_DATA_BASE_KEYS = [
-  'workoutHistory',
-  'meals',
-  'savedMeals',
-  'nutritionGoals',
-  'savedWorkoutPlans',
-  'activeWorkoutPlans',
-  'moodEntries',
-  'emotionalExercises',
-  'breathingExercises',
-  'visualizationExercises',
-  'mindfulnessExercises',
-  'dailyMentalProgress',
-  'gratitudeEntries',
-  'affirmationEntries',
-  'reflectionEntries',
-  'dashboardTasks',
-  'dailyCheckIn',
-  'userProfile',
-  'appSettings',
-  'aiInsights',
-  'aiRecommendations',
-  'lastAISync',
-  'healthPermissionsRequested',
-  'userMilestones',
-  'smallWinsNotificationMeta',
-  'onboardingMedicalDisclaimerAccepted',
-  'onboardingGuideCompleted',
-  'onboardingGuideDismissed',
-  'onboardingProfileCompleted',
-  'coachingProfile',
-  'pendingFirstWorkoutPlan',
-  'planAdaptationState',
-  'nutritionAdaptationState',
-  'interfaceSettings',
-  'userPreferences',
-  'customExerciseLibrary_v1',
-  'progressPhotoSessions',
-  'progressPhotoSettings',
-  'weightEntries',
-  'waterLogEntries',
-  'waterQuickAmounts',
-  'notificationCenterDaily',
-] as const;
 
 function parseUserStorageKey(key: string): { userId: string; baseKey: string } | null {
   if (!key.startsWith('user_')) return null;
@@ -271,8 +271,6 @@ export async function tryRecoverOrphanedUserDataOnDevice(): Promise<{
  */
 export const getStoredUserEmail = async (): Promise<string | null> => {
   try {
-    // Try to get email from userProfile (if user was logged in before)
-    // This only works if user saved their profile in Settings
     const profile = await loadUserData<any>('userProfile');
     return profile?.email || null;
   } catch (error) {
@@ -295,7 +293,7 @@ export const getStoredCredentialsSummary = async (): Promise<{
   try {
     const profile = await loadUserData<any>('userProfile');
     const allKeys = await getAllStoredKeys();
-    
+
     return {
       email: profile?.email || null,
       name: profile?.name || null,

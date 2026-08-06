@@ -30,6 +30,9 @@ interface PhotoHeroCardProps {
   embedded?: boolean;
   canSwipePrev?: boolean;
   canSwipeNext?: boolean;
+  /** Controlled pose so week scrubbing keeps the same angle. */
+  pose?: PhotoPose;
+  onPoseChange?: (pose: PhotoPose) => void;
 }
 
 /**
@@ -49,8 +52,15 @@ export default function PhotoHeroCard({
   embedded = false,
   canSwipePrev = false,
   canSwipeNext = false,
+  pose: poseProp,
+  onPoseChange,
 }: PhotoHeroCardProps): React.ReactElement {
-  const [pose, setPose] = useState<PhotoPose>('front');
+  const [poseLocal, setPoseLocal] = useState<PhotoPose>('front');
+  const pose = poseProp ?? poseLocal;
+  const setPose = (next: PhotoPose) => {
+    onPoseChange?.(next);
+    if (poseProp === undefined) setPoseLocal(next);
+  };
   const [compareModeLocal, setCompareModeLocal] = useState(false);
   const compareMode = compareModeProp ?? compareModeLocal;
   const setCompareMode = (next: boolean) => {
@@ -69,7 +79,8 @@ export default function PhotoHeroCard({
   const canCompare = Boolean(compareSession && compareSession.id !== session.id);
 
   useEffect(() => {
-    setPose('front');
+    // Keep the selected pose (front/side/back) when scrubbing weeks so users
+    // can compare the same angle over time. Only reset compare UI.
     setCompareMode(false);
     setSlider(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on session change

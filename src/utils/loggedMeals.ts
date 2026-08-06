@@ -20,6 +20,11 @@ export type LoggedMeal = {
   servingAmount?: string;
   servingUnit?: string;
   items?: LogFoodItem[];
+  /**
+   * When set, this entry was generated from a recurring schedule.
+   * Used to avoid duplicating the same rule on the same day.
+   */
+  recurringRuleId?: string;
 };
 
 export function calculateCaloriesFromMacros(protein: number, carbs: number, fat: number): number {
@@ -150,6 +155,7 @@ function cloneMealForDate(
     id: `meal-copy-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     date: dateKeyToLocalNoonIso(targetDateKey),
     mealSlot,
+    recurringRuleId: undefined,
   };
 }
 

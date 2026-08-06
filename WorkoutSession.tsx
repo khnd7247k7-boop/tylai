@@ -1,6 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AppState,
+  LayoutAnimation,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  UIManager,
+  View,
+  type AppStateStatus,
+} from 'react-native';
 import * as Haptics from 'expo-haptics';
+import {
+  cancelRestCompleteNotification,
+  scheduleRestCompleteNotification,
+} from './src/utils/restTimerNotifications';
+import { useUserSettings } from './SettingsProvider';
 
 type WorkoutSessionProps = {
   sessionKey: string;
@@ -22,6 +37,12 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+const DEFAULT_REST_SECONDS = 120;
+
+function remainingFromEndsAt(endsAtMs: number): number {
+  return Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000));
+}
+
 export default function WorkoutSession({
   sessionKey,
   exerciseName,
@@ -37,28 +58,74 @@ export default function WorkoutSession({
   onRepsChange,
   onLogSet,
 }: WorkoutSessionProps) {
+  const { restTimerAlert } = useUserSettings();
   const [isLogged, setIsLogged] = useState(false);
-  const [restSeconds, setRestSeconds] = useState(120);
+  const [restSeconds, setRestSeconds] = useState(DEFAULT_REST_SECONDS);
+  const endsAtRef = useRef(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    if (!isLogged || !autoRestTimer) return;
-    if (restSeconds <= 0) return;
-    const timer = setInterval(() => setRestSeconds((prev) => prev - 1), 1000);
-    return () => clearInterval(timer);
-  }, [autoRestTimer, isLogged, restSeconds]);
+  const clearTick = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
 
-  useEffect(() => {
-    if (!isLogged) return;
-    if (restSeconds > 0) return;
+  const endRest = useCallback(() => {
+    clearTick();
+    endsAtRef.current = 0;
+    if (AppState.currentState === 'active') {
+      void cancelRestCompleteNotification();
+    }
     setIsLogged(false);
-    setRestSeconds(120);
-  }, [isLogged, restSeconds]);
+    setRestSeconds(DEFAULT_REST_SECONDS);
+  }, [clearTick]);
+
+  const syncRest = useCallback(() => {
+    if (!endsAtRef.current) return;
+    const left = remainingFromEndsAt(endsAtRef.current);
+    setRestSeconds(left);
+    if (left <= 0) endRest();
+  }, [endRest]);
 
   useEffect(() => {
-    // Reset visual "logged" state when user advances to a new set/exercise.
+    if (!isLogged || !autoRestTimer || !endsAtRef.current) {
+      clearTick();
+      return;
+    }
+
+    clearTick();
+    intervalRef.current = setInterval(() => {
+      if (AppState.currentState !== 'active') return;
+      syncRest();
+    }, 250);
+
+    const onAppState = (next: AppStateStatus) => {
+      if (next === 'active') syncRest();
+    };
+    const sub = AppState.addEventListener('change', onAppState);
+
+    return () => {
+      clearTick();
+      sub.remove();
+    };
+  }, [isLogged, autoRestTimer, clearTick, syncRest]);
+
+  useEffect(() => {
+    // Reset when user advances to a new set/exercise.
+    clearTick();
+    void cancelRestCompleteNotification();
+    endsAtRef.current = 0;
     setIsLogged(false);
-    setRestSeconds(120);
-  }, [sessionKey]);
+    setRestSeconds(DEFAULT_REST_SECONDS);
+  }, [sessionKey, clearTick]);
+
+  useEffect(() => {
+    return () => {
+      clearTick();
+      void cancelRestCompleteNotification();
+    };
+  }, [clearTick]);
 
   const restLabel = useMemo(() => {
     const mins = Math.floor(restSeconds / 60);
@@ -76,7 +143,19 @@ export default function WorkoutSession({
     const didLog = onLogSet();
     if (!didLog) return;
     setIsLogged(true);
-    setRestSeconds(120);
+    if (autoRestTimer) {
+      const endsAt = Date.now() + DEFAULT_REST_SECONDS * 1000;
+      endsAtRef.current = endsAt;
+      setRestSeconds(DEFAULT_REST_SECONDS);
+      if (restTimerAlert) {
+        void scheduleRestCompleteNotification(endsAt);
+      } else {
+        void cancelRestCompleteNotification();
+      }
+    } else {
+      endsAtRef.current = 0;
+      setRestSeconds(DEFAULT_REST_SECONDS);
+    }
   };
 
   return (

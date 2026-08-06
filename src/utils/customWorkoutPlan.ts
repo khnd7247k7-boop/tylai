@@ -138,12 +138,41 @@ export function cloneDayWorkoutsFromPreviousWeek(prev: DayWorkout[], trainingDay
     return {
       day,
       workoutName: match.workoutName,
-      exercises: match.exercises.map((ex) => ({
-        ...ex,
-        id: `exercise-${Date.now()}-${Math.random()}`,
-      })),
+      exercises: cloneCustomExercises(match.exercises),
       completed: false,
     };
+  });
+}
+
+/**
+ * Deep-clone exercises with fresh ids (and remapped superset ids) for copy-to-day.
+ */
+export function cloneCustomExercises(exercises: CustomExercise[]): CustomExercise[] {
+  const stamp = Date.now();
+  const supersetMap = new Map<string, string>();
+  return exercises.map((ex, i) => {
+    const next: CustomExercise = {
+      id: `exercise-${stamp}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+      name: ex.name,
+      sets: ex.sets,
+      reps: ex.reps,
+      weight: ex.weight,
+      restTime: ex.restTime,
+    };
+    if ((ex.durationSeconds ?? 0) > 0) {
+      next.durationSeconds = ex.durationSeconds;
+    }
+    if (ex.supersetId) {
+      if (!supersetMap.has(ex.supersetId)) {
+        supersetMap.set(
+          ex.supersetId,
+          `ss-copy-${stamp}-${supersetMap.size}-${Math.random().toString(36).slice(2, 6)}`
+        );
+      }
+      next.supersetId = supersetMap.get(ex.supersetId);
+      if (ex.supersetOrder != null) next.supersetOrder = ex.supersetOrder;
+    }
+    return next;
   });
 }
 

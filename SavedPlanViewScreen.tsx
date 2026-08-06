@@ -11,11 +11,11 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
-import ProgramExecutionScreen from './ProgramExecutionScreen';
 import { loadUserData, saveUserData } from './src/utils/userStorage';
 import AIService, { ProgramAdaptation } from './AIService';
-import { useSmallWins } from './src/context/SmallWinsContext';
 import { useToast } from './src/components/ToastProvider';
+import { useActiveWorkout } from './src/context/ActiveWorkoutContext';
+import { setPrimaryActiveWorkoutPlan } from './src/utils/savedWorkoutPlanActions';
 import { getProgramWeeksFromSavedPlan, inferScheduleMode, scheduleModeDescription, getSuggestedFlexibleRotation, flexibleRotationLabel } from './src/utils/customWorkoutPlan';
 import { buildSupersetLetterMap, formatSupersetTag } from './src/utils/workoutSupersets';
 import { showPendingCoachAdaptationNoticeIfAny } from './src/utils/showCoachAdaptationNotice';
@@ -29,14 +29,24 @@ interface SavedPlanViewScreenProps {
   onEditPlan?: (plan: any) => void;
   /** When true, flexible plans launch the suggested next workout immediately. */
   autoStartSuggested?: boolean;
+  /** Called after this plan is set as the primary active plan. */
+  onActivePlansChanged?: (activeIds: string[]) => void;
 }
 
-export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, onEditPlan, autoStartSuggested = false }: SavedPlanViewScreenProps) {
+export default function SavedPlanViewScreen({
+  plan,
+  onBack,
+  onWorkoutComplete,
+  onEditPlan,
+  autoStartSuggested = false,
+  onActivePlansChanged,
+}: SavedPlanViewScreenProps) {
   const fitnessSavedPlanStartRef = useTourTargetRef(TOUR_TARGET_IDS.fitnessSavedPlanStart);
-  const { onWorkoutSessionSaved } = useSmallWins();
   const { showToast } = useToast();
+  const { startActiveWorkout } = useActiveWorkout();
   const [currentPlan, setCurrentPlan] = useState(plan);
-  const [selectedProgram, setSelectedProgram] = useState<WorkoutProgram | null>(null);
+  const [isPrimaryActive, setIsPrimaryActive] = useState(false);
+  const [settingActive, setSettingActive] = useState(false);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([]);
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
@@ -55,7 +65,39 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
       loadAISuggestions();
     });
     void showPendingCoachAdaptationNoticeIfAny(plan.id);
+    void (async () => {
+      const active = (await loadUserData<string[]>('activeWorkoutPlans')) || [];
+      setIsPrimaryActive(active[0] === currentPlan.id);
+    })();
   }, [plan.id]);
+
+  const handleEditPlan = () => {
+    if (!onEditPlan) {
+      Alert.alert('Edit unavailable', 'Could not open the plan editor.');
+      return;
+    }
+    onEditPlan(currentPlan);
+  };
+
+  const handleSetAsActive = async () => {
+    if (settingActive) return;
+    setSettingActive(true);
+    try {
+      const updated = await setPrimaryActiveWorkoutPlan(currentPlan.id);
+      setIsPrimaryActive(true);
+      onActivePlansChanged?.(updated);
+      showToast(
+        'Plan set as active — Start Workout on Home or Workouts will open this program.',
+        'success',
+        3500
+      );
+    } catch (error) {
+      console.error('Error setting active plan:', error);
+      Alert.alert('Error', 'Failed to set this plan as active. Please try again.');
+    } finally {
+      setSettingActive(false);
+    }
+  };
 
   const loadAISuggestions = async () => {
     try {
@@ -106,50 +148,6 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
     } catch (error) {
       console.error('Error loading implemented suggestions:', error);
     }
-  };
-
-  const handleEditPlan = () => {
-    if (!onEditPlan) {
-      Alert.alert('Edit unavailable', 'Could not open the plan editor.');
-      return;
-    }
-    onEditPlan(currentPlan);
-  };
-
-  const handleDeletePlan = async () => {
-    Alert.alert(
-      'Delete Plan',
-      'Are you sure you want to delete this workout plan? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Remove from saved plans
-              const savedPlans = await loadUserData<any[]>('savedWorkoutPlans') || [];
-              const updatedPlans = savedPlans.filter(p => p.id !== currentPlan.id);
-              await saveUserData('savedWorkoutPlans', updatedPlans);
-              
-              // Remove from active plans if it was active
-              const activePlans = await loadUserData<string[]>('activeWorkoutPlans') || [];
-              const updatedActive = activePlans.filter(id => id !== currentPlan.id);
-              if (updatedActive.length !== activePlans.length) {
-                await saveUserData('activeWorkoutPlans', updatedActive);
-              }
-              
-              Alert.alert('Success', 'Workout plan deleted successfully', [
-                { text: 'OK', onPress: onBack }
-              ]);
-            } catch (error) {
-              console.error('Error deleting plan:', error);
-              Alert.alert('Error', 'Failed to delete workout plan');
-            }
-          },
-        },
-      ]
-    );
   };
 
   const loadWorkoutHistory = async () => {
@@ -207,9 +205,18 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
       focus: dayWorkout.focus,
       equipment: [],
     };
-    setSelectedProgram(program);
     setSelectedWeekIndex(weekIndex);
     setSelectedDayIndex(dayIndex);
+    startActiveWorkout({
+      program,
+      persistTarget: {
+        planId: currentPlan.id,
+        weekIndex,
+        dayIndex,
+      },
+      onSessionComplete: (session) => handleWorkoutComplete(session, dayIndex),
+      onProgramPermanentlyUpdated: (updatedPlan) => setCurrentPlan(updatedPlan),
+    });
   };
 
   const launchSingleWorkoutPlan = () => {
@@ -226,7 +233,12 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
       focus: currentPlan.focus || 'Custom workout',
       equipment: [],
     };
-    setSelectedProgram(program);
+    startActiveWorkout({
+      program,
+      persistTarget: { planId: currentPlan.id },
+      onSessionComplete: (session) => handleWorkoutComplete(session, null),
+      onProgramPermanentlyUpdated: (updatedPlan) => setCurrentPlan(updatedPlan),
+    });
   };
 
   const getAutoStartDayIndices = (): { weekIndex: number; dayIndex: number } | null => {
@@ -314,42 +326,20 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
         setSelectedDayIndex(-1);
       }
     } else if (currentPlan.exercises && currentPlan.exercises.length > 0) {
-      // Single workout plan
-      const program: WorkoutProgram = {
-        id: currentPlan.id,
-        name: currentPlan.name,
-        description: currentPlan.description || 'Custom workout',
-        duration: currentPlan.duration || (currentPlan.exercises.length * 5),
-        frequency: currentPlan.daysPerWeek || 1,
-        level: currentPlan.level || 'intermediate',
-        category: 'strength',
-        exercises: currentPlan.exercises,
-        focus: currentPlan.focus || 'Custom workout',
-        equipment: [],
-      };
-      setSelectedProgram(program);
+      launchSingleWorkoutPlan();
     }
   };
 
-  const handleWorkoutComplete = async (session: WorkoutSession) => {
-    try {
-      // Save the workout session to history
-      const existingHistory = await loadUserData<WorkoutSession[]>('workoutHistory') || [];
-      const updatedHistory = [session, ...existingHistory];
-      await saveUserData('workoutHistory', updatedHistory);
-      console.log('Workout session saved to history:', session);
-    } catch (error) {
-      console.error('Error saving workout history:', error);
-    }
+  const handleWorkoutComplete = async (
+    _session: WorkoutSession,
+    dayIndexOverride?: number | null
+  ) => {
+    // History, Progress refresh, and Small Wins already handled in ProgramExecutionScreen.
 
-    try {
-      await onWorkoutSessionSaved(session);
-    } catch {
-      /* ignore */
-    }
-
-    if (isFlexiblePlan && selectedDayIndex != null && selectedDayIndex >= 0) {
-      await persistFlexibleRotationIndex(selectedDayIndex);
+    const dayIdx =
+      dayIndexOverride !== undefined ? dayIndexOverride : selectedDayIndex;
+    if (isFlexiblePlan && dayIdx != null && dayIdx >= 0) {
+      await persistFlexibleRotationIndex(dayIdx);
     }
 
     try {
@@ -375,7 +365,6 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
       console.warn('[SavedPlanView] nutrition adaptation skipped', nutErr);
     }
 
-    setSelectedProgram(null);
     setSelectedDayIndex(null);
     await loadWorkoutHistory();
     if (onWorkoutComplete) {
@@ -795,19 +784,6 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
     }
   };
 
-  if (selectedProgram) {
-    return (
-      <ProgramExecutionScreen
-        program={selectedProgram}
-        onBack={() => {
-          setSelectedProgram(null);
-          setSelectedDayIndex(null);
-        }}
-        onComplete={handleWorkoutComplete}
-      />
-    );
-  }
-
   // Day selector for multi-day / multi-week plans
   if (selectedDayIndex === -1 && planWeeks.length > 0) {
     return (
@@ -881,17 +857,26 @@ export default function SavedPlanViewScreen({ plan, onBack, onWorkoutComplete, o
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Workout Plan</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.editButton} onPress={handleEditPlan}>
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={handleDeletePlan}
+        <TouchableOpacity
+          style={[
+            styles.setActiveButton,
+            isPrimaryActive && styles.setActiveButtonActive,
+            settingActive && styles.setActiveButtonDisabled,
+          ]}
+          onPress={handleSetAsActive}
+          disabled={settingActive || isPrimaryActive}
+          accessibilityRole="button"
+          accessibilityLabel={isPrimaryActive ? 'Active plan' : 'Set as active'}
+        >
+          <Text
+            style={[
+              styles.setActiveButtonText,
+              isPrimaryActive && styles.setActiveButtonTextActive,
+            ]}
           >
-            <Text style={styles.deleteButtonText}>Delete</Text>
-          </TouchableOpacity>
-        </View>
+            {isPrimaryActive ? 'Active' : settingActive ? 'Setting…' : 'Set as Active'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -1343,36 +1328,35 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
+    flex: 1,
+    textAlign: 'center',
   },
   placeholder: {
     width: 40,
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  editButton: {
-    paddingHorizontal: 12,
+  setActiveButton: {
+    paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: '#00ff88',
     borderRadius: 8,
+    maxWidth: 120,
   },
-  editButtonText: {
+  setActiveButtonActive: {
+    backgroundColor: '#1a2e24',
+    borderWidth: 1,
+    borderColor: '#00ff88',
+  },
+  setActiveButtonDisabled: {
+    opacity: 0.7,
+  },
+  setActiveButtonText: {
     color: '#0d0d0d',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
   },
-  deleteButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: '#ff4444',
-    borderRadius: 8,
-  },
-  deleteButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
+  setActiveButtonTextActive: {
+    color: '#00ff88',
   },
   scrollView: {
     flex: 1,
