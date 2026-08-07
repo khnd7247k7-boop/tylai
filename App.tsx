@@ -974,16 +974,25 @@ function AppInner() {
       return;
     }
     void openAdvancedNutritionIfNeeded();
-    void isPendingFirstWorkoutPlan().then((pending) => {
-      setInitialPlanSetupPending(pending);
-      if (pending) {
-        // User opted in to generated plans — show the 3 options flow.
-        navigateToScreen('workout');
-      } else {
-        // Profile complete; let them explore / build their own workouts.
+    void (async () => {
+      try {
+        // Prefer the opt-in flag; if storage lags, still send Yes-users to the plan builder.
+        let pending = await isPendingFirstWorkoutPlan();
+        if (!pending) {
+          // Brief retry — completeOnboarding may still be flushing durable storage.
+          await new Promise((r) => setTimeout(r, 200));
+          pending = await isPendingFirstWorkoutPlan();
+        }
+        setInitialPlanSetupPending(pending);
+        if (pending) {
+          navigateToScreen('workout');
+        } else {
+          navigateToScreen('dashboard');
+        }
+      } catch {
         navigateToScreen('dashboard');
       }
-    });
+    })();
   }, [onboardingWizardMode, openAdvancedNutritionIfNeeded]);
 
   const handleOnboardingWizardCancel = useCallback(() => {

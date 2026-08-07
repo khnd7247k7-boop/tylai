@@ -260,35 +260,158 @@ export default function WorkoutScreen({
     onPlanSetupComplete?.();
   };
 
-  const runGenerateFromProfile = async (cp: CoachingProfile) => {
+  const createEmergencyFallbackPlan = (
+    goal: string,
+    level: string,
+    days: number,
+    preferredLength: number
+  ): WorkoutPlan => {
+    const length = preferredLength || 45;
+    const pushUps = getExerciseData('Push-ups');
+    const squats = getExerciseData('Bodyweight Squats') || getExerciseData('Squats');
+    const rows = getExerciseData('Inverted Rows') || getExerciseData('Dumbbell Rows');
+    const plank = getExerciseData('Plank');
+    const pool = [pushUps, squats, rows, plank].filter(Boolean) as NonNullable<
+      ReturnType<typeof getExerciseData>
+    >[];
+
+    const toExercise = (data: NonNullable<ReturnType<typeof getExerciseData>>) => ({
+      id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
+      name: data.name,
+      sets: level === 'beginner' ? 3 : 4,
+      reps: 10,
+      weight: 0,
+      completed: false,
+      category: 'strength' as const,
+      restTime: 60,
+      movementPattern: data.movementPattern,
+      muscleGroups: data.muscleGroups || [data.primaryMuscleGroup, ...(data.secondaryMuscleGroups || [])],
+      equipment: data.equipment || data.equipmentRequired,
+      difficulty: data.difficulty,
+      alternatives: data.alternatives,
+    });
+
+    const dayExercises =
+      pool.length > 0
+        ? pool.map(toExercise)
+        : [
+            {
+              id: 'push-ups',
+              name: 'Push-ups',
+              sets: 3,
+              reps: 10,
+              weight: 0,
+              completed: false,
+              category: 'strength' as const,
+              restTime: 60,
+            },
+          ];
+
+    const dayCount = Math.max(2, Math.min(6, days || 3));
+    const weekDays = Array.from({ length: dayCount }, (_, i) => ({
+      day: i + 1,
+      dayName: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][i] || `Day ${i + 1}`,
+      workoutName: `Full Body ${i + 1}`,
+      focus: 'Full Body',
+      exercises: dayExercises.map((ex) => ({ ...ex, id: `${ex.id}-d${i + 1}` })),
+      duration: length,
+    }));
+
+    return {
+      id: `fallback-${Date.now()}`,
+      name: `${(level || 'Beginner').toString().charAt(0).toUpperCase()}${(level || 'beginner')
+        .toString()
+        .slice(1)} Starter Program`,
+      level: (level || 'beginner') as any,
+      goal: (goal || 'strength') as any,
+      exercises: weekDays[0].exercises,
+      duration: length,
+      daysPerWeek: dayCount,
+      weeklyPlan: { weekDays },
+    };
+  };
+
+  const runGenerateFromProfile = async (
+    cp: CoachingProfile,
+    opts?: { force?: boolean }
+  ) => {
+    const force = Boolean(opts?.force || initialSetupPending);
     const input = buildWorkoutGenerationInput(cp);
-    if (input.missingFields.length > 0) {
+    if (input.missingFields.length > 0 && !force) {
       Alert.alert(
         'Coaching profile incomplete',
         `Please complete onboarding first. Missing: ${input.missingFields.join(', ')}.`
       );
       return;
     }
+
     setGeneratingPlan(true);
     try {
       const userProfile = await UserProfileService.getUserProfileData();
       const gender =
         userProfile?.sex === 'male' || userProfile?.sex === 'female' ? userProfile.sex : undefined;
-      const options = await generateMultipleWorkoutPlans(
-        input.goal,
-        input.level,
-        input.days,
+      const goal = input.goal || 'strength';
+      const level = input.level || 'beginner';
+      const days = Math.max(2, Math.min(7, input.days || 3));
+      const preferredLength = input.preferredLength || 45;
+      const secondaryGoals = input.secondaryGoals || [];
+      const modifiers = input.modifiers;
+
+      let options = await generateMultipleWorkoutPlans(
+        goal,
+        level,
+        days,
         input.excludedExercises,
         gender,
-        input.secondaryGoals,
-        input.preferredLength,
+        secondaryGoals,
+        preferredLength,
         3,
-        input.modifiers
+        modifiers
       );
-      if (!options || options.length === 0) {
-        Alert.alert('Error', 'Failed to generate workout plans. Please try again.');
-        return;
+
+      // If injury exclusions wiped the pool, retry without exclusions so the user still gets plans.
+      if ((!options || options.length === 0) && input.excludedExercises.length > 0) {
+        options = await generateMultipleWorkoutPlans(
+          goal,
+          level,
+          days,
+          [],
+          gender,
+          secondaryGoals,
+          preferredLength,
+          3,
+          modifiers
+        );
       }
+
+      if (!options || options.length === 0) {
+        try {
+          const single = await generateWorkoutPlan(
+            goal,
+            level,
+            days,
+            [],
+            gender,
+            secondaryGoals,
+            preferredLength,
+            0,
+            modifiers
+          );
+          single.name = `${single.name} - Option 1`;
+          single.id = `${Date.now()}-0`;
+          options = [single];
+        } catch (fallbackErr) {
+          console.error('Single-plan fallback failed', fallbackErr);
+          options = [];
+        }
+      }
+
+      if (!options || options.length === 0) {
+        const emergency = createEmergencyFallbackPlan(goal, level, days, preferredLength);
+        emergency.name = `${emergency.name} - Option 1`;
+        options = [emergency];
+      }
+
       setWorkoutOptions(options);
       setShowWorkoutOptions(true);
     } finally {
@@ -350,21 +473,51 @@ export default function WorkoutScreen({
 
   useEffect(() => {
     if (!initialSetupPending) return;
+    let cancelled = false;
     void (async () => {
-      const complete = await isOnboardingComplete();
-      if (!complete) return;
-      const cp = await loadCoachingProfile();
-      await refreshCoachingProfile();
-      try {
-        await runGenerateFromProfile(cp);
-      } catch (e) {
-        console.error('Auto-generate first plan', e);
-        Alert.alert(
-          'Plan generation failed',
-          'Your answers were saved. Tap Generate My Personalized Plan below to try again.'
-        );
+      // Settle onboarding writes, then always force-generate so "Yes" never dead-ends.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (cancelled) return;
+        const complete = await isOnboardingComplete();
+        if (complete || attempt === 5) {
+          const cp = await loadCoachingProfile();
+          if (cancelled) return;
+          await refreshCoachingProfile();
+          try {
+            await runGenerateFromProfile(cp, { force: true });
+          } catch (e) {
+            console.error('Auto-generate first plan', e);
+            if (!cancelled) {
+              try {
+                const input = buildWorkoutGenerationInput(cp);
+                const emergency = createEmergencyFallbackPlan(
+                  input.goal || 'strength',
+                  input.level || 'beginner',
+                  input.days || 3,
+                  input.preferredLength || 45
+                );
+                emergency.name = `${emergency.name} - Option 1`;
+                setWorkoutOptions([emergency]);
+                setShowWorkoutOptions(true);
+              } catch (fallbackErr) {
+                console.error('Emergency fallback plan failed', fallbackErr);
+                Alert.alert(
+                  'Plan generation failed',
+                  'Your answers were saved. Tap Generate My Personalized Plan below to try again.'
+                );
+              }
+            }
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 250));
       }
     })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when entering first-plan setup — not on every render of helpers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSetupPending]);
 
   const { onWorkoutLoggerOpened } = useSmallWins();
@@ -806,7 +959,7 @@ export default function WorkoutScreen({
         const maxReps = maxRepCapForExercise(exShape, repCtx);
         reps = Math.min(reps, maxReps);
         if (systemicVolumeContext.strengthRepIntensityBias > 0) {
-          reps = Math.max(isCompound ? 4 : 6, reps - systemicVolumeContext.strengthRepIntensityBias);
+          reps = Math.max(compound ? 4 : 6, reps - systemicVolumeContext.strengthRepIntensityBias);
         }
         if (coachingMods) {
           reps = Math.max(compound ? 4 : 6, reps + coachingMods.repAdjust);
@@ -2327,7 +2480,7 @@ export default function WorkoutScreen({
 
     try {
       const cp = await loadCoachingProfile();
-      await runGenerateFromProfile(cp);
+      await runGenerateFromProfile(cp, { force: initialSetupPending });
     } catch (error) {
       console.error('Error generating workout:', error);
       Alert.alert('Error', `Failed to generate workout: ${error instanceof Error ? error.message : 'Unknown error'}`);
