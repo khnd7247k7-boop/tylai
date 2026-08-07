@@ -58,9 +58,13 @@ export function buildLogFoodFormFromFdcFood(
   const microsPer100 = extractMicronutrientsPer100g(food);
   const micronutrients = scaleMicronutrientsFrom100g(microsPer100, portionGrams);
 
-  const name = (food.description ?? opts?.hitDescription ?? 'USDA food').trim();
+  const name = (food.description ?? opts?.hitDescription ?? 'Food').trim();
   const dt = food.dataType ?? 'FDC';
   const naturalRef = inferNaturalReferenceFromFood(food);
+  const isFatSecret = String(dt).toLowerCase().includes('fatsecret') || (food.fdcId != null && food.fdcId < 0);
+  const nutritionScanNote = isFatSecret
+    ? `Powered by fatsecret Platform API (${dt}). Macros scaled for ${gStr} g — adjust serving size, units, and macros below, then tap Add to log.`
+    : `USDA FoodData Central (${dt}). Per 100 g on file — adjust serving size, units, and macros below, then tap Add to log.`;
 
   return {
     name,
@@ -74,7 +78,7 @@ export function buildLogFoodFormFromFdcFood(
     servingWeight: gStr,
     baseServingSize: gStr,
     micronutrients,
-    nutritionScanNote: `USDA FoodData Central (${dt}). Per 100 g on file — adjust serving size, units, and macros below, then tap Add to log.`,
+    nutritionScanNote,
     referenceGramsPerPiece: naturalRef?.referenceGrams,
   };
 }

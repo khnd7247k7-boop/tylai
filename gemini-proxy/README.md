@@ -1,6 +1,6 @@
 # Gemini Proxy Server
 
-Node.js / Express proxy for Gemini + Nutritionix + USDA. Keeps API keys on the server.
+Node.js / Express proxy for Gemini + Nutritionix + USDA + FatSecret. Keeps API keys on the server.
 
 ## Setup
 
@@ -76,6 +76,18 @@ Proxies USDA FDC `/foods/search` with server-side USDA key.
 ### `GET /api/usda/food/:fdcId`
 
 Proxies USDA FDC food detail endpoint.
+
+### `GET /api/fatsecret/foods/search?q=<text>`
+
+Proxies FatSecret food search (v2 when `FATSECRET_SCOPE` includes premier, else v1). Requires `FATSECRET_CLIENT_ID` / `FATSECRET_CLIENT_SECRET`.
+
+### `GET /api/fatsecret/food/:foodId`
+
+Proxies FatSecret `food.get.v2`.
+
+### `GET /api/fatsecret/status`
+
+Returns whether FatSecret credentials are configured (no secrets).
 
 ## Rate limiting
 

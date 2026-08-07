@@ -1,6 +1,9 @@
 import debounce from 'lodash/debounce';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { searchFood } from '../api/usda';
+import {
+  searchFoodCatalog,
+  type FoodCatalogSearchMeta,
+} from '../api/foodCatalog';
 import type { FoodSearchHit } from '../types/fdcApi';
 import { rememberFoodQuery, loadRecentFoodQueries } from '../utils/fdcRecentQueries';
 import { rankFoodSearchResults } from '../utils/fdcSearchRank';
@@ -15,6 +18,11 @@ export interface UseFoodSearchOptions {
   controlledQuery?: string;
 }
 
+const defaultMeta: FoodCatalogSearchMeta = {
+  source: 'fatsecret',
+  usedFallback: false,
+};
+
 export function useFoodSearch(options: UseFoodSearchOptions) {
   const { enabled } = options;
   const isControlled = 'controlledQuery' in options;
@@ -24,6 +32,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
   const [results, setResults] = useState<FoodSearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<FoodCatalogSearchMeta>(defaultMeta);
   const [recentQueries, setRecentQueries] = useState<string[]>([]);
 
   useEffect(() => {
@@ -40,14 +49,16 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
         setResults([]);
         setError(null);
         setLoading(false);
+        setMeta(defaultMeta);
         return;
       }
       setLoading(true);
       setError(null);
       try {
-        const hits = await searchFood(q);
+        const { hits, meta: nextMeta } = await searchFoodCatalog(q);
         const ranked = rankFoodSearchResults(q, hits);
         setResults(ranked);
+        setMeta(nextMeta);
         if (ranked.length > 0) {
           await rememberFoodQuery(q);
           if (!isControlled) {
@@ -56,6 +67,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
         }
       } catch (e) {
         setResults([]);
+        setMeta(defaultMeta);
         setError(e instanceof Error ? e.message : 'Search failed');
       } finally {
         setLoading(false);
@@ -74,6 +86,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
       setResults([]);
       setError(null);
       setLoading(false);
+      setMeta(defaultMeta);
       if (!isControlled) setInternalQuery('');
       return;
     }
@@ -86,6 +99,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
       setResults([]);
       setError(null);
       setLoading(false);
+      setMeta(defaultMeta);
       return;
     }
     debouncedSearch(q);
@@ -102,6 +116,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
         setResults([]);
         setError(null);
         setLoading(false);
+        setMeta(defaultMeta);
         return;
       }
       if (!enabled) return;
@@ -129,6 +144,7 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
     results,
     loading,
     error,
+    meta,
     recentQueries,
     refreshRecent: () => void loadRecentFoodQueries().then(setRecentQueries),
     applyRecentQuery,

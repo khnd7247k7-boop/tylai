@@ -13,6 +13,14 @@ const NUTRITIONIX_APP_ID = String(process.env.NUTRITIONIX_APP_ID || '').trim();
 const NUTRITIONIX_API_KEY = String(process.env.NUTRITIONIX_API_KEY || '').trim();
 const USDA_FDC_API_KEY = String(process.env.USDA_FDC_API_KEY || 'DEMO_KEY').trim();
 const USING_DEMO_USDA_KEY = !process.env.USDA_FDC_API_KEY || USDA_FDC_API_KEY === 'DEMO_KEY';
+const FATSECRET_CLIENT_ID = String(process.env.FATSECRET_CLIENT_ID || '').trim();
+const FATSECRET_CLIENT_SECRET = String(process.env.FATSECRET_CLIENT_SECRET || '').trim();
+/** OAuth2 scope: "basic" (default) or "premier" / "premier barcode" etc. */
+const FATSECRET_SCOPE = String(process.env.FATSECRET_SCOPE || 'basic').trim() || 'basic';
+const FATSECRET_CONFIGURED = Boolean(FATSECRET_CLIENT_ID && FATSECRET_CLIENT_SECRET);
+
+/** @type {{ accessToken: string, expiresAtMs: number, scope: string } | null} */
+let fatSecretTokenCache = null;
 
 if (!GEMINI_KEY) {
   console.error('[gemini-proxy] Missing GEMINI_KEY in environment.');
@@ -410,6 +418,179 @@ app.get('/api/usda/food/:fdcId', requireAuth, async (req, res) => {
   }
 });
 
+async function getFatSecretAccessToken() {
+  if (!FATSECRET_CONFIGURED) {
+    const err = new Error('FatSecret credentials not configured on proxy.');
+    err.statusCode = 503;
+    throw err;
+  }
+  const now = Date.now();
+  if (
+    fatSecretTokenCache &&
+    fatSecretTokenCache.scope === FATSECRET_SCOPE &&
+    fatSecretTokenCache.expiresAtMs > now + 60_000
+  ) {
+    return fatSecretTokenCache.accessToken;
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    scope: FATSECRET_SCOPE,
+  });
+  const basic = Buffer.from(`${FATSECRET_CLIENT_ID}:${FATSECRET_CLIENT_SECRET}`).toString('base64');
+  const resp = await fetch('https://oauth.fatsecret.com/connect/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: body.toString(),
+  });
+  let json = null;
+  try {
+    json = await resp.json();
+  } catch {
+    json = null;
+  }
+  if (!resp.ok || !json?.access_token) {
+    const details =
+      (json && typeof json.error_description === 'string' && json.error_description) ||
+      (json && typeof json.error === 'string' && json.error) ||
+      `HTTP ${resp.status}`;
+    const err = new Error(details);
+    err.statusCode = resp.status >= 400 && resp.status < 600 ? resp.status : 502;
+    throw err;
+  }
+  const expiresInSec = Number(json.expires_in);
+  const ttlMs = Number.isFinite(expiresInSec) && expiresInSec > 0 ? expiresInSec * 1000 : 3600_000;
+  fatSecretTokenCache = {
+    accessToken: String(json.access_token),
+    expiresAtMs: now + ttlMs,
+    scope: FATSECRET_SCOPE,
+  };
+  return fatSecretTokenCache.accessToken;
+}
+
+async function fatSecretGet(pathWithQuery) {
+  const token = await getFatSecretAccessToken();
+  const url = pathWithQuery.startsWith('http')
+    ? pathWithQuery
+    : `https://platform.fatsecret.com/rest/${pathWithQuery.replace(/^\//, '')}`;
+  const data = await proxyJson(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+  // FatSecret often returns HTTP 200 with { error: { code, message } }.
+  if (data && typeof data === 'object' && data.error) {
+    const errObj = data.error;
+    const code = errObj && typeof errObj === 'object' ? errObj.code : undefined;
+    const message =
+      (errObj && typeof errObj === 'object' && typeof errObj.message === 'string' && errObj.message) ||
+      (typeof errObj === 'string' ? errObj : 'FatSecret API error');
+    const err = new Error(code != null ? `FatSecret error ${code}: ${message}` : message);
+    err.statusCode = code === 21 ? 403 : 502;
+    throw err;
+  }
+  return data;
+}
+
+app.get('/api/fatsecret/status', requireAuth, (_req, res) => {
+  res.json({
+    configured: FATSECRET_CONFIGURED,
+    scope: FATSECRET_SCOPE,
+  });
+});
+
+/**
+ * Primary food search (FatSecret). Basic scope uses search/v1; premier prefers search/v2 then falls back to v1.
+ * Query: ?q=...&max_results=20&page_number=0
+ */
+app.get('/api/fatsecret/foods/search', requireAuth, async (req, res) => {
+  try {
+    if (!FATSECRET_CONFIGURED) {
+      return res.status(503).json({
+        error: 'FatSecret not configured.',
+        details: 'Add FATSECRET_CLIENT_ID and FATSECRET_CLIENT_SECRET to the proxy environment.',
+      });
+    }
+    const q = String(req.query?.q ?? req.query?.search_expression ?? '').trim();
+    if (!q) return res.status(400).json({ error: 'Missing query parameter: q' });
+    const maxResultsRaw = parseInt(String(req.query?.max_results ?? '20'), 10);
+    const maxResults = Number.isFinite(maxResultsRaw)
+      ? Math.min(50, Math.max(1, maxResultsRaw))
+      : 20;
+    const pageRaw = parseInt(String(req.query?.page_number ?? '0'), 10);
+    const pageNumber = Number.isFinite(pageRaw) && pageRaw >= 0 ? pageRaw : 0;
+
+    const params = new URLSearchParams({
+      search_expression: q,
+      max_results: String(maxResults),
+      page_number: String(pageNumber),
+      format: 'json',
+    });
+
+    const preferV2 = /\bpremier\b/i.test(FATSECRET_SCOPE);
+    let data = null;
+    let version = 'v1';
+    if (preferV2) {
+      try {
+        data = await fatSecretGet(`foods/search/v2?${params.toString()}`);
+        version = 'v2';
+      } catch (v2Err) {
+        console.warn(
+          '[gemini-proxy] FatSecret search/v2 failed, falling back to v1:',
+          v2Err instanceof Error ? v2Err.message : String(v2Err)
+        );
+      }
+    }
+    if (!data) {
+      data = await fatSecretGet(`foods/search/v1?${params.toString()}`);
+      version = 'v1';
+    }
+    return res.json({ ...data, _tyl: { version, scope: FATSECRET_SCOPE } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = error && typeof error.statusCode === 'number' ? error.statusCode : 502;
+    if (statusCode === 401 || statusCode === 403) {
+      fatSecretTokenCache = null;
+    }
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 502).json({
+      error: 'FatSecret foods/search proxy failed.',
+      details: message,
+    });
+  }
+});
+
+app.get('/api/fatsecret/food/:foodId', requireAuth, async (req, res) => {
+  try {
+    if (!FATSECRET_CONFIGURED) {
+      return res.status(503).json({
+        error: 'FatSecret not configured.',
+        details: 'Add FATSECRET_CLIENT_ID and FATSECRET_CLIENT_SECRET to the proxy environment.',
+      });
+    }
+    const foodId = String(req.params.foodId || '').trim();
+    if (!/^\d+$/.test(foodId)) return res.status(400).json({ error: 'Invalid foodId.' });
+    const params = new URLSearchParams({ food_id: foodId, format: 'json' });
+    const data = await fatSecretGet(`food/v2?${params.toString()}`);
+    return res.json(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = error && typeof error.statusCode === 'number' ? error.statusCode : 502;
+    if (statusCode === 401 || statusCode === 403) {
+      fatSecretTokenCache = null;
+    }
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 502).json({
+      error: 'FatSecret food detail proxy failed.',
+      details: message,
+    });
+  }
+});
+
 function localLanIp() {
   try {
     const os = require('os');
@@ -431,5 +612,12 @@ app.listen(PORT, '0.0.0.0', () => {
   if (lan) console.log(`[gemini-proxy] LAN (physical device): http://${lan}:${PORT}`);
   if (USING_DEMO_USDA_KEY) {
     console.warn('[gemini-proxy] USDA_FDC_API_KEY not set — using DEMO_KEY (low rate limits).');
+  }
+  if (!FATSECRET_CONFIGURED) {
+    console.warn(
+      '[gemini-proxy] FatSecret not configured — set FATSECRET_CLIENT_ID and FATSECRET_CLIENT_SECRET (food search falls back to USDA).'
+    );
+  } else {
+    console.log(`[gemini-proxy] FatSecret configured (scope=${FATSECRET_SCOPE}).`);
   }
 });

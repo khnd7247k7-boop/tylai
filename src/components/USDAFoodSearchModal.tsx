@@ -19,6 +19,7 @@ import type { FoodSearchHit } from '../types/fdcApi';
 import { extractMacrosPer100g, scaleMacrosFrom100g } from '../utils/fdcNutrients';
 import { buildPortionOptions, foodCategoryDescription, type FdcPortionMode } from '../utils/fdcPortions';
 import { FdcNutritionErrorBoundary } from './nutrition/FdcNutritionErrorBoundary';
+import { FatSecretAttribution } from './nutrition/FatSecretAttribution';
 
 export type USDAFoodApplyPayload = {
   name: string;
@@ -56,7 +57,11 @@ const USDAFoodPortionContent: React.FC<USDAFoodSearchModalProps> = ({ foodHit, o
   const [quantity, setQuantity] = useState('1');
   const [selectedPortionKey, setSelectedPortionKey] = useState<string>('');
 
-  const { food, loading: loadingDetail, error: detailError } = useFoodDetail(foodHit?.fdcId ?? null, foodHit != null);
+  const { food, loading: loadingDetail, error: detailError } = useFoodDetail(
+    foodHit?.fdcId ?? null,
+    foodHit != null,
+    foodHit?.source ?? undefined
+  );
 
   useEffect(() => {
     if (!foodHit) {
@@ -118,11 +123,15 @@ const USDAFoodPortionContent: React.FC<USDAFoodSearchModalProps> = ({ foodHit, o
         ? formatEnergy(scaled.energyKcal)
         : formatEnergy((scaled.proteinG ?? 0) * 4 + (scaled.carbsG ?? 0) * 4 + (scaled.fatG ?? 0) * 9);
     const dt = food?.dataType ?? foodHit?.dataType ?? 'FDC';
+    const isFatSecret =
+      foodHit?.source === 'fatsecret' || String(dt).toLowerCase().includes('fatsecret');
     const portionLabel =
       portionMode === 'grams'
         ? `${totalGrams} g (custom)`
         : `${quantity}× ${portionOptions.find((o) => o.key === selectedPortionKey)?.label ?? 'portion'} (${Math.round(totalGrams)} g)`;
-    const note = `USDA FoodData Central (${dt}). Per 100 g on file; scaled for ${portionLabel}.`;
+    const note = isFatSecret
+      ? `Powered by fatsecret Platform API (${dt}). Scaled for ${portionLabel}.`
+      : `USDA FoodData Central (${dt}). Per 100 g on file; scaled for ${portionLabel}.`;
     try {
       await onApply?.({
         name: desc.trim(),
@@ -170,7 +179,9 @@ const USDAFoodPortionContent: React.FC<USDAFoodSearchModalProps> = ({ foodHit, o
           <TouchableOpacity onPress={onClose} hitSlop={14} accessibilityRole="button" accessibilityLabel="Close">
             <Text style={styles.closeDone}>Done</Text>
           </TouchableOpacity>
-          <Text style={styles.screenTitle}>USDA portions</Text>
+          <Text style={styles.screenTitle}>
+            {foodHit?.source === 'fatsecret' ? 'Food portions' : 'USDA portions'}
+          </Text>
           <View style={{ width: 52 }} />
         </View>
 
@@ -198,7 +209,11 @@ const USDAFoodPortionContent: React.FC<USDAFoodSearchModalProps> = ({ foodHit, o
             <>
               <View style={styles.weightCard}>
                 <Text style={styles.weightLabel}>Portion</Text>
-                <Text style={styles.weightHint}>USDA values are per 100 g; choose grams or a common measure.</Text>
+                <Text style={styles.weightHint}>
+                  {foodHit?.source === 'fatsecret'
+                    ? 'Choose grams or a common serving from the food database.'
+                    : 'USDA values are per 100 g; choose grams or a common measure.'}
+                </Text>
                 <View style={styles.segment}>
                   <TouchableOpacity
                     style={[styles.segmentBtn, portionMode === 'grams' && styles.segmentBtnOn]}
@@ -284,6 +299,7 @@ const USDAFoodPortionContent: React.FC<USDAFoodSearchModalProps> = ({ foodHit, o
                   <Text style={styles.applyBtnText}>Add to log food</Text>
                 </TouchableOpacity>
               ) : null}
+              {foodHit?.source === 'fatsecret' ? <FatSecretAttribution style={{ marginTop: 12 }} /> : null}
             </>
           ) : null}
         </ScrollView>

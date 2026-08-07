@@ -57,6 +57,10 @@ export interface Food {
 /** Normalized POST /v1/foods/search hit. */
 export interface FoodSearchHit {
   fdcId: number;
+  /** Which catalog produced this hit. FatSecret ids are stored as negative `fdcId`. */
+  source?: 'usda' | 'fatsecret';
+  /** Positive FatSecret food_id when source is fatsecret. */
+  fatSecretFoodId?: string;
   description: string;
   dataType?: string;
   brandOwner?: string;

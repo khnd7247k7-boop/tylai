@@ -50,7 +50,7 @@ try {
 import TabSwipeNavigation from './TabSwipeNavigation';
 import SmartFoodScanner from './SmartFoodScanner';
 import { isScannedFoodUsable } from './src/utils/foodDatabase';
-import { getFoodDetails } from './src/api/usda';
+import { getCatalogFoodDetails } from './src/api/foodCatalog';
 import { useFoodSearch } from './src/hooks/useFoodSearch';
 import type { FoodSearchHit } from './src/types/fdcApi';
 import {
@@ -76,6 +76,7 @@ type WorkoutQuickPanel = 'templates' | null;
 import { tapOutsideToDismissKeyboard } from './src/keyboard';
 import { SimplePortionControl } from './src/components/nutrition/SimplePortionControl';
 import { ServingTypeWheelPicker } from './src/components/nutrition/ServingTypeWheelPicker';
+import { FatSecretAttribution } from './src/components/nutrition/FatSecretAttribution';
 import type { MacroMicroSnapshot, PortionInputMode } from './src/types/portionInput';
 import {
   clampNaturalFraction,
@@ -2068,7 +2069,7 @@ export default function FitnessScreen({
     async (hit: FoodSearchHit) => {
       setLogFoodDatabaseLoading(true);
       try {
-        const food = await getFoodDetails(hit.fdcId);
+        const food = await getCatalogFoodDetails(hit.fdcId, hit.source ?? undefined);
         applyDatabaseFoodToLogFoodForm(
           buildLogFoodFormFromFdcFood(food, {
             defaultPortionGrams: 100,
@@ -4117,7 +4118,7 @@ export default function FitnessScreen({
           {showUsdaSection && logFoodInlineUsda.loading ? (
             <View style={styles.logFoodSuggestLoading}>
               <ActivityIndicator color={AppTheme.accent} />
-              <Text style={styles.logFoodSuggestMuted}>Looking up USDA…</Text>
+              <Text style={styles.logFoodSuggestMuted}>Looking up foods…</Text>
             </View>
           ) : null}
           {showUsdaSection && logFoodInlineUsda.error ? (
@@ -4128,11 +4129,15 @@ export default function FitnessScreen({
               <Text
                 style={[styles.logFoodSuggestHeaderUsda, yourFoods.length > 0 && { marginTop: 10 }]}
               >
-                USDA (Foundation & SR Legacy)
+                {logFoodInlineUsda.meta.source === 'fatsecret'
+                  ? 'Food database'
+                  : logFoodInlineUsda.meta.usedFallback
+                    ? 'USDA (backup)'
+                    : 'USDA (Foundation & SR Legacy)'}
               </Text>
               {logFoodInlineUsda.results.map((hit) => (
                 <TouchableOpacity
-                  key={`usda-${hit.fdcId}`}
+                  key={`catalog-${hit.source ?? 'usda'}-${hit.fdcId}`}
                   style={styles.logFoodSuggestRow}
                   onPress={() => {
                     Keyboard.dismiss();
@@ -4143,10 +4148,21 @@ export default function FitnessScreen({
                   <Text style={styles.logFoodSuggestTitle}>{hit.description}</Text>
                   <Text style={styles.logFoodSuggestSub}>
                     {hit.dataType ?? 'Food'}
-                    {hit.foodCategory ? ` · ${hit.foodCategory}` : ''}
+                    {hit.brandOwner ? ` · ${hit.brandOwner}` : ''}
+                    {hit.foodCategory && hit.foodCategory !== hit.dataType
+                      ? ` · ${hit.foodCategory}`
+                      : ''}
                   </Text>
                 </TouchableOpacity>
               ))}
+              {logFoodInlineUsda.meta.source === 'fatsecret' ? (
+                <FatSecretAttribution style={{ marginTop: 4, marginBottom: 2 }} />
+              ) : null}
+              {logFoodInlineUsda.meta.usedFallback && logFoodInlineUsda.meta.fallbackReason ? (
+                <Text style={[styles.logFoodSuggestMuted, { marginTop: 6 }]}>
+                  FatSecret unavailable — showing USDA. {logFoodInlineUsda.meta.fallbackReason}
+                </Text>
+              ) : null}
             </>
           ) : null}
           {showUsdaSection &&
@@ -4154,7 +4170,7 @@ export default function FitnessScreen({
           !logFoodInlineUsda.error &&
           logFoodInlineUsda.results.length === 0 &&
           yourFoods.length === 0 ? (
-            <Text style={styles.logFoodSuggestMuted}>No matches in your log or USDA yet.</Text>
+            <Text style={styles.logFoodSuggestMuted}>No matches in your log or food database yet.</Text>
           ) : null}
           {showUsdaSection &&
           !logFoodInlineUsda.loading &&
@@ -4162,7 +4178,7 @@ export default function FitnessScreen({
           logFoodInlineUsda.results.length === 0 &&
           yourFoods.length > 0 ? (
             <Text style={[styles.logFoodSuggestMuted, { marginTop: 8 }]}>
-              No USDA matches — pick one of your foods above or keep typing.
+              No database matches — pick one of your foods above or keep typing.
             </Text>
           ) : null}
         </View>
