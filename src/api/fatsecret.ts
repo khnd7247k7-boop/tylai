@@ -19,6 +19,9 @@ export function isFatSecretFdcId(fdcId: number | null | undefined): boolean {
 export function mapFatSecretRequestError(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message || '';
+    if (/error 21|Invalid IP address/i.test(msg)) {
+      return 'FatSecret blocked this Mac’s IP. Add your public IP under API Keys → IP Restrictions (can take up to 24h).';
+    }
     if (/503|not configured/i.test(msg)) {
       return 'FatSecret is not configured on the proxy.';
     }
@@ -188,11 +191,11 @@ export function mapFatSecretFoodToFdcFood(raw: unknown): Food {
     } else {
       foodPortions.push({
         id: sid ?? index,
-        gramWeight: 100,
+        // No real metric weight — count/serving basis (not grams).
         amount: 1,
         portionDescription: label,
         modifier: label,
-        measureUnit: { name: 'serving', abbreviation: 'svg' },
+        measureUnit: { name: 'serving', abbreviation: 'srv' },
       });
     }
   });

@@ -13,6 +13,10 @@ import type { WorkoutSession } from '../../../data/workoutPrograms';
 import type { LoggedMeal } from '../../utils/loggedMeals';
 import type { WeightEntry } from '../../utils/workoutHistoryChartData';
 import type { ProgressScoreResult } from '../../services/progressScoreService';
+import {
+  computeProgressScores,
+  type ProgressScoreInput,
+} from '../../services/progressScoreService';
 import type { HistoryLinePoint } from '../../utils/workoutHistoryChartData';
 import {
   loadPhotoSessions,
@@ -36,6 +40,7 @@ import { computeSessionCompleteness } from '../../utils/sessionCompleteness';
 import { subscribeUserDataReady } from '../../utils/userDataEvents';
 import { AppTheme } from '../../theme/appVisualTheme';
 import OverallProgressCard from './OverallProgressCard';
+import PhotoScoreGlance from './PhotoScoreGlance';
 import ProgressWeekVitals from './ProgressWeekVitals';
 import PhotoTimeline from './photos/PhotoTimeline';
 import PhotoCaptureFlow from './photos/PhotoCaptureFlow';
@@ -61,6 +66,8 @@ export interface ProgressJourneyDataBundle {
 
 interface ProgressJourneyProps {
   progressResult: ProgressScoreResult;
+  /** Full score input — used to compute the week score for the visible photo. */
+  scoreInput?: ProgressScoreInput | null;
   weightSeries: HistoryLinePoint[];
   dataBundle?: ProgressJourneyDataBundle | null;
   selectedProgressDate: string | null;
@@ -96,6 +103,7 @@ function nearestSessionByDate(
  */
 export default function ProgressJourney({
   progressResult,
+  scoreInput = null,
   weightSeries,
   dataBundle,
   selectedProgressDate,
@@ -114,7 +122,8 @@ export default function ProgressJourney({
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayLabel, setReplayLabel] = useState('');
   const replayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastEmittedDateRef = useRef<string | null>(null);
+  /** Only scrub / chart / metrics should rewrite the Progress week — not default photo pick. */
+  const userDrivenWeekRef = useRef(false);
   const onDateChangeRef = useRef(onProgressDateChange);
   onDateChangeRef.current = onProgressDateChange;
 
@@ -154,9 +163,16 @@ export default function ProgressJourney({
 
   useEffect(() => {
     if (!selectedProgressDate || !sessions.length) return;
-    const best = nearestSessionByDate(sessions, selectedProgressDate);
-    if (!best) return;
-    setSelectedId((prev) => (prev === best.id ? prev : best.id));
+    setSelectedId((prev) => {
+      const current = sessions.find((s) => s.id === prev);
+      // Keep the user's pick when it already matches this date (avoids same-day jumpiness).
+      if (current && current.date.slice(0, 10) === selectedProgressDate.slice(0, 10)) {
+        return prev;
+      }
+      const best = nearestSessionByDate(sessions, selectedProgressDate);
+      if (!best || best.id === prev) return prev;
+      return best.id;
+    });
   }, [selectedProgressDate, sessions]);
 
   const stats = useMemo(() => computePhotoStats(sessions), [sessions]);
@@ -221,20 +237,34 @@ export default function ProgressJourney({
       })
     : null;
 
-  const weekLabel = selectedSession
+  const weekLabel =
+    selectedProgressDate || userDrivenWeekRef.current
+      ? selectedSession
+        ? formatTimelineLabel(
+            selectedSession,
+            Math.max(0, selectedIndex),
+            selectedSession.date === localDateKey()
+          )
+        : 'This week'
+      : 'This week';
+
+  /** Score for the week of the photo on screen — always matches the visible frame. */
+  const photoWeekScore = useMemo(() => {
+    if (!scoreInput || !selectedSession?.date) return progressResult;
+    const dateKey = selectedSession.date.slice(0, 10);
+    return computeProgressScores({
+      ...scoreInput,
+      referenceDate: new Date(`${dateKey}T12:00:00`),
+    });
+  }, [progressResult, scoreInput, selectedSession?.date]);
+
+  const photoWeekLabel = selectedSession
     ? formatTimelineLabel(
         selectedSession,
         Math.max(0, selectedIndex),
         selectedSession.date === localDateKey()
       )
-    : 'This week';
-
-  useEffect(() => {
-    const nextDate = selectedSession?.date?.slice(0, 10) ?? null;
-    if (nextDate === lastEmittedDateRef.current) return;
-    lastEmittedDateRef.current = nextDate;
-    onDateChangeRef.current?.(nextDate);
-  }, [selectedSession]);
+    : weekLabel;
 
   useEffect(() => {
     if (selectedSession) warmSessionPhotos(selectedSession.photos);
@@ -244,9 +274,19 @@ export default function ProgressJourney({
     setInlineCompare(false);
   }, [selectedSession?.id]);
 
-  const selectSession = useCallback((session: PhotoSession) => {
-    setSelectedId((prev) => (prev === session.id ? prev : session.id));
+  const emitWeekForSession = useCallback((session: PhotoSession) => {
+    userDrivenWeekRef.current = true;
+    const nextDate = session.date?.slice(0, 10) ?? null;
+    onDateChangeRef.current?.(nextDate);
   }, []);
+
+  const selectSession = useCallback(
+    (session: PhotoSession) => {
+      setSelectedId((prev) => (prev === session.id ? prev : session.id));
+      emitWeekForSession(session);
+    },
+    [emitWeekForSession]
+  );
 
   const openCapture = (retake = false) => {
     setRetakeMode(retake);
@@ -266,12 +306,26 @@ export default function ProgressJourney({
   };
 
   const handleLibraryImportComplete = async (result: LibraryImportResult) => {
-    const session = await createSessionFromCaptures(result.captures, {
-      date: result.date,
-      timestamp: result.timestamp,
-    });
-    await reload();
-    setSelectedId(session.id);
+    try {
+      const sessions = result.sessions ?? [];
+      if (!sessions.length) {
+        throw new Error('No sessions to import');
+      }
+      let lastId: string | null = null;
+      for (const entry of sessions) {
+        const session = await createSessionFromCaptures(entry.captures, {
+          date: entry.date,
+          timestamp: entry.timestamp,
+        });
+        lastId = session.id;
+      }
+      await reload();
+      if (lastId) setSelectedId(lastId);
+      setLibraryImportVisible(false);
+    } catch (error) {
+      console.warn('[ProgressJourney] library import failed', error);
+      throw error;
+    }
   };
 
   const handleSaveToCameraRoll = async () => {
@@ -328,10 +382,10 @@ export default function ProgressJourney({
         return;
       }
       const session = sortedSessions[index];
-      setSelectedId(session.id);
+      selectSession(session);
       setReplayLabel(formatTimelineLabel(session, index, session.date === localDateKey()));
     }, 1400);
-  }, [sortedSessions, stopReplay]);
+  }, [selectSession, sortedSessions, stopReplay]);
 
   const handleSwipeSession = (direction: 'prev' | 'next') => {
     if (!selectedSession || sortedSessions.length < 2) return;
@@ -340,7 +394,7 @@ export default function ProgressJourney({
     const next = direction === 'next' ? sortedSessions[idx + 1] : sortedSessions[idx - 1];
     if (next) {
       stopReplay();
-      setSelectedId(next.id);
+      selectSession(next);
     }
   };
 
@@ -348,7 +402,7 @@ export default function ProgressJourney({
     const s = sortedSessions[index];
     if (s && s.id !== selectedId) {
       stopReplay();
-      setSelectedId(s.id);
+      selectSession(s);
     }
   };
 
@@ -356,11 +410,10 @@ export default function ProgressJourney({
 
   return (
     <View style={styles.wrap}>
-      {/* Score + area breakdown first so they populate before the scrub journey */}
       <OverallProgressCard
         result={progressResult}
         variant="journey"
-        weekLabel={weekLabel}
+        weekLabel={selectedProgressDate != null ? weekLabel : 'This week'}
       />
 
       {/* Journey scrubber — photos and synced metrics follow */}
@@ -386,6 +439,10 @@ export default function ProgressJourney({
             onScrubIndex={handleScrubIndex}
           />
         </View>
+      ) : null}
+
+      {hasSessions && selectedSession ? (
+        <PhotoScoreGlance result={photoWeekScore} weekLabel={photoWeekLabel} />
       ) : null}
 
       {hasSessions && selectedSession && completeness ? (
@@ -452,6 +509,7 @@ export default function ProgressJourney({
           highlightDate={selectedProgressDate}
           onSelectDate={(date) => {
             stopReplay();
+            userDrivenWeekRef.current = true;
             onProgressDateChange(date.slice(0, 10));
           }}
           options={{
@@ -500,7 +558,10 @@ export default function ProgressJourney({
         initialDate={focusDate}
         onClose={() => setMetricsModalVisible(false)}
         onSaved={(savedDate) => {
-          if (savedDate) onProgressDateChange(savedDate);
+          if (savedDate) {
+            userDrivenWeekRef.current = true;
+            onProgressDateChange(savedDate);
+          }
         }}
       />
     </View>

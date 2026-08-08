@@ -55,6 +55,9 @@ fi
 USDA_FDC_API_KEY="$(pick_env USDA_FDC_API_KEY)"
 NUTRITIONIX_APP_ID="$(pick_env NUTRITIONIX_APP_ID)"
 NUTRITIONIX_API_KEY="$(pick_env NUTRITIONIX_API_KEY)"
+FATSECRET_CLIENT_ID="$(pick_env FATSECRET_CLIENT_ID)"
+FATSECRET_CLIENT_SECRET="$(pick_env FATSECRET_CLIENT_SECRET)"
+FATSECRET_SCOPE="$(pick_env FATSECRET_SCOPE)"
 PROXY_PORT="$(pick_env PORT)"
 PROXY_PORT="${PROXY_PORT:-8080}"
 
@@ -102,6 +105,9 @@ mkdir -p "$ROOT/gemini-proxy"
   [[ -n "$USDA_FDC_API_KEY" ]] && echo "USDA_FDC_API_KEY=${USDA_FDC_API_KEY}"
   [[ -n "$NUTRITIONIX_APP_ID" ]] && echo "NUTRITIONIX_APP_ID=${NUTRITIONIX_APP_ID}"
   [[ -n "$NUTRITIONIX_API_KEY" ]] && echo "NUTRITIONIX_API_KEY=${NUTRITIONIX_API_KEY}"
+  [[ -n "$FATSECRET_CLIENT_ID" ]] && echo "FATSECRET_CLIENT_ID=${FATSECRET_CLIENT_ID}"
+  [[ -n "$FATSECRET_CLIENT_SECRET" ]] && echo "FATSECRET_CLIENT_SECRET=${FATSECRET_CLIENT_SECRET}"
+  [[ -n "$FATSECRET_SCOPE" ]] && echo "FATSECRET_SCOPE=${FATSECRET_SCOPE}"
 } > "$ROOT/gemini-proxy/.env"
 
 upsert_env_local "EXPO_PUBLIC_GEMINI_PROXY_URL" "$PROXY_URL"
@@ -125,4 +131,9 @@ if [[ -z "$USDA_FDC_API_KEY" ]]; then
   echo "[sync-gemini-proxy-env] NOTE: USDA_FDC_API_KEY not set — proxy uses DEMO_KEY (strict rate limits). Get a free key at https://fdc.nal.usda.gov/api-key-signup.html"
 else
   echo "[sync-gemini-proxy-env] USDA_FDC_API_KEY synced. Restart gemini-proxy if it is already running."
+fi
+if [[ -z "$FATSECRET_CLIENT_ID" || -z "$FATSECRET_CLIENT_SECRET" ]]; then
+  echo "[sync-gemini-proxy-env] NOTE: FatSecret not set — add FATSECRET_CLIENT_ID / FATSECRET_CLIENT_SECRET to .env.local (food search falls back to USDA)."
+else
+  echo "[sync-gemini-proxy-env] FatSecret credentials synced (scope=${FATSECRET_SCOPE:-basic})."
 fi

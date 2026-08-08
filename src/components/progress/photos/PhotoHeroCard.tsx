@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Image,
   TouchableOpacity,
-  Animated,
   PanResponder,
   Dimensions,
 } from 'react-native';
@@ -71,7 +70,6 @@ export default function PhotoHeroCard({
   const [slider, setSlider] = useState(0);
   const [frameW, setFrameW] = useState(0);
   const widthRef = useRef(0);
-  const pressScale = useRef(new Animated.Value(1)).current;
 
   const label = formatTimelineLabel(session, weekIndex, isToday);
   const uri = session.photos[pose];
@@ -94,8 +92,12 @@ export default function PhotoHeroCard({
   const pan = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-          compareMode ? true : Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy),
+        // Only claim clear horizontal swipes so the page can still scroll vertically.
+        onMoveShouldSetPanResponder: (_, g) => {
+          if (compareMode) return Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4;
+          return Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.25;
+        },
+        onPanResponderTerminationRequest: () => !compareMode,
         onPanResponderGrant: (evt) => {
           if (!compareMode) return;
           const x = evt.nativeEvent.locationX;
@@ -110,15 +112,14 @@ export default function PhotoHeroCard({
           if (compareMode) return;
           if (g.dx <= -48) onSwipeSession?.('next');
           else if (g.dx >= 48) onSwipeSession?.('prev');
+          else if (Math.abs(g.dx) < 10 && Math.abs(g.dy) < 10) onOpenDetails();
         },
       }),
-    [compareMode, onSwipeSession]
+    [compareMode, onOpenDetails, onSwipeSession]
   );
 
   return (
-    <Animated.View
-      style={[styles.card, embedded && styles.cardEmbedded, { transform: [{ scale: pressScale }] }]}
-    >
+    <View style={[styles.card, embedded && styles.cardEmbedded]}>
       {!embedded ? (
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
@@ -134,67 +135,46 @@ export default function PhotoHeroCard({
       ) : null}
 
       <View style={styles.heroFrameWrap}>
-        <TouchableOpacity
-          activeOpacity={1}
-          onPressIn={() =>
-            Animated.spring(pressScale, {
-              toValue: 0.985,
-              useNativeDriver: true,
-              speed: 40,
-              bounciness: 0,
-            }).start()
-          }
-          onPressOut={() =>
-            Animated.spring(pressScale, {
-              toValue: 1,
-              useNativeDriver: true,
-              speed: 20,
-              bounciness: 6,
-            }).start()
-          }
-          onPress={onOpenDetails}
+        <View
+          style={styles.heroFrame}
+          onLayout={(e) => {
+            widthRef.current = e.nativeEvent.layout.width;
+            setFrameW(e.nativeEvent.layout.width);
+          }}
+          {...pan.panHandlers}
         >
-          <View
-            style={styles.heroFrame}
-            onLayout={(e) => {
-              widthRef.current = e.nativeEvent.layout.width;
-              setFrameW(e.nativeEvent.layout.width);
-            }}
-            {...pan.panHandlers}
-          >
-            {/* Current (after) photo — no crossfade; swap instantly to avoid flashing */}
-            <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
+          {/* Current (after) photo — no crossfade; swap instantly to avoid flashing */}
+          <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
 
-            {compareMode && compareUri ? (
-              <>
-                {/* Before photo only appears as the scrub line is dragged */}
-                <View style={[styles.beforeClip, { width: frameW * slider }]} pointerEvents="none">
-                  <Image
-                    source={{ uri: compareUri }}
-                    style={[styles.heroImage, frameW > 0 ? { width: frameW } : null]}
-                    resizeMode="cover"
-                  />
-                </View>
-                <View style={[styles.handle, { left: Math.max(0, frameW * slider - 1) }]} />
-                <View
-                  style={[styles.handleKnob, { left: Math.max(12, frameW * slider - 14) }]}
+          {compareMode && compareUri ? (
+            <>
+              {/* Before photo only appears as the scrub line is dragged */}
+              <View style={[styles.beforeClip, { width: frameW * slider }]} pointerEvents="none">
+                <Image
+                  source={{ uri: compareUri }}
+                  style={[styles.heroImage, frameW > 0 ? { width: frameW } : null]}
+                  resizeMode="cover"
                 />
-                {slider > 0.02 ? (
-                  <>
-                    <Text style={styles.beforeBadge}>Before</Text>
-                    <Text style={styles.afterBadge}>After</Text>
-                  </>
-                ) : (
-                  <Text style={styles.afterBadge}>Drag to compare</Text>
-                )}
-              </>
-            ) : null}
+              </View>
+              <View style={[styles.handle, { left: Math.max(0, frameW * slider - 1) }]} />
+              <View
+                style={[styles.handleKnob, { left: Math.max(12, frameW * slider - 14) }]}
+              />
+              {slider > 0.02 ? (
+                <>
+                  <Text style={styles.beforeBadge}>Before</Text>
+                  <Text style={styles.afterBadge}>After</Text>
+                </>
+              ) : (
+                <Text style={styles.afterBadge}>Drag to compare</Text>
+              )}
+            </>
+          ) : null}
 
-            <View style={styles.stampWrap} pointerEvents="none">
-              <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
-            </View>
+          <View style={styles.stampWrap} pointerEvents="none">
+            <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
         {onSwipeSession && canSwipePrev ? (
           <TouchableOpacity
@@ -251,7 +231,7 @@ export default function PhotoHeroCard({
           </TouchableOpacity>
         ) : null}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 

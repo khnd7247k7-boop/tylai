@@ -9,6 +9,7 @@ import {
   Image,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Platform,
 } from 'react-native';
 import { AppTheme } from '../../../theme/appVisualTheme';
 import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
@@ -38,13 +39,15 @@ function localDateKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-type TimelineItem =
-  | { type: 'session'; session: PhotoSession; index: number }
-  | { type: 'milestone'; milestone: JourneyMilestone };
+/** Fixed slot width so snap + scrub math stay aligned (milestones share the same pitch). */
+const SLOT = 76;
+const NODE_WIDTH = 64;
 
-const SLOT = 72;
-
-/** Living week scrubber — snaps, fades inactive weeks, scales the active node. */
+/**
+ * Living week scrubber — snaps to sessions without fighting the user’s finger.
+ * Programmatic scroll only runs for external selection changes (tap / chevron / replay),
+ * not after a scrub-driven selection update.
+ */
 export default function PhotoTimeline({
   sessions,
   selectedId,
@@ -57,46 +60,52 @@ export default function PhotoTimeline({
 }: PhotoTimelineProps): React.ReactElement {
   const scrollRef = useRef<ScrollView>(null);
   const today = localDateKey();
+  const userDraggingRef = useRef(false);
+  const skipAutoScrollRef = useRef(false);
+  const lastAutoScrollIdRef = useRef<string | null>(null);
 
-  const items = useMemo((): TimelineItem[] => {
+  const milestonesBySession = useMemo(() => {
     const milestones = buildJourneyMilestones(sessions, metricsById);
-    const byAfter = new Map<string, JourneyMilestone[]>();
+    const map = new Map<string, JourneyMilestone[]>();
     for (const m of milestones) {
-      const list = byAfter.get(m.afterSessionId) ?? [];
+      const list = map.get(m.afterSessionId) ?? [];
       list.push(m);
-      byAfter.set(m.afterSessionId, list);
+      map.set(m.afterSessionId, list);
     }
-    const out: TimelineItem[] = [];
-    sessions.forEach((session, index) => {
-      out.push({ type: 'session', session, index });
-      for (const m of byAfter.get(session.id) ?? []) {
-        out.push({ type: 'milestone', milestone: m });
-      }
-    });
-    return out;
+    return map;
   }, [metricsById, sessions]);
 
+  const selectedIndex = useMemo(
+    () => sessions.findIndex((s) => s.id === selectedId),
+    [sessions, selectedId]
+  );
+
   useEffect(() => {
-    const idx = items.findIndex(
-      (it) => it.type === 'session' && it.session.id === selectedId
-    );
-    if (idx >= 0 && scrollRef.current) {
-      scrollRef.current.scrollTo({ x: Math.max(0, idx * SLOT - 48), animated: true });
+    if (selectedIndex < 0 || !scrollRef.current) return;
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      lastAutoScrollIdRef.current = selectedId;
+      return;
     }
-  }, [items, selectedId]);
+    if (userDraggingRef.current) return;
+    if (lastAutoScrollIdRef.current === selectedId) return;
+    lastAutoScrollIdRef.current = selectedId;
+    const x = Math.max(0, selectedIndex * SLOT - SLOT);
+    scrollRef.current.scrollTo({ x, animated: true });
+  }, [selectedId, selectedIndex]);
+
+  const commitScrubFromOffset = (x: number) => {
+    if (!onScrubIndex || !sessions.length) return;
+    const index = Math.max(0, Math.min(sessions.length - 1, Math.round(x / SLOT)));
+    const session = sessions[index];
+    if (!session || session.id === selectedId) return;
+    skipAutoScrollRef.current = true;
+    onScrubIndex(index);
+  };
 
   const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (!onScrubIndex || !sessions.length) return;
-    const x = e.nativeEvent.contentOffset.x;
-    const approx = Math.round(x / SLOT);
-    const sessionItems = items
-      .map((it, i) => ({ it, i }))
-      .filter((row) => row.it.type === 'session');
-    if (!sessionItems.length) return;
-    const nearest = sessionItems.reduce((best, cur) =>
-      Math.abs(cur.i - approx) < Math.abs(best.i - approx) ? cur : best
-    );
-    if (nearest.it.type === 'session') onScrubIndex(nearest.it.index);
+    userDraggingRef.current = false;
+    commitScrubFromOffset(e.nativeEvent.contentOffset.x);
   };
 
   const rangeLabel =
@@ -121,32 +130,46 @@ export default function PhotoTimeline({
           contentContainerStyle={styles.scrollContent}
           decelerationRate="fast"
           snapToInterval={SLOT}
+          snapToAlignment="start"
+          disableIntervalMomentum
+          directionalLockEnabled
+          nestedScrollEnabled
+          scrollEventThrottle={16}
+          onScrollBeginDrag={() => {
+            userDraggingRef.current = true;
+          }}
           onMomentumScrollEnd={onScrollEnd}
-          onScrollEndDrag={onScrollEnd}
-        >
-          {items.map((item) => {
-            if (item.type === 'milestone') {
-              return (
-                <View key={item.milestone.id} style={styles.milestone}>
-                  <Text style={styles.milestoneEmoji}>{item.milestone.emoji}</Text>
-                </View>
-              );
+          onScrollEndDrag={(e) => {
+            // If momentum will continue, wait for onMomentumScrollEnd.
+            const vy = e.nativeEvent.velocity?.x ?? 0;
+            if (Platform.OS === 'ios' && Math.abs(vy) > 0.05) {
+              return;
             }
-            const { session, index } = item;
+            onScrollEnd(e);
+          }}
+        >
+          {sessions.map((session, index) => {
             const selected = session.id === selectedId;
             const label = formatTimelineLabel(session, index, session.date === today);
             const completeness = computeSessionCompleteness(session, metricsById.get(session.id), {
               hasReflection: reflectionDates?.has(session.date),
             });
+            const marks = milestonesBySession.get(session.id) ?? [];
             return (
-              <WeekNode
-                key={session.id}
-                label={label}
-                selected={selected}
-                thumbUri={session.photos[thumbPose] || session.photos.front}
-                filled={completeness.ratio}
-                onPress={() => onSelect(session)}
-              />
+              <View key={session.id} style={styles.slot}>
+                <WeekNode
+                  label={label}
+                  selected={selected}
+                  thumbUri={session.photos[thumbPose] || session.photos.front}
+                  filled={completeness.ratio}
+                  milestoneEmoji={marks[0]?.emoji}
+                  onPress={() => {
+                    userDraggingRef.current = false;
+                    skipAutoScrollRef.current = false;
+                    onSelect(session);
+                  }}
+                />
+              </View>
             );
           })}
         </ScrollView>
@@ -160,28 +183,30 @@ function WeekNode({
   selected,
   thumbUri,
   filled,
+  milestoneEmoji,
   onPress,
 }: {
   label: string;
   selected: boolean;
   thumbUri: string;
   filled: number;
+  milestoneEmoji?: string;
   onPress: () => void;
 }): React.ReactElement {
-  const scale = useRef(new Animated.Value(selected ? 1.1 : 0.9)).current;
-  const opacity = useRef(new Animated.Value(selected ? 1 : 0.42)).current;
+  const scale = useRef(new Animated.Value(selected ? 1.08 : 0.92)).current;
+  const opacity = useRef(new Animated.Value(selected ? 1 : 0.45)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.spring(scale, {
-        toValue: selected ? 1.1 : 0.9,
+        toValue: selected ? 1.08 : 0.92,
         useNativeDriver: true,
         speed: 18,
         bounciness: 5,
       }),
       Animated.timing(opacity, {
-        toValue: selected ? 1 : 0.42,
-        duration: 220,
+        toValue: selected ? 1 : 0.45,
+        duration: 180,
         useNativeDriver: true,
       }),
     ]).start();
@@ -198,11 +223,14 @@ function WeekNode({
       >
         <Image source={{ uri: thumbUri }} style={styles.thumb} />
         {selected ? <View style={styles.glow} /> : null}
+        {milestoneEmoji ? (
+          <View style={styles.milestoneBadge}>
+            <Text style={styles.milestoneEmoji}>{milestoneEmoji}</Text>
+          </View>
+        ) : null}
       </Animated.View>
-      <Animated.View
-        style={[styles.dot, selected && styles.dotActive, { opacity }]}
-      />
-      <Animated.Text style={[styles.label, selected && styles.labelActive, { opacity }]}>
+      <Animated.View style={[styles.dot, selected && styles.dotActive, { opacity }]} />
+      <Animated.Text style={[styles.label, selected && styles.labelActive, { opacity }]} numberOfLines={1}>
         {label}
       </Animated.Text>
       {!selected && filled > 0 ? (
@@ -247,13 +275,16 @@ const styles = StyleSheet.create({
     backgroundColor: AppTheme.border,
   },
   scrollContent: {
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
     paddingBottom: 4,
     alignItems: 'flex-start',
   },
+  slot: {
+    width: SLOT,
+    alignItems: 'center',
+  },
   nodeWrap: {
-    width: SLOT - 8,
-    marginRight: 8,
+    width: NODE_WIDTH,
     alignItems: 'center',
   },
   thumbWrap: {
@@ -279,6 +310,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(0,255,136,0.35)',
   },
+  milestoneBadge: {
+    position: 'absolute',
+    right: -4,
+    top: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: AppTheme.bgElevated,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  milestoneEmoji: { fontSize: 11 },
   fillMark: {
     position: 'absolute',
     top: 58,
@@ -314,12 +359,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   labelActive: { color: AppTheme.accent },
-  milestone: {
-    width: 36,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 14,
-  },
-  milestoneEmoji: { fontSize: 16 },
 });

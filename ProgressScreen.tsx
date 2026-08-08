@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -48,14 +48,17 @@ type ScoreInput = {
   daysPerWeek: number;
 };
 
-/** Progress is one interactive movie — a shared week cursor rewrites the whole frame. */
+/** Progress scores default to this calendar week; scrubbing photos/chart rewrites the week cursor. */
 export default function ProgressScreen(): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [bundle, setBundle] = useState<ProgressJourneyDataBundle | null>(null);
   const [baseScoreInput, setBaseScoreInput] = useState<ScoreInput | null>(null);
   const [selectedProgressDate, setSelectedProgressDate] = useState<string | null>(null);
 
+  const loadGenRef = useRef(0);
+
   const loadProgressData = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     try {
       const [
@@ -86,6 +89,8 @@ export default function ProgressScreen(): React.ReactElement {
         loadCoachingProfile(),
       ]);
 
+      if (gen !== loadGenRef.current) return;
+
       const daysPerWeek = resolveTrainingDaysPerWeek(coachingProfile, null);
       const input: ScoreInput = {
         workoutHistory: workoutHistoryRaw,
@@ -113,7 +118,7 @@ export default function ProgressScreen(): React.ReactElement {
           .filter((d): d is string => !!d),
       });
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, []);
 
@@ -155,6 +160,8 @@ export default function ProgressScreen(): React.ReactElement {
         style={styles.contentScroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        directionalLockEnabled
       >
         {loading && !progressResult ? (
           <View style={styles.loadingWrap}>
@@ -163,6 +170,7 @@ export default function ProgressScreen(): React.ReactElement {
         ) : progressResult ? (
           <ProgressJourney
             progressResult={progressResult}
+            scoreInput={baseScoreInput}
             weightSeries={weightSeries}
             dataBundle={bundle}
             selectedProgressDate={selectedProgressDate}

@@ -113,6 +113,17 @@ function mergeValueForKey(
   localUpdatedAt: number,
   cloudUpdatedAt: number
 ): unknown {
+  // Append-only history: never discard sessions via document LWW — union by id.
+  if (
+    (baseKey === 'workoutHistory' || baseKey === 'meals') &&
+    (Array.isArray(local) || Array.isArray(cloud))
+  ) {
+    return mergeByIdArrays(
+      (Array.isArray(local) ? local : []) as any[],
+      (Array.isArray(cloud) ? cloud : []) as any[]
+    );
+  }
+
   if (cloudUpdatedAt > localUpdatedAt && !isEmptyValue(cloud)) return cloud;
   if (localUpdatedAt > cloudUpdatedAt && !isEmptyValue(local)) return local;
   if (cloudUpdatedAt > localUpdatedAt) return cloud ?? local ?? null;
@@ -251,24 +262,42 @@ async function syncOneKey(
 
   const merged = mergeValueForKey(baseKey, local, cloud, localUpdatedAt, cloudUpdatedAt);
 
-  const localEmpty = isEmptyValue(local);
+  // Re-read local after the cloud round-trip. A workout (or other write) may have
+  // landed while getDoc was in flight; writing stale merge would clobber it.
+  let freshLocal: unknown = local;
+  let freshLocalUpdatedAt = localUpdatedAt;
+  try {
+    const rawFresh = await AsyncStorage.getItem(storageKey);
+    freshLocal = rawFresh ? JSON.parse(rawFresh) : null;
+    const metaFresh = await AsyncStorage.getItem(metaKey);
+    freshLocalUpdatedAt = parseDocUpdatedAt(metaFresh);
+  } catch {
+    // keep prior snapshot
+  }
+
+  const mergedFresh =
+    freshLocalUpdatedAt !== localUpdatedAt || !valuesEqual(freshLocal, local)
+      ? mergeValueForKey(baseKey, freshLocal, cloud, freshLocalUpdatedAt, cloudUpdatedAt)
+      : merged;
+
+  const localEmpty = isEmptyValue(freshLocal);
   const cloudEmpty = isEmptyValue(cloud);
   let didUpdateLocal = false;
 
-  if (!valuesEqual(merged, local)) {
-    await AsyncStorage.setItem(storageKey, JSON.stringify(merged));
+  if (!valuesEqual(mergedFresh, freshLocal)) {
+    await AsyncStorage.setItem(storageKey, JSON.stringify(mergedFresh));
     const stamp =
-      cloudUpdatedAt > localUpdatedAt && cloudUpdatedAt > 0
+      cloudUpdatedAt > freshLocalUpdatedAt && cloudUpdatedAt > 0
         ? new Date(cloudUpdatedAt).toISOString()
-        : localUpdatedAt > 0
-          ? new Date(localUpdatedAt).toISOString()
+        : freshLocalUpdatedAt > 0
+          ? new Date(freshLocalUpdatedAt).toISOString()
           : new Date().toISOString();
     await AsyncStorage.setItem(metaKey, stamp);
     didUpdateLocal = true;
   }
 
-  if ((!cloudEmpty || !localEmpty) && !valuesEqual(merged, cloud)) {
-    await pushUserDataToCloud(baseKey, merged);
+  if ((!cloudEmpty || !localEmpty) && !valuesEqual(mergedFresh, cloud)) {
+    await pushUserDataToCloud(baseKey, mergedFresh);
   }
 
   return didUpdateLocal;

@@ -1,18 +1,18 @@
 /**
- * Import front / side / back progress photos from the device library.
- * Uses each photo's EXIF / library timestamp so the session lands on the
- * correct day in the progress timeline (not necessarily today).
+ * Import progress photos from the device library (up to 15).
+ * Photos are grouped by capture date onto the timeline; each day gets
+ * front / side / back (by time order within that day).
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
-  InteractionManager,
   Linking,
   Modal,
   Platform,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -24,7 +24,6 @@ import { PermissionStatus } from 'expo-image-picker';
 import { AppTheme } from '../../../theme/appVisualTheme';
 import {
   PHOTO_POSES,
-  PHOTO_POSE_INSTRUCTIONS,
   PHOTO_POSE_LABELS,
   type PhotoPose,
 } from '../../../types/progressPhotos';
@@ -32,17 +31,26 @@ import {
   formatDisplayDate,
   getSessionForDate,
 } from '../../../services/PhotoService';
+import { resolveAssetCaptureDate } from '../../../utils/progressPhotoCaptureDate';
 import {
-  resolveAssetCaptureDate,
-  resolveSessionDateFromCaptures,
-  uniqueCaptureDateKeys,
-  type ResolvedPhotoCaptureTime,
-} from '../../../utils/progressPhotoCaptureDate';
+  assignPosesForDay,
+  capturesFromDayDraft,
+  groupPhotosIntoDayDrafts,
+  type DaySessionDraft,
+  type LibraryPhotoItem,
+} from '../../../utils/progressPhotoImportGroups';
 
-export type LibraryImportResult = {
+export const LIBRARY_IMPORT_MAX_PHOTOS = 15;
+
+export type LibraryImportSession = {
   captures: Record<PhotoPose, string>;
   date: string;
   timestamp: string;
+};
+
+/** Batch import — one or many timeline days. */
+export type LibraryImportResult = {
+  sessions: LibraryImportSession[];
 };
 
 type Props = {
@@ -51,17 +59,30 @@ type Props = {
   onComplete: (result: LibraryImportResult) => Promise<void>;
 };
 
-type PosePick = {
-  uri: string;
-  resolved: ResolvedPhotoCaptureTime;
+type Phase = 'pick' | 'review' | 'confirm';
+
+type DayConfirmMeta = {
+  dateKey: string;
+  displayDate: string;
+  replace: boolean;
+  poseCount: number;
+  reusedPoses: boolean;
 };
 
-function waitForModalDismiss(): Promise<void> {
-  return new Promise((resolve) => {
-    InteractionManager.runAfterInteractions(() => {
-      setTimeout(resolve, Platform.OS === 'ios' ? 450 : 80);
-    });
-  });
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolveAssets(
+  assets: ImagePicker.ImagePickerAsset[]
+): Promise<LibraryPhotoItem[]> {
+  const out: LibraryPhotoItem[] = [];
+  for (const asset of assets) {
+    if (!asset?.uri) continue;
+    const resolved = await resolveAssetCaptureDate(asset);
+    out.push({ uri: asset.uri, resolved });
+  }
+  return out;
 }
 
 export default function PhotoLibraryImportFlow({
@@ -69,178 +90,254 @@ export default function PhotoLibraryImportFlow({
   onClose,
   onComplete,
 }: Props): React.ReactElement {
-  const [stepIndex, setStepIndex] = useState(0);
-  const [picks, setPicks] = useState<Partial<Record<PhotoPose, PosePick>>>({});
+  const [items, setItems] = useState<LibraryPhotoItem[]>([]);
+  const [drafts, setDrafts] = useState<DaySessionDraft[]>([]);
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
-  /** Hide this RN Modal while the system photo picker is open (iOS presentation). */
+  const [phase, setPhase] = useState<Phase>('pick');
+  const [confirmMeta, setConfirmMeta] = useState<DayConfirmMeta[]>([]);
   const [suppressModal, setSuppressModal] = useState(false);
-
-  const currentPose = PHOTO_POSES[stepIndex];
+  const modalDismissResolveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!visible) return;
-    setStepIndex(0);
-    setPicks({});
+    setItems([]);
+    setDrafts([]);
     setPicking(false);
     setSaving(false);
+    setPhase('pick');
+    setConfirmMeta([]);
     setSuppressModal(false);
+    modalDismissResolveRef.current = null;
   }, [visible]);
 
-  const pickedCount = useMemo(
-    () => PHOTO_POSES.filter((p) => Boolean(picks[p])).length,
-    [picks]
-  );
+  const rebuildDrafts = useCallback((nextItems: LibraryPhotoItem[]) => {
+    setItems(nextItems);
+    setDrafts(groupPhotosIntoDayDrafts(nextItems));
+  }, []);
 
-  const ensureLibraryPermission = async (): Promise<boolean> => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
-    const ok =
-      perm.granted ||
-      perm.status === PermissionStatus.GRANTED ||
-      perm.accessPrivileges === 'limited' ||
-      perm.accessPrivileges === 'all';
-    if (!ok) {
-      Alert.alert(
-        'Photo access needed',
-        'Allow photo library access to upload past progress photos.',
-        [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Open Settings', onPress: () => Linking.openSettings() },
-        ]
-      );
+  /** Wait until our RN Modal is fully gone — iOS can't present PHPicker on top of it. */
+  const dismissImportModal = useCallback(async () => {
+    if (suppressModal) {
+      await waitMs(Platform.OS === 'ios' ? 120 : 40);
+      return;
     }
-    return ok;
-  };
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        modalDismissResolveRef.current = null;
+        resolve();
+      };
+      modalDismissResolveRef.current = finish;
+      setSuppressModal(true);
+      // onDismiss should fire on iOS; keep a fallback for Android / missed events.
+      setTimeout(finish, Platform.OS === 'ios' ? 700 : 120);
+    });
+    await waitMs(Platform.OS === 'ios' ? 80 : 0);
+  }, [suppressModal]);
 
-  const finalizeImport = useCallback(
-    async (allPicks: Record<PhotoPose, PosePick>) => {
-      const resolvedList = PHOTO_POSES.map((p) => allPicks[p].resolved);
-      const sessionTime = resolveSessionDateFromCaptures(resolvedList);
-      const dayKeys = uniqueCaptureDateKeys(resolvedList);
-      const displayDate = formatDisplayDate(sessionTime.dateKey);
-      const usedFallback = resolvedList.every((r) => r.source === 'fallback');
-
-      const existing = await getSessionForDate(sessionTime.dateKey);
-      const replaceNote = existing
-        ? '\n\nThis will replace the progress photos already saved for that day.'
-        : '';
-
-      const multiDayNote =
-        dayKeys.length > 1
-          ? `\n\nThese photos look like they were taken on different days. We'll place the session on ${displayDate} (earliest photo).`
-          : '';
-
-      const stampNote = usedFallback
-        ? '\n\nWe could not read a date from these photos, so they will be filed as today. You can still continue.'
-        : `\n\nPlaced from the photo timestamp${
-            sessionTime.source === 'exif' ? ' (EXIF)' : ''
-          }.`;
-
-      Alert.alert(
-        'Add to timeline?',
-        `Front, side, and back will be saved for ${displayDate}.${stampNote}${multiDayNote}${replaceNote}`,
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => {
-              setStepIndex(PHOTO_POSES.length - 1);
-            },
-          },
-          {
-            text: existing ? 'Replace' : 'Save',
-            onPress: async () => {
-              setSaving(true);
-              try {
-                await onComplete({
-                  captures: {
-                    front: allPicks.front.uri,
-                    side: allPicks.side.uri,
-                    back: allPicks.back.uri,
-                  },
-                  date: sessionTime.dateKey,
-                  timestamp: sessionTime.timestampIso,
-                });
-                onClose();
-              } catch (e) {
-                console.warn('[PhotoLibraryImportFlow] save failed', e);
-                Alert.alert('Save failed', 'Could not import those photos. Please try again.');
-              } finally {
-                setSaving(false);
-              }
-            },
-          },
-        ]
-      );
-    },
-    [onClose, onComplete]
-  );
-
-  const pickForCurrentPose = useCallback(async () => {
+  const pickPhotos = useCallback(async () => {
     if (picking || saving) return;
     setPicking(true);
     try {
-      if (!(await ensureLibraryPermission())) return;
+      // Hide this modal first so the system picker can present (especially iOS simulator).
+      await dismissImportModal();
 
-      setSuppressModal(true);
-      await waitForModalDismiss();
-
-      let asset: ImagePicker.ImagePickerAsset | undefined;
+      // iOS PHPicker does not require photo-library permission. Don't block the picker
+      // if the simulator/device reports denied — still try to open Photos.
       try {
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          quality: 1,
-          allowsEditing: false,
-          allowsMultipleSelection: false,
-          selectionLimit: 1,
-          exif: true,
-          ...(Platform.OS === 'android' ? { defaultTab: 'photos' as const } : {}),
-        });
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
+        const hasAccess =
+          perm.granted ||
+          perm.status === PermissionStatus.GRANTED ||
+          perm.accessPrivileges === 'limited' ||
+          perm.accessPrivileges === 'all';
+        if (Platform.OS === 'android' && !hasAccess) {
+          setSuppressModal(false);
+          Alert.alert(
+            'Photo access needed',
+            'Allow photo library access to upload past progress photos.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
+          return;
+        }
+      } catch (permErr) {
+        console.warn('[PhotoLibraryImportFlow] permission request skipped', permErr);
+        if (Platform.OS === 'android') {
+          setSuppressModal(false);
+          Alert.alert('Photo access needed', 'Allow photo library access and try again.');
+          return;
+        }
+      }
 
-        asset = !result.canceled ? result.assets?.[0] : undefined;
-        if (!asset?.uri && Platform.OS === 'android') {
+      const remaining = Math.max(1, LIBRARY_IMPORT_MAX_PHOTOS - items.length);
+      let assets: ImagePicker.ImagePickerAsset[] = [];
+      let canceled = false;
+
+      try {
+        try {
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+            allowsEditing: false,
+            allowsMultipleSelection: true,
+            selectionLimit: remaining,
+            exif: true,
+            ...(Platform.OS === 'android' ? { defaultTab: 'photos' as const } : {}),
+          });
+          canceled = result.canceled;
+          assets = !result.canceled ? result.assets ?? [] : [];
+        } catch (multiErr) {
+          console.warn('[PhotoLibraryImportFlow] multi-select failed, retrying single', multiErr);
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+            allowsEditing: false,
+            allowsMultipleSelection: false,
+            selectionLimit: 1,
+            exif: true,
+          });
+          canceled = result.canceled;
+          assets = !result.canceled ? result.assets ?? [] : [];
+        }
+
+        if (!assets.length && Platform.OS === 'android') {
           const pending = await ImagePicker.getPendingResultAsync();
-          if (pending && 'assets' in pending) {
-            asset = pending.assets?.[0];
+          if (pending && 'assets' in pending && Array.isArray(pending.assets)) {
+            assets = pending.assets;
+            canceled = false;
           }
         }
       } finally {
+        // Small delay so the system picker finishes dismissing before we re-show.
+        await waitMs(Platform.OS === 'ios' ? 350 : 80);
         setSuppressModal(false);
       }
 
-      if (!asset?.uri) return;
-
-      const resolved = await resolveAssetCaptureDate(asset);
-      const nextPicks = {
-        ...picks,
-        [currentPose]: { uri: asset.uri, resolved },
-      } as Partial<Record<PhotoPose, PosePick>>;
-      setPicks(nextPicks);
-
-      if (stepIndex < PHOTO_POSES.length - 1) {
-        setStepIndex(stepIndex + 1);
+      const incoming = await resolveAssets(assets);
+      if (!incoming.length) {
+        if (!canceled && __DEV__) {
+          Alert.alert(
+            'No photos selected',
+            'On the iOS Simulator, open the Photos app and drag images in from Finder first, then try Upload again.'
+          );
+        }
         return;
       }
 
-      if (nextPicks.front && nextPicks.side && nextPicks.back) {
-        await finalizeImport(nextPicks as Record<PhotoPose, PosePick>);
-      }
+      const merged = [...items, ...incoming].slice(0, LIBRARY_IMPORT_MAX_PHOTOS);
+      rebuildDrafts(merged);
+      setPhase('review');
     } catch (e) {
       setSuppressModal(false);
-      console.warn('[PhotoLibraryImportFlow]', e);
-      Alert.alert('Could not open photos', 'Try again, or take photos in-app instead.');
+      console.warn('[PhotoLibraryImportFlow] pick failed', e);
+      Alert.alert(
+        'Could not open photos',
+        Platform.OS === 'ios'
+          ? 'Close any other photo screens and try again. On the Simulator, add images to the Photos app first (drag from Finder).'
+          : 'Try again, or take photos in-app instead.'
+      );
     } finally {
       setPicking(false);
     }
-  }, [currentPose, finalizeImport, picking, picks, saving, stepIndex]);
+  }, [dismissImportModal, items, picking, rebuildDrafts, saving]);
 
-  const handleBack = () => {
-    if (stepIndex > 0) {
-      setStepIndex(stepIndex - 1);
-    } else {
-      onClose();
-    }
+  const clearAll = () => {
+    rebuildDrafts([]);
+    setPhase('pick');
+    setConfirmMeta([]);
   };
+
+  const removePhoto = (uri: string) => {
+    rebuildDrafts(items.filter((i) => i.uri !== uri));
+  };
+
+  const cyclePoseAssignment = (dateKey: string, pose: PhotoPose) => {
+    setDrafts((prev) =>
+      prev.map((draft) => {
+        if (draft.dateKey !== dateKey || draft.photos.length < 2) return draft;
+        const current = draft.poses[pose];
+        const idx = Math.max(
+          0,
+          draft.photos.findIndex((p) => p.uri === current?.uri)
+        );
+        const nextPhoto = draft.photos[(idx + 1) % draft.photos.length];
+        return {
+          ...draft,
+          poses: { ...draft.poses, [pose]: nextPhoto },
+        };
+      })
+    );
+  };
+
+  const autoAssignDay = (dateKey: string) => {
+    setDrafts((prev) =>
+      prev.map((draft) =>
+        draft.dateKey === dateKey
+          ? { ...draft, poses: assignPosesForDay(draft.photos) }
+          : draft
+      )
+    );
+  };
+
+  const readySessions = useMemo(() => {
+    const out: LibraryImportSession[] = [];
+    for (const draft of drafts) {
+      const captures = capturesFromDayDraft(draft);
+      if (!captures) continue;
+      out.push({
+        captures,
+        date: draft.dateKey,
+        timestamp: draft.timestampIso,
+      });
+    }
+    return out;
+  }, [drafts]);
+
+  const goToConfirm = useCallback(async () => {
+    if (!readySessions.length || saving) return;
+    try {
+      const meta: DayConfirmMeta[] = [];
+      for (const draft of drafts) {
+        const captures = capturesFromDayDraft(draft);
+        if (!captures) continue;
+        const existing = await getSessionForDate(draft.dateKey);
+        const uniqueUris = new Set(PHOTO_POSES.map((p) => draft.poses[p]?.uri).filter(Boolean));
+        meta.push({
+          dateKey: draft.dateKey,
+          displayDate: formatDisplayDate(draft.dateKey),
+          replace: Boolean(existing),
+          poseCount: draft.photos.length,
+          reusedPoses: uniqueUris.size < 3,
+        });
+      }
+      setConfirmMeta(meta);
+      setPhase('confirm');
+    } catch (e) {
+      console.warn('[PhotoLibraryImportFlow] confirm prep failed', e);
+      Alert.alert('Could not prepare save', 'Please try again.');
+    }
+  }, [drafts, readySessions.length, saving]);
+
+  const performSave = useCallback(async () => {
+    if (!readySessions.length || saving) return;
+    setSaving(true);
+    try {
+      await onComplete({ sessions: readySessions });
+      onClose();
+    } catch (e) {
+      console.warn('[PhotoLibraryImportFlow] save failed', e);
+      Alert.alert('Save failed', 'Could not import those photos. Please try again.');
+      setPhase('review');
+    } finally {
+      setSaving(false);
+    }
+  }, [onClose, onComplete, readySessions, saving]);
 
   if (!visible) {
     return <></>;
@@ -252,98 +349,244 @@ export default function PhotoLibraryImportFlow({
       animationType="slide"
       presentationStyle="fullScreen"
       onRequestClose={onClose}
+      onDismiss={() => {
+        modalDismissResolveRef.current?.();
+        modalDismissResolveRef.current = null;
+      }}
     >
       <SafeAreaView style={styles.safe}>
         <StatusBar style="light" />
 
         <View style={styles.header}>
-          <TouchableOpacity onPress={handleBack} style={styles.headerBtn} hitSlop={12}>
-            <Text style={styles.headerBtnText}>{stepIndex > 0 ? '‹ Back' : 'Cancel'}</Text>
+          <TouchableOpacity
+            onPress={() => {
+              if (phase === 'confirm') {
+                setPhase('review');
+                return;
+              }
+              if (phase === 'review' && items.length > 0) {
+                setPhase('pick');
+                return;
+              }
+              onClose();
+            }}
+            style={styles.headerBtn}
+            hitSlop={12}
+          >
+            <Text style={styles.headerBtnText}>
+              {phase === 'pick' ? 'Cancel' : '‹ Back'}
+            </Text>
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.stepLabel}>
-              Step {stepIndex + 1} of {PHOTO_POSES.length}
+            <Text style={styles.stepLabel}>Camera roll</Text>
+            <Text style={styles.poseTitle}>
+              {phase === 'confirm'
+                ? 'Save to timeline'
+                : phase === 'review'
+                  ? 'Review by day'
+                  : 'Upload photos'}
             </Text>
-            <Text style={styles.poseTitle}>{PHOTO_POSE_LABELS[currentPose]}</Text>
           </View>
           <View style={styles.headerBtn} />
         </View>
 
-        <View style={styles.body}>
-          <Text style={styles.hero}>Upload from your camera roll</Text>
-          <Text style={styles.bodyText}>
-            Choose the {PHOTO_POSE_LABELS[currentPose].toLowerCase()} photo you already took.
-            We read the photo&apos;s timestamp so it lands on the right day in your timeline.
-          </Text>
-          <Text style={styles.instruction}>{PHOTO_POSE_INSTRUCTIONS[currentPose]}</Text>
-
-          {picks[currentPose]?.uri ? (
-            <Image source={{ uri: picks[currentPose]!.uri }} style={styles.preview} />
-          ) : (
-            <View style={styles.previewPlaceholder}>
-              <Text style={styles.previewPlaceholderText}>No photo selected yet</Text>
-            </View>
-          )}
-
-          {picks[currentPose]?.resolved ? (
-            <Text style={styles.stampHint}>
-              Detected: {formatDisplayDate(picks[currentPose]!.resolved.dateKey)}
-              {picks[currentPose]!.resolved.source === 'fallback' ? ' (no date found)' : ''}
+        {phase === 'pick' ? (
+          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            <Text style={styles.hero}>Upload progress history</Text>
+            <Text style={styles.bodyText}>
+              Select up to {LIBRARY_IMPORT_MAX_PHOTOS} photos (about 4–5 weeks of front / side /
+              back). We read each photo&apos;s timestamp and place it on the correct day in your
+              timeline.
             </Text>
-          ) : null}
-        </View>
-
-        <View style={styles.dots}>
-          {PHOTO_POSES.map((pose, i) => (
-            <View
-              key={pose}
-              style={[
-                styles.dot,
-                i === stepIndex && styles.dotActive,
-                picks[pose] && styles.dotDone,
-              ]}
-            />
-          ))}
-        </View>
-
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.primaryBtn, (picking || saving) && styles.primaryBtnDisabled]}
-            onPress={pickForCurrentPose}
-            disabled={picking || saving}
-            activeOpacity={0.85}
-          >
-            {picking || saving ? (
-              <ActivityIndicator color={AppTheme.accentDark} />
-            ) : (
-              <Text style={styles.primaryBtnText}>
-                {picks[currentPose]
-                  ? stepIndex === PHOTO_POSES.length - 1 && pickedCount === PHOTO_POSES.length
-                    ? 'Choose different photo'
-                    : 'Replace photo'
-                  : `Choose ${PHOTO_POSE_LABELS[currentPose].toLowerCase()} photo`}
+            <Text style={styles.bodyText}>
+              Tip: pick photos in any order — we group by date, then assign Front → Side → Back by
+              time within that day.
+            </Text>
+            {__DEV__ && Platform.OS === 'ios' ? (
+              <Text style={styles.bodyText}>
+                Simulator: drag images into the Photos app from Finder first, then select them here.
               </Text>
-            )}
-          </TouchableOpacity>
+            ) : null}
 
-          {picks[currentPose] && stepIndex < PHOTO_POSES.length - 1 ? (
             <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => setStepIndex(stepIndex + 1)}
+              style={[styles.primaryBtn, (picking || saving) && styles.primaryBtnDisabled]}
+              onPress={() => void pickPhotos()}
+              disabled={picking || saving}
               activeOpacity={0.85}
             >
-              <Text style={styles.secondaryBtnText}>Next pose</Text>
+              {picking ? (
+                <ActivityIndicator color={AppTheme.accentDark} />
+              ) : (
+                <Text style={styles.primaryBtnText}>
+                  {items.length
+                    ? `Add more photos (${items.length}/${LIBRARY_IMPORT_MAX_PHOTOS})`
+                    : `Select up to ${LIBRARY_IMPORT_MAX_PHOTOS} photos`}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {items.length > 0 ? (
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setPhase('review')}>
+                <Text style={styles.secondaryBtnText}>
+                  Review {drafts.length} day{drafts.length === 1 ? '' : 's'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
+        ) : null}
+
+        {phase === 'review' ? (
+          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            <Text style={styles.hero}>
+              {drafts.length} day{drafts.length === 1 ? '' : 's'} · {items.length} photo
+              {items.length === 1 ? '' : 's'}
+            </Text>
+            <Text style={styles.bodyText}>
+              Check each day. Tap a pose thumbnail to cycle which photo is used. Days with fewer
+              than 3 photos reuse the last shot for missing poses.
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.secondaryBtn, styles.secondaryBtnSpaced]}
+              onPress={() => void pickPhotos()}
+              disabled={picking || items.length >= LIBRARY_IMPORT_MAX_PHOTOS}
+            >
+              <Text style={styles.secondaryBtnText}>
+                {picking ? 'Opening…' : `Add more (${items.length}/${LIBRARY_IMPORT_MAX_PHOTOS})`}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.linkBtn} onPress={clearAll}>
+              <Text style={styles.linkBtnText}>Clear all</Text>
+            </TouchableOpacity>
+
+            {drafts.map((draft) => {
+              const extras = Math.max(0, draft.photos.length - 3);
+              return (
+                <View key={draft.dateKey} style={styles.dayCard}>
+                  <View style={styles.dayHeader}>
+                    <Text style={styles.dayTitle}>{formatDisplayDate(draft.dateKey)}</Text>
+                    <TouchableOpacity onPress={() => autoAssignDay(draft.dateKey)} hitSlop={8}>
+                      <Text style={styles.resetText}>Auto-assign</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.dayMeta}>
+                    {draft.photos.length} photo{draft.photos.length === 1 ? '' : 's'}
+                    {extras > 0 ? ` · ${extras} extra not used as poses` : ''}
+                  </Text>
+                  <View style={styles.poseRow}>
+                    {PHOTO_POSES.map((pose) => {
+                      const pick = draft.poses[pose];
+                      return (
+                        <TouchableOpacity
+                          key={pose}
+                          style={styles.poseSlot}
+                          onPress={() => cyclePoseAssignment(draft.dateKey, pose)}
+                          activeOpacity={0.85}
+                        >
+                          {pick?.uri ? (
+                            <Image source={{ uri: pick.uri }} style={styles.poseThumb} />
+                          ) : (
+                            <View style={styles.poseEmpty}>
+                              <Text style={styles.poseEmptyText}>—</Text>
+                            </View>
+                          )}
+                          <Text style={styles.poseLabel}>{PHOTO_POSE_LABELS[pose]}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {draft.photos.length > 3 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.extraRow}>
+                      {draft.photos.map((photo, i) => (
+                        <View key={`${photo.uri}-${i}`} style={styles.extraWrap}>
+                          <Image source={{ uri: photo.uri }} style={styles.extraThumb} />
+                          <TouchableOpacity
+                            style={styles.extraRemove}
+                            onPress={() => removePhoto(photo.uri)}
+                            hitSlop={6}
+                          >
+                            <Text style={styles.extraRemoveText}>×</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : null}
+                </View>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+
+        {phase === 'confirm' ? (
+          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            <Text style={styles.hero}>Ready to save</Text>
+            <Text style={styles.bodyText}>
+              {readySessions.length} session{readySessions.length === 1 ? '' : 's'} will be added to
+              your progress timeline.
+            </Text>
+            {confirmMeta.map((m) => (
+              <View key={m.dateKey} style={styles.confirmRow}>
+                <Text style={styles.confirmDate}>{m.displayDate}</Text>
+                <Text style={styles.confirmMeta}>
+                  {m.poseCount} photo{m.poseCount === 1 ? '' : 's'}
+                  {m.replace ? ' · replaces existing' : ''}
+                  {m.reusedPoses ? ' · some poses reused' : ''}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        <View style={styles.actions}>
+          {phase === 'pick' ? (
+            <TouchableOpacity
+              style={[
+                styles.primaryBtn,
+                (!items.length || picking || saving) && styles.primaryBtnDisabled,
+              ]}
+              onPress={() => (items.length ? setPhase('review') : void pickPhotos())}
+              disabled={picking || saving}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryBtnText}>
+                {items.length ? 'Continue to review' : `Select up to ${LIBRARY_IMPORT_MAX_PHOTOS} photos`}
+              </Text>
             </TouchableOpacity>
           ) : null}
 
-          {picks.front && picks.side && picks.back && stepIndex === PHOTO_POSES.length - 1 ? (
+          {phase === 'review' ? (
             <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => finalizeImport(picks as Record<PhotoPose, PosePick>)}
+              style={[
+                styles.primaryBtn,
+                (!readySessions.length || picking || saving) && styles.primaryBtnDisabled,
+              ]}
+              onPress={() => void goToConfirm()}
+              disabled={!readySessions.length || picking || saving}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryBtnText}>
+                {readySessions.length
+                  ? `Review & save ${readySessions.length} day${readySessions.length === 1 ? '' : 's'}`
+                  : 'Add photos to continue'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {phase === 'confirm' ? (
+            <TouchableOpacity
+              style={[styles.primaryBtn, saving && styles.primaryBtnDisabled]}
+              onPress={() => void performSave()}
               disabled={saving}
               activeOpacity={0.85}
             >
-              <Text style={styles.secondaryBtnText}>Review & save</Text>
+              {saving ? (
+                <ActivityIndicator color={AppTheme.accentDark} />
+              ) : (
+                <Text style={styles.primaryBtnText}>
+                  Save {readySessions.length} session{readySessions.length === 1 ? '' : 's'}
+                </Text>
+              )}
             </TouchableOpacity>
           ) : null}
         </View>
@@ -353,10 +596,7 @@ export default function PhotoLibraryImportFlow({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: AppTheme.bgScreen,
-  },
+  safe: { flex: 1, backgroundColor: AppTheme.bgScreen },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -365,27 +605,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerBtn: { minWidth: 72 },
-  headerBtnText: {
-    color: AppTheme.accent,
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  headerBtnText: { color: AppTheme.accent, fontSize: 16, fontWeight: '600' },
   headerCenter: { alignItems: 'center' },
-  stepLabel: {
-    color: AppTheme.textFaint,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  poseTitle: {
-    color: AppTheme.textPrimary,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  body: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 8,
-  },
+  stepLabel: { color: AppTheme.textFaint, fontSize: 12, fontWeight: '600' },
+  poseTitle: { color: AppTheme.textPrimary, fontSize: 18, fontWeight: '800' },
+  body: { paddingHorizontal: 20, paddingBottom: 28 },
   hero: {
     color: AppTheme.textPrimary,
     fontSize: 22,
@@ -396,63 +620,7 @@ const styles = StyleSheet.create({
     color: AppTheme.textMuted,
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 10,
-  },
-  instruction: {
-    color: AppTheme.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  preview: {
-    width: '100%',
-    flex: 1,
-    borderRadius: 14,
-    backgroundColor: '#000',
-  },
-  previewPlaceholder: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: AppTheme.border,
-    backgroundColor: AppTheme.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  previewPlaceholderText: {
-    color: AppTheme.textFaint,
-    fontSize: 14,
-  },
-  stampHint: {
-    marginTop: 10,
-    color: AppTheme.accent,
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  dots: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 12,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: AppTheme.border,
-  },
-  dotActive: {
-    backgroundColor: AppTheme.textMuted,
-    transform: [{ scale: 1.15 }],
-  },
-  dotDone: {
-    backgroundColor: AppTheme.accent,
-  },
-  actions: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    gap: 10,
+    marginBottom: 12,
   },
   primaryBtn: {
     backgroundColor: AppTheme.accent,
@@ -460,13 +628,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
-  primaryBtnDisabled: { opacity: 0.7 },
+  primaryBtnDisabled: { opacity: 0.55 },
   primaryBtnText: {
     color: AppTheme.accentDark,
     fontSize: 15,
     fontWeight: '800',
   },
   secondaryBtn: {
+    marginTop: 12,
     borderRadius: AppTheme.radiusPill,
     paddingVertical: 13,
     alignItems: 'center',
@@ -474,9 +643,87 @@ const styles = StyleSheet.create({
     borderColor: AppTheme.border,
     backgroundColor: AppTheme.card,
   },
+  secondaryBtnSpaced: { marginBottom: 4 },
   secondaryBtnText: {
     color: AppTheme.textPrimary,
     fontSize: 14,
     fontWeight: '700',
+  },
+  linkBtn: { alignSelf: 'center', paddingVertical: 10 },
+  linkBtnText: { color: AppTheme.textMuted, fontWeight: '600', fontSize: 13 },
+  dayCard: {
+    marginTop: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.card,
+    padding: 12,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dayTitle: { color: AppTheme.textPrimary, fontSize: 16, fontWeight: '800' },
+  resetText: { color: AppTheme.accent, fontSize: 13, fontWeight: '600' },
+  dayMeta: { color: AppTheme.textFaint, fontSize: 12, marginTop: 4, marginBottom: 10 },
+  poseRow: { flexDirection: 'row', gap: 8 },
+  poseSlot: { flex: 1, alignItems: 'center' },
+  poseThumb: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 10,
+    backgroundColor: '#000',
+  },
+  poseEmpty: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: AppTheme.bgElevated,
+  },
+  poseEmptyText: { color: AppTheme.textFaint },
+  poseLabel: {
+    marginTop: 6,
+    color: AppTheme.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  extraRow: { marginTop: 12 },
+  extraWrap: { marginRight: 8, position: 'relative' },
+  extraThumb: {
+    width: 56,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: '#000',
+  },
+  extraRemove: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: AppTheme.card,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  extraRemoveText: { color: AppTheme.textPrimary, fontWeight: '700', fontSize: 14 },
+  confirmRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: AppTheme.border,
+  },
+  confirmDate: { color: AppTheme.textPrimary, fontWeight: '700', fontSize: 15 },
+  confirmMeta: { color: AppTheme.textMuted, fontSize: 12, marginTop: 4 },
+  actions: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    paddingTop: 8,
   },
 });

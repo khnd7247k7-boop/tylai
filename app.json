@@ -26,7 +26,7 @@
         "NSCameraUsageDescription": "TYLAI uses the camera to scan barcodes for meal tracking, capture weekly progress photos, and photograph workout spreadsheets or handwritten workout logs to import programs.",
         "NSMicrophoneUsageDescription": "TYLAI uses the microphone when recording video with the camera.",
         "NSPhotoLibraryAddUsageDescription": "TYLAI can save your weekly progress photos to your camera roll when you turn on that option.",
-        "NSPhotoLibraryUsageDescription": "TYLAI needs photo library access to save progress photos and to upload workout spreadsheet or handwritten log photos for program import.",
+        "NSPhotoLibraryUsageDescription": "TYLAI needs photo library access to upload progress photos, save photos to your camera roll, and import workout spreadsheet or handwritten log photos.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },

@@ -21,6 +21,9 @@ const FATSECRET_CONFIGURED = Boolean(FATSECRET_CLIENT_ID && FATSECRET_CLIENT_SEC
 
 /** @type {{ accessToken: string, expiresAtMs: number, scope: string } | null} */
 let fatSecretTokenCache = null;
+/** @type {Map<string, { body: any, expiresAtMs: number }>} */
+const fatSecretSearchCache = new Map();
+const FATSECRET_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 
 if (!GEMINI_KEY) {
   console.error('[gemini-proxy] Missing GEMINI_KEY in environment.');
@@ -492,10 +495,23 @@ async function fatSecretGet(pathWithQuery) {
       (errObj && typeof errObj === 'object' && typeof errObj.message === 'string' && errObj.message) ||
       (typeof errObj === 'string' ? errObj : 'FatSecret API error');
     const err = new Error(code != null ? `FatSecret error ${code}: ${message}` : message);
-    err.statusCode = code === 21 ? 403 : 502;
+    err.statusCode = code === 21 ? 403 : code === 13 ? 401 : 502;
+    err.fatSecretCode = code;
     throw err;
   }
   return data;
+}
+
+async function fatSecretGetWithIpRetry(pathWithQuery) {
+  try {
+    return await fatSecretGet(pathWithQuery);
+  } catch (err) {
+    if (err && err.fatSecretCode === 21) {
+      await new Promise((r) => setTimeout(r, 700));
+      return fatSecretGet(pathWithQuery);
+    }
+    throw err;
+  }
 }
 
 app.get('/api/fatsecret/status', requireAuth, (_req, res) => {
@@ -526,6 +542,12 @@ app.get('/api/fatsecret/foods/search', requireAuth, async (req, res) => {
     const pageRaw = parseInt(String(req.query?.page_number ?? '0'), 10);
     const pageNumber = Number.isFinite(pageRaw) && pageRaw >= 0 ? pageRaw : 0;
 
+    const cacheKey = `${q.toLowerCase()}|${maxResults}|${pageNumber}|${FATSECRET_SCOPE}`;
+    const cached = fatSecretSearchCache.get(cacheKey);
+    if (cached && cached.expiresAtMs > Date.now()) {
+      return res.json(cached.body);
+    }
+
     const params = new URLSearchParams({
       search_expression: q,
       max_results: String(maxResults),
@@ -538,7 +560,7 @@ app.get('/api/fatsecret/foods/search', requireAuth, async (req, res) => {
     let version = 'v1';
     if (preferV2) {
       try {
-        data = await fatSecretGet(`foods/search/v2?${params.toString()}`);
+        data = await fatSecretGetWithIpRetry(`foods/search/v2?${params.toString()}`);
         version = 'v2';
       } catch (v2Err) {
         console.warn(
@@ -548,14 +570,21 @@ app.get('/api/fatsecret/foods/search', requireAuth, async (req, res) => {
       }
     }
     if (!data) {
-      data = await fatSecretGet(`foods/search/v1?${params.toString()}`);
+      data = await fatSecretGetWithIpRetry(`foods/search/v1?${params.toString()}`);
       version = 'v1';
     }
-    return res.json({ ...data, _tyl: { version, scope: FATSECRET_SCOPE } });
+    const body = { ...data, _tyl: { version, scope: FATSECRET_SCOPE } };
+    fatSecretSearchCache.set(cacheKey, {
+      body,
+      expiresAtMs: Date.now() + FATSECRET_SEARCH_CACHE_TTL_MS,
+    });
+    return res.json(body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const statusCode = error && typeof error.statusCode === 'number' ? error.statusCode : 502;
-    if (statusCode === 401 || statusCode === 403) {
+    const fsCode = error && error.fatSecretCode;
+    // Only invalidate OAuth token on auth failures — not IP allowlist (code 21).
+    if (statusCode === 401 || fsCode === 13) {
       fatSecretTokenCache = null;
     }
     return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 502).json({
@@ -576,12 +605,13 @@ app.get('/api/fatsecret/food/:foodId', requireAuth, async (req, res) => {
     const foodId = String(req.params.foodId || '').trim();
     if (!/^\d+$/.test(foodId)) return res.status(400).json({ error: 'Invalid foodId.' });
     const params = new URLSearchParams({ food_id: foodId, format: 'json' });
-    const data = await fatSecretGet(`food/v2?${params.toString()}`);
+    const data = await fatSecretGetWithIpRetry(`food/v2?${params.toString()}`);
     return res.json(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const statusCode = error && typeof error.statusCode === 'number' ? error.statusCode : 502;
-    if (statusCode === 401 || statusCode === 403) {
+    const fsCode = error && error.fatSecretCode;
+    if (statusCode === 401 || fsCode === 13) {
       fatSecretTokenCache = null;
     }
     return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 502).json({

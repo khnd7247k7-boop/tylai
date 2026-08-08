@@ -136,10 +136,7 @@ async function persistPhoto(tempUri: string, sessionId: string, pose: PhotoPose)
   const dir = new Directory(Paths.document, PHOTO_DIR, sessionId);
   dir.create({ intermediates: true, idempotent: true });
   const dest = new File(dir, `${pose}.jpg`);
-  const src = new File(tempUri);
-  if (!src.exists) {
-    throw new Error(`Captured photo not found: ${tempUri}`);
-  }
+
   if (dest.exists) {
     try {
       dest.delete();
@@ -147,9 +144,36 @@ async function persistPhoto(tempUri: string, sessionId: string, pose: PhotoPose)
       // overwrite via copy if delete fails
     }
   }
-  src.copy(dest);
-  // Persist relative path so we can re-resolve after container moves.
-  return relativePhotoPath(sessionId, pose);
+
+  let sourceUri = tempUri;
+  try {
+    const src = new File(tempUri);
+    if (src.exists) {
+      src.copy(dest);
+      return relativePhotoPath(sessionId, pose);
+    }
+  } catch {
+    // Non-file:// library URIs (ph://, content://) need a local copy first.
+  }
+
+  // ImagePicker / MediaLibrary assets that aren't plain files on disk.
+  try {
+    const ImageManipulator = await import('expo-image-manipulator');
+    const result = await ImageManipulator.manipulateAsync(tempUri, [], {
+      compress: 0.92,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    sourceUri = result.uri;
+    const local = new File(sourceUri);
+    if (!local.exists) {
+      throw new Error(`Could not materialize library photo: ${tempUri}`);
+    }
+    local.copy(dest);
+    return relativePhotoPath(sessionId, pose);
+  } catch (error) {
+    console.warn('[PhotoService] persistPhoto failed', tempUri, error);
+    throw new Error(`Could not save progress photo (${pose}). Try choosing the photos again.`);
+  }
 }
 
 async function deleteSessionFiles(sessionId: string): Promise<void> {
@@ -289,7 +313,8 @@ export async function createSessionFromCaptures(
       ? opts.date
       : localDateKey(safeStamp);
   const timestamp = safeStamp.toISOString();
-  const id = `ps_${Date.now()}`;
+  // Unique even when batch-importing many days in one tick
+  const id = `ps_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
   const photosRelative = {
     front: await persistPhoto(captures.front, id, 'front'),

@@ -536,6 +536,7 @@ export default function FitnessScreen({
     water: String(DEFAULT_NUTRITION_GOALS.water),
   });
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([]);
+  const workoutHistoryLoadGenRef = useRef(0);
   const [showWorkoutScreen, setShowWorkoutScreen] = useState(false);
   const [showBuildYourOwnScreen, setShowBuildYourOwnScreen] = useState(false);
   const [planToEdit, setPlanToEdit] = useState<any | null>(null);
@@ -811,9 +812,11 @@ export default function FitnessScreen({
   };
 
   const loadWorkoutHistory = async () => {
+    const gen = ++workoutHistoryLoadGenRef.current;
     try {
       const { loadDedupedWorkoutHistory } = await import('./src/utils/workoutHistoryStorage');
       const deduped = await loadDedupedWorkoutHistory();
+      if (gen !== workoutHistoryLoadGenRef.current) return;
       setWorkoutHistory(deduped);
     } catch (error) {
       console.error('Error loading workout history:', error);
@@ -1020,14 +1023,17 @@ export default function FitnessScreen({
 
         let unitSwitchPreservedMacros = false;
 
-        if (updates.servingUnit && options?.convertUnitFrom) {
-          const fromUnit = options.convertUnitFrom;
+        // Always convert amount when the unit actually changes (prefer explicit from-unit, else previous).
+        const unitChanging =
+          updates.servingUnit != null && updates.servingUnit !== prev.servingUnit;
+        if (unitChanging) {
+          const fromUnit = (options?.convertUnitFrom ?? prev.servingUnit) as LogFoodServingUnit;
           const refPiece = logFoodReferenceGramsPerPieceRef.current;
           const { baseServingSize: convertedBase, converted } = convertLogFoodBaseServingForUnitChange(
             prev.baseServingSize,
             prev.servings,
             fromUnit,
-            updates.servingUnit,
+            updates.servingUnit!,
             refPiece
           );
           nextBaseServingSize = convertedBase;
@@ -1037,7 +1043,7 @@ export default function FitnessScreen({
               parseLogFoodPortionAmount(prev.baseServingSize) * parseLogFoodPortionAmount(prev.servings);
             if (updates.servingUnit === 'piece') {
               const fromGrams = logFoodAmountToGrams(totalAmount, fromUnit);
-              const pieceCount = parseLogFoodPortionAmount(convertedBase);
+              const pieceCount = parseLogFoodPortionAmount(convertedBase) * parseLogFoodPortionAmount(prev.servings);
               if (fromGrams != null && fromGrams > 0 && pieceCount > 0) {
                 logFoodReferenceGramsPerPieceRef.current = fromGrams / pieceCount;
               }
@@ -1054,9 +1060,11 @@ export default function FitnessScreen({
           ...updates,
           baseServingSize: nextBaseServingSize,
           servingUnit: nextServingUnit,
+          servingWeight: nextBaseServingSize,
         };
 
         if (unitSwitchPreservedMacros) {
+          // Same physical amount — keep macros, retarget basis to the converted unit/size.
           assignLogFoodPreciseBasis({
             protein: prev.protein,
             carbs: prev.carbs,
@@ -2689,7 +2697,11 @@ export default function FitnessScreen({
         1,
         plan.weeklyPlan?.weekDays?.length || plan.daysPerWeek || 4
       );
-      const done = workoutHistory.filter((w) => w.completed && w.programId === plan.id).length;
+      const done = workoutHistory.filter(
+        (w) =>
+          w.completed &&
+          (w.programId === plan.id || String(w.programId || '').startsWith(`${plan.id}-`))
+      ).length;
       return Math.min(100, Math.round((done / totalDays) * 100));
     };
 
@@ -2938,7 +2950,12 @@ export default function FitnessScreen({
                     1,
                     plan.weeklyPlan?.weekDays?.length || plan.daysPerWeek || 4
                   );
-                  const done = workoutHistory.filter((w) => w.completed && w.programId === plan.id).length;
+                  const done = workoutHistory.filter(
+                    (w) =>
+                      w.completed &&
+                      (w.programId === plan.id ||
+                        String(w.programId || '').startsWith(`${plan.id}-`))
+                  ).length;
                   const nextLbl = getNextDayLabel(plan);
                   const bar = barColors[idx % barColors.length];
                   return (
@@ -4262,7 +4279,21 @@ export default function FitnessScreen({
       Math.abs(totalLogAmount - Math.round(totalLogAmount)) < 0.001
         ? String(Math.round(totalLogAmount))
         : totalLogAmount.toFixed(1);
-    const totalMealWeightLabel = `${totalLogAmountStr} ${unitShort[mealInput.servingUnit] ?? mealInput.servingUnit}`;
+    const unitLabelShort = unitShort[mealInput.servingUnit] ?? mealInput.servingUnit;
+    const totalMealWeightLabel = `${totalLogAmountStr} ${unitLabelShort}`;
+    const totalGramsApprox = logFoodAmountToGrams(
+      totalLogAmount,
+      mealInput.servingUnit as LogFoodServingUnit
+    );
+    const totalGramsLabel =
+      totalGramsApprox != null && Number.isFinite(totalGramsApprox)
+        ? `≈ ${formatLogFoodPortionAmount(totalGramsApprox, 'g')} g`
+        : mealInput.servingUnit === 'piece' &&
+            logFoodReferenceGramsPerPieceRef.current != null &&
+            logFoodReferenceGramsPerPieceRef.current > 0
+          ? `≈ ${formatLogFoodPortionAmount(totalLogAmount * logFoodReferenceGramsPerPieceRef.current, 'g')} g`
+          : null;
+    const servingAmountLabel = `Amount (${unitLabelShort})`;
 
     const openLogFood = () => {
       resetLogFoodForm();
@@ -5257,7 +5288,7 @@ export default function FitnessScreen({
                       )}
 
                       <View style={styles.logFoodStepperRow}>
-                        <Text style={styles.logFoodStepperLabel}>Serving size</Text>
+                        <Text style={styles.logFoodStepperLabel}>{servingAmountLabel}</Text>
                         <View style={styles.logFoodStepper}>
                           <TouchableOpacity style={styles.logFoodStepBtn} onPress={() => bumpLogServingSize(-0.25)} accessibilityLabel="Decrease serving size">
                             <Text style={styles.logFoodStepBtnText}>−</Text>
@@ -5277,7 +5308,7 @@ export default function FitnessScreen({
                       </View>
 
                       <View style={styles.logFoodStepperRow}>
-                        <Text style={styles.logFoodStepperLabel}>Total servings</Text>
+                        <Text style={styles.logFoodStepperLabel}>Servings (×)</Text>
                         <View style={styles.logFoodStepper}>
                           <TouchableOpacity style={styles.logFoodStepBtn} onPress={() => bumpLogServings(-0.25)} accessibilityLabel="Decrease servings">
                             <Text style={styles.logFoodStepBtnText}>−</Text>
@@ -5297,8 +5328,13 @@ export default function FitnessScreen({
                       </View>
 
                       <View style={styles.logFoodTotalWeightRow}>
-                        <Text style={styles.logFoodTotalWeightLabel}>Total meal weight (calculated)</Text>
-                        <Text style={styles.logFoodTotalWeightValue}>{totalMealWeightLabel}</Text>
+                        <Text style={styles.logFoodTotalWeightLabel}>Total logged</Text>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={styles.logFoodTotalWeightValue}>{totalMealWeightLabel}</Text>
+                          {totalGramsLabel ? (
+                            <Text style={[styles.logFoodTotalWeightLabel, { marginTop: 2 }]}>{totalGramsLabel}</Text>
+                          ) : null}
+                        </View>
                       </View>
                     </View>
 

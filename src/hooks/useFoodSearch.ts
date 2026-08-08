@@ -1,5 +1,5 @@
 import debounce from 'lodash/debounce';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   searchFoodCatalog,
   type FoodCatalogSearchMeta,
@@ -34,6 +34,8 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
   const [error, setError] = useState<string | null>(null);
   const [meta, setMeta] = useState<FoodCatalogSearchMeta>(defaultMeta);
   const [recentQueries, setRecentQueries] = useState<string[]>([]);
+  const searchRequestIdRef = useRef(0);
+  const lastGoodFatSecretRef = useRef<{ query: string; hits: FoodSearchHit[] } | null>(null);
 
   useEffect(() => {
     if (!isControlled) {
@@ -52,13 +54,29 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
         setMeta(defaultMeta);
         return;
       }
+      const requestId = ++searchRequestIdRef.current;
       setLoading(true);
       setError(null);
       try {
         const { hits, meta: nextMeta } = await searchFoodCatalog(q);
+        if (requestId !== searchRequestIdRef.current) return;
+        // Don't clobber a good FatSecret result with a later USDA fallback for the same query
+        // (FatSecret IP allowlist often succeeds once then flaps).
+        if (
+          nextMeta.usedFallback &&
+          lastGoodFatSecretRef.current?.query === q &&
+          lastGoodFatSecretRef.current.hits.length > 0
+        ) {
+          setResults(lastGoodFatSecretRef.current.hits);
+          setMeta({ source: 'fatsecret', usedFallback: false });
+          return;
+        }
         const ranked = rankFoodSearchResults(q, hits);
         setResults(ranked);
         setMeta(nextMeta);
+        if (!nextMeta.usedFallback && ranked.length > 0) {
+          lastGoodFatSecretRef.current = { query: q, hits: ranked };
+        }
         if (ranked.length > 0) {
           await rememberFoodQuery(q);
           if (!isControlled) {
@@ -66,11 +84,14 @@ export function useFoodSearch(options: UseFoodSearchOptions) {
           }
         }
       } catch (e) {
+        if (requestId !== searchRequestIdRef.current) return;
         setResults([]);
         setMeta(defaultMeta);
         setError(e instanceof Error ? e.message : 'Search failed');
       } finally {
-        setLoading(false);
+        if (requestId === searchRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [enabled, isControlled]

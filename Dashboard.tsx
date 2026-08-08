@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -217,7 +217,10 @@ export default function Dashboard({
     await refreshNotificationCenter();
   }, [refreshNotificationCenter]);
 
+  const loadHomeGenRef = useRef(0);
+
   const loadHomeSnapshot = useCallback(async () => {
+    const gen = ++loadHomeGenRef.current;
     try {
       const meals = (await loadUserData<LoggedMeal[]>('meals')) || [];
       const goals = (await loadPersistedNutritionGoals()) || {
@@ -230,6 +233,8 @@ export default function Dashboard({
       const hist = (await loadUserData<WorkoutSession[]>('workoutHistory')) || [];
       const plans = (await loadUserData<any[]>('savedWorkoutPlans')) || [];
       const active = (await loadUserData<string[]>('activeWorkoutPlans')) || [];
+
+      if (gen !== loadHomeGenRef.current) return;
 
       const todayMeals = filterMealsLoggedToday(meals).sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
