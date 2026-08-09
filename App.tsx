@@ -180,13 +180,28 @@ function AppInner() {
     const initializeNotifications = async () => {
       try {
         await requestNotificationPermissions();
-        await updateNotificationSchedule();
+        const { registerExpoPushToken } = await import('./src/utils/pushTokenRegistration');
+        await registerExpoPushToken();
+        const {
+          loadSmartNotificationPrefs,
+          shouldSuppressLegacyDailyReminder,
+        } = await import('./src/services/notificationPrefsService');
+        const smartPrefs = await loadSmartNotificationPrefs();
+        if (shouldSuppressLegacyDailyReminder(smartPrefs)) {
+          const { cancelAllNotifications } = await import('./src/utils/notifications');
+          await cancelAllNotifications();
+        } else {
+          await updateNotificationSchedule();
+        }
       } catch (e) {
         console.warn('[App] Notification setup skipped:', e);
       }
     };
     initializeNotifications();
   }, [isLoggedIn]);
+
+  // Smart notification deep links — registered after navigatePrimaryTab exists (below).
+  const smartNavRef = useRef<(target: string) => void>(() => {});
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -859,6 +874,12 @@ function AppInner() {
 
   const handleLogout = async () => {
     try {
+      try {
+        const { clearExpoPushToken } = await import('./src/utils/pushTokenRegistration');
+        await clearExpoPushToken();
+      } catch {
+        /* non-fatal */
+      }
       await signOut(auth);
       // Auth state listener will handle the rest (setIsLoggedIn, etc.)
     setEmail('');
@@ -1055,6 +1076,44 @@ function AppInner() {
     });
     setCurrentScreen(screen);
   }, []);
+
+  smartNavRef.current = (target: string) => {
+    if (target === 'fitness_log_food') {
+      setFitnessSyncedTab('nutrition');
+      setFitnessSurfaceNonce((n) => n + 1);
+      navigatePrimaryTab('fitness');
+      return;
+    }
+    if (target === 'fitness') {
+      setFitnessSyncedTab('workouts');
+      setFitnessSurfaceNonce((n) => n + 1);
+      navigatePrimaryTab('fitness');
+      return;
+    }
+    if (target === 'progress') {
+      navigatePrimaryTab('progress');
+      return;
+    }
+    if (target === 'health') {
+      navigatePrimaryTab('moreHub');
+      return;
+    }
+    navigatePrimaryTab('dashboard');
+  };
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let stop: (() => void) | undefined;
+    void (async () => {
+      const { startSmartNotificationListeners } = await import(
+        './src/utils/smartNotificationHandlers'
+      );
+      stop = startSmartNotificationListeners({
+        onNavigate: (target) => smartNavRef.current(target),
+      });
+    })();
+    return () => stop?.();
+  }, [isLoggedIn]);
 
   const returnToMoreHub = useCallback(() => {
     openedFromMoreMenuRef.current = false;

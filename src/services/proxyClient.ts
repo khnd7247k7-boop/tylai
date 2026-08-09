@@ -38,7 +38,24 @@ async function getBearerToken(forceRefresh = false): Promise<string> {
   if (typeof user.getIdToken !== 'function') {
     throw new Error('You must be signed in to use secure AI and nutrition services.');
   }
-  return user.getIdToken(forceRefresh);
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // After a cold-start network blip, force a refresh on retries.
+      return await user.getIdToken(forceRefresh || attempt > 0);
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const code =
+        err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
+      const isNetwork =
+        code === 'auth/network-request-failed' || /network-request-failed|network error/i.test(msg);
+      if (!isNetwork || attempt === 2) break;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function parseProxyResponse<T>(resp: Response): Promise<T> {

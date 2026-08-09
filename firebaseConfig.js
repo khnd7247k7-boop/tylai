@@ -133,8 +133,26 @@ try {
 let db = null;
 try {
   if (app && firebaseEnvConfigured) {
-    const { getFirestore } = require('firebase/firestore');
-    db = getFirestore(app);
+    const {
+      initializeFirestore,
+      getFirestore,
+      memoryLocalCache,
+    } = require('firebase/firestore');
+    try {
+      // React Native / iOS Simulator often break Firestore's default WebChannel
+      // streams (`auth/network-request-failed`, offline flapping). Long polling is
+      // the supported workaround for RN networking.
+      db = initializeFirestore(app, {
+        localCache: memoryLocalCache(),
+        experimentalForceLongPolling: true,
+      });
+    } catch (e) {
+      if (e && e.code === 'failed-precondition') {
+        db = getFirestore(app);
+      } else {
+        throw e;
+      }
+    }
     console.log('[Firebase] Firestore initialized');
   }
 } catch (error) {

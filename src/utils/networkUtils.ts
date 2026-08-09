@@ -51,12 +51,29 @@ function stateFromNetInfo(state: {
   };
 }
 
+/**
+ * Treat "reachability unknown" (`null`) as online-enough to attempt Firebase.
+ * On iOS, NetInfo often reports `isInternetReachable: false` briefly (esp. Simulator)
+ * while HTTPS still works — requiring `=== true` caused false "auth/network-request-failed".
+ */
+function isLikelyOnline(state: {
+  isConnected: boolean | null;
+  isInternetReachable: boolean | null;
+}): boolean {
+  if (state.isConnected === false) return false;
+  // Connected Wi‑Fi/cellular with unknown or temporarily-false reachability: try anyway.
+  if (state.isConnected === true) return true;
+  // isConnected null/unknown — only bail when reachability is explicitly false.
+  if (state.isInternetReachable === false) return false;
+  return true;
+}
+
 export const checkNetworkConnection = async (): Promise<boolean> => {
   try {
     const NetInfo = await loadNetInfo();
     if (!NetInfo) return true;
     const state = await NetInfo.fetch();
-    return state.isConnected === true && state.isInternetReachable === true;
+    return isLikelyOnline(state);
   } catch (error) {
     console.error('[Network] Error checking connection:', error);
     return true;
@@ -126,7 +143,7 @@ export const useNetworkStatus = () => {
 
   return {
     ...networkState,
-    isOnline: networkState.isConnected && networkState.isInternetReachable === true,
+    isOnline: isLikelyOnline(networkState),
   };
 };
 

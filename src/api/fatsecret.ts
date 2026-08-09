@@ -1,5 +1,6 @@
-import type { Food, FoodNutrient, FoodPortion, FoodSearchHit } from '../types/fdcApi';
+import type { Food, FoodNutrient, FoodPortion, FoodSearchHit, FoodSearchMacroPreview } from '../types/fdcApi';
 import { getProxyBaseUrl, proxyJsonFetch } from '../services/proxyClient';
+import { parseFatSecretFoodDescription } from '../utils/foodSearchMacroPreview';
 
 /** Encode FatSecret food_id as a negative fdcId so USDA cache keys never collide. */
 export function fatSecretFoodIdToFdcId(foodId: number | string): number {
@@ -212,6 +213,31 @@ export function mapFatSecretFoodToFdcFood(raw: unknown): Food {
   };
 }
 
+function previewFromDefaultServing(food: Record<string, unknown>): FoodSearchMacroPreview | null {
+  const servingsRoot = food.servings;
+  if (!servingsRoot || typeof servingsRoot !== 'object') return null;
+  const servings = asArray((servingsRoot as Record<string, unknown>).serving) as FsServing[];
+  if (!servings.length) return null;
+  const def =
+    servings.find((s) => String(s.is_default) === '1' || s.is_default === 1) || servings[0];
+  const calories = num(def.calories);
+  const protein = num(def.protein);
+  const fat = num(def.fat);
+  const carbs = num(def.carbohydrate);
+  if (calories == null && protein == null && fat == null && carbs == null) return null;
+  const desc =
+    str(def.serving_description) ||
+    str(def.measurement_description) ||
+    '1 serving';
+  return {
+    calories: calories != null ? Math.round(calories) : null,
+    proteinG: protein != null ? Math.round(protein * 10) / 10 : null,
+    fatG: fat != null ? Math.round(fat * 10) / 10 : null,
+    carbsG: carbs != null ? Math.round(carbs * 10) / 10 : null,
+    basisLabel: /^per\s/i.test(desc) ? desc : `Per ${desc}`,
+  };
+}
+
 function normalizeSearchHit(row: unknown): FoodSearchHit | null {
   if (!row || typeof row !== 'object') return null;
   const r = row as Record<string, unknown>;
@@ -219,6 +245,8 @@ function normalizeSearchHit(row: unknown): FoodSearchHit | null {
   if (foodId == null || foodId <= 0) return null;
   const brand = str(r.brand_name) || undefined;
   const foodType = str(r.food_type);
+  const previewMacros =
+    previewFromDefaultServing(r) || parseFatSecretFoodDescription(str(r.food_description));
   return {
     fdcId: fatSecretFoodIdToFdcId(foodId),
     source: 'fatsecret',
@@ -228,6 +256,7 @@ function normalizeSearchHit(row: unknown): FoodSearchHit | null {
     brandName: brand,
     brandOwner: brand,
     foodCategory: foodType || undefined,
+    previewMacros: previewMacros ?? undefined,
   };
 }
 

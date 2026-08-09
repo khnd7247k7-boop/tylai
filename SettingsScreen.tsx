@@ -23,7 +23,21 @@ import {
   DEFAULT_COACH_MOCK_HEALTH,
   type CoachMockHealthSettings,
 } from './src/constants/coachMockHealth';
-import { updateNotificationSchedule } from './src/utils/notifications';
+import { updateNotificationSchedule, cancelAllNotifications } from './src/utils/notifications';
+import {
+  loadSmartNotificationPrefs,
+  saveSmartNotificationPrefs,
+  shouldSuppressLegacyDailyReminder,
+} from './src/services/notificationPrefsService';
+import {
+  DEFAULT_SMART_NOTIFICATION_PREFS,
+  NOTIFICATION_CATEGORY_LABELS,
+  NOTIFICATION_INTENSITY_LABELS,
+  type NotificationCategory,
+  type NotificationIntensity,
+  type SmartNotificationPrefs,
+} from './src/types/smartNotifications';
+import { registerExpoPushToken } from './src/utils/pushTokenRegistration';
 import { NOTICE_CONTENT, LICENSE_CONTENT, LICENSING_SUMMARY_CONTENT, THIRD_PARTY_CONTENT } from './src/constants/legalDocuments';
 import {
   PRIVACY_POLICY_CONTENT,
@@ -166,6 +180,10 @@ export default function SettingsScreen({
     language: 'English',
     healthDataSyncEnabled: true,
   });
+  const [smartPrefs, setSmartPrefs] = useState<SmartNotificationPrefs>({
+    ...DEFAULT_SMART_NOTIFICATION_PREFS,
+    categories: { ...DEFAULT_SMART_NOTIFICATION_PREFS.categories },
+  });
   const [interfaceSettings, setInterfaceSettings] = useState<InterfaceSettings>({
     theme: 'dark',
     fontSize: 'medium',
@@ -246,6 +264,12 @@ export default function SettingsScreen({
       if (savedInterfaceSettings) {
         setInterfaceSettings(savedInterfaceSettings);
       }
+      try {
+        const sp = await loadSmartNotificationPrefs();
+        setSmartPrefs(sp);
+      } catch {
+        /* keep defaults */
+      }
       setStayLoggedIn(await getStayLoggedInPreference());
       const savedMock = await loadUserData<Partial<CoachMockHealthSettings>>(COACH_MOCK_HEALTH_KEY);
       if (savedMock) {
@@ -278,10 +302,29 @@ export default function SettingsScreen({
     try {
       await saveUserData('appSettings', updatedSettings);
       setSettings(updatedSettings);
-      // Update notification schedule when settings change
-      await updateNotificationSchedule();
+      if (shouldSuppressLegacyDailyReminder(smartPrefs) && updatedSettings.notifications) {
+        await cancelAllNotifications();
+      } else {
+        await updateNotificationSchedule();
+      }
     } catch (error) {
       console.error('Error saving settings:', error);
+    }
+  };
+
+  const persistSmartPrefs = async (next: SmartNotificationPrefs) => {
+    try {
+      setSmartPrefs(next);
+      await saveSmartNotificationPrefs(next);
+      if (next.enabled) {
+        await registerExpoPushToken();
+        await cancelAllNotifications();
+      } else if (settings.notifications && settings.reminderTime !== 'Off') {
+        await updateNotificationSchedule();
+      }
+    } catch (error) {
+      console.error('Error saving smart notification prefs:', error);
+      Alert.alert('Could not save', 'Check your connection and try again.');
     }
   };
 
@@ -643,36 +686,110 @@ export default function SettingsScreen({
       {renderSubscriptionSection()}
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Notifications</Text>
-        
+        <Text style={styles.sectionTitle}>Smart Coach Notifications</Text>
+        <Text style={styles.settingDescription}>
+          TYL analyzes your training and nutrition and sends at most 1–2 useful notes per day —
+          or none when you&apos;re on track.
+        </Text>
+
         <View style={styles.settingRow}>
-          <Text style={styles.settingLabel}>Push Notifications</Text>
+          <Text style={styles.settingLabel}>Enable smart notifications</Text>
+          <Switch
+            value={smartPrefs.enabled && settings.notifications}
+            onValueChange={(value) => {
+              if (value && !settings.notifications) {
+                const newSettings = { ...settings, notifications: true };
+                setSettings(newSettings);
+                void saveSettings(newSettings);
+              }
+              void persistSmartPrefs({ ...smartPrefs, enabled: value });
+            }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={smartPrefs.enabled && settings.notifications ? '#fff' : '#888'}
+          />
+        </View>
+
+        <Text style={[styles.settingLabel, { marginTop: 12, marginBottom: 8 }]}>Intensity</Text>
+        {(['minimal', 'balanced', 'high'] as NotificationIntensity[]).map((level) => (
+          <TouchableOpacity
+            key={level}
+            style={[
+              styles.intensityRow,
+              smartPrefs.intensity === level && styles.intensityRowActive,
+            ]}
+            onPress={() => void persistSmartPrefs({ ...smartPrefs, intensity: level })}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.intensityText,
+                smartPrefs.intensity === level && styles.intensityTextActive,
+              ]}
+            >
+              {NOTIFICATION_INTENSITY_LABELS[level]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        <Text style={[styles.settingLabel, { marginTop: 16, marginBottom: 8 }]}>Categories</Text>
+        {(Object.keys(NOTIFICATION_CATEGORY_LABELS) as NotificationCategory[]).map((cat) => (
+          <View key={cat} style={styles.settingRow}>
+            <Text style={styles.settingLabel}>{NOTIFICATION_CATEGORY_LABELS[cat]}</Text>
+            <Switch
+              value={smartPrefs.categories[cat] !== false}
+              onValueChange={(value) =>
+                void persistSmartPrefs({
+                  ...smartPrefs,
+                  categories: { ...smartPrefs.categories, [cat]: value },
+                })
+              }
+              trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+              thumbColor={smartPrefs.categories[cat] !== false ? '#fff' : '#888'}
+            />
+          </View>
+        ))}
+
+        <View style={[styles.settingRow, { marginTop: 12 }]}>
+          <View style={styles.settingLabelContainer}>
+            <Text style={styles.settingLabel}>Legacy daily reminder</Text>
+            <Text style={styles.settingDescription}>
+              Generic 9:00 check-in. Off while Smart Coach is enabled.
+            </Text>
+          </View>
+          <Switch
+            value={
+              !shouldSuppressLegacyDailyReminder(smartPrefs) && settings.reminderTime !== 'Off'
+            }
+            disabled={shouldSuppressLegacyDailyReminder(smartPrefs)}
+            onValueChange={(value) => {
+              const newSettings = {
+                ...settings,
+                reminderTime: value ? '09:00' : 'Off',
+              };
+              setSettings(newSettings);
+              void saveSettings(newSettings);
+            }}
+            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
+            thumbColor={
+              !shouldSuppressLegacyDailyReminder(smartPrefs) && settings.reminderTime !== 'Off'
+                ? '#fff'
+                : '#888'
+            }
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>System notification permission</Text>
           <Switch
             value={settings.notifications}
             onValueChange={(value) => {
               const newSettings = { ...settings, notifications: value };
               setSettings(newSettings);
-              saveSettings(newSettings);
+              void saveSettings(newSettings);
+              if (value) void registerExpoPushToken();
             }}
             trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
             thumbColor={settings.notifications ? '#fff' : '#888'}
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingLabel}>Daily Reminders</Text>
-          <Switch
-            value={settings.reminderTime !== 'Off'}
-            onValueChange={(value) => {
-              const newSettings = { 
-                ...settings, 
-                reminderTime: value ? '09:00' : 'Off' 
-              };
-              setSettings(newSettings);
-              saveSettings(newSettings);
-            }}
-            trackColor={{ false: '#3a3a3a', true: AppTheme.accent }}
-            thumbColor={settings.reminderTime !== 'Off' ? '#fff' : '#888'}
           />
         </View>
       </View>
@@ -1476,6 +1593,27 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: AppTheme.border,
+  },
+  intensityRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    marginBottom: 8,
+    backgroundColor: AppTheme.card,
+  },
+  intensityRowActive: {
+    borderColor: AppTheme.accent,
+    backgroundColor: '#1a2e24',
+  },
+  intensityText: {
+    color: AppTheme.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  intensityTextActive: {
+    color: AppTheme.textPrimary,
   },
   guideReplayRow: {
     flexDirection: 'row',

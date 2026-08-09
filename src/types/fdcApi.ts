@@ -68,6 +68,18 @@ export interface FoodSearchHit {
   scientificName?: string;
   foodCategory?: string;
   foodNutrients?: FoodNutrient[];
+  /** Optional calorie/macro snapshot for search-result previews (per serving or per 100 g). */
+  previewMacros?: FoodSearchMacroPreview;
+}
+
+/** Compact macros shown under a food search result before the user opens details. */
+export interface FoodSearchMacroPreview {
+  calories: number | null;
+  proteinG: number | null;
+  carbsG: number | null;
+  fatG: number | null;
+  /** e.g. "Per 100g" or "Per 1 serving" */
+  basisLabel: string;
 }
 
 export interface FoodsSearchResponse {

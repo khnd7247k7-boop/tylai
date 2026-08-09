@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance, isAxiosError } from 'axios';
 import type { Food, FoodsSearchResponse, FoodSearchHit } from '../types/fdcApi';
 import { getProxyBaseUrl, proxyJsonFetch } from '../services/proxyClient';
+import { previewFromUsdaSearchNutrients } from '../utils/foodSearchMacroPreview';
 
 const FDC_BASE = 'https://api.nal.usda.gov/fdc/v1';
 
@@ -68,6 +69,9 @@ function normalizeSearchHit(row: unknown): FoodSearchHit | null {
     scientificName: r.scientificName != null ? String(r.scientificName) : undefined,
     foodCategory,
     foodNutrients: Array.isArray(r.foodNutrients) ? (r.foodNutrients as Food['foodNutrients']) : undefined,
+    previewMacros: Array.isArray(r.foodNutrients)
+      ? previewFromUsdaSearchNutrients(r.foodNutrients as Food['foodNutrients']) ?? undefined
+      : undefined,
   };
 }
 

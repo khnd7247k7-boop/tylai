@@ -620,12 +620,26 @@ export default function FitnessScreen({
   useEffect(() => {
     let cancelled = false;
     loadNutritionLoggingMode().then((mode) => {
-      if (!cancelled) setNutritionLoggingMode(mode);
+      if (cancelled) return;
+      // Basic tier includes Precision logging only — never land free users on AI mode.
+      if (mode === 'ai' && !isPremium) {
+        setNutritionLoggingMode('precision');
+        void saveNutritionLoggingMode('precision');
+        return;
+      }
+      setNutritionLoggingMode(mode);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isPremium]);
+
+  useEffect(() => {
+    if (!isPremium && nutritionLoggingMode === 'ai') {
+      setNutritionLoggingMode('precision');
+      void saveNutritionLoggingMode('precision');
+    }
+  }, [isPremium, nutritionLoggingMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2224,9 +2238,13 @@ export default function FitnessScreen({
     setLogFoodSlot(defaultSlotNow());
     setShowLogFoodModal(true);
     if (tourLogFoodIntent.mode) {
-      setNutritionLoggingModeWithPersist(tourLogFoodIntent.mode);
+      if (tourLogFoodIntent.mode === 'ai' && !isPremium) {
+        setNutritionLoggingModeWithPersist('precision');
+      } else {
+        setNutritionLoggingModeWithPersist(tourLogFoodIntent.mode);
+      }
     }
-  }, [tourLogFoodIntent, setNutritionLoggingModeWithPersist]);
+  }, [tourLogFoodIntent, setNutritionLoggingModeWithPersist, isPremium]);
 
   useEffect(() => {
     if (tourFitnessIntent) {
@@ -4118,8 +4136,12 @@ export default function FitnessScreen({
                     activeOpacity={0.78}
                   >
                     <Text style={styles.logFoodSuggestTitle}>{row.name}</Text>
-                    <Text style={styles.logFoodSuggestSub}>
-                      Logged {useCount}× · {row.calories} cal · {row.protein}g P
+                    <Text style={styles.logFoodSuggestMacros}>
+                      <Text style={styles.logFoodSuggestMacroBasis}>Logged {useCount}× · </Text>
+                      <Text style={styles.logFoodSuggestMacroCal}>{row.calories} cal</Text>
+                      <Text style={styles.logFoodSuggestMacroProtein}> · {row.protein}g P</Text>
+                      <Text style={styles.logFoodSuggestMacroCarbs}> · {row.carbs}g C</Text>
+                      <Text style={styles.logFoodSuggestMacroFat}> · {row.fat}g F</Text>
                     </Text>
                   </TouchableOpacity>
                 );
@@ -4152,7 +4174,15 @@ export default function FitnessScreen({
                     ? 'USDA (backup)'
                     : 'USDA (Foundation & SR Legacy)'}
               </Text>
-              {logFoodInlineUsda.results.map((hit) => (
+              {logFoodInlineUsda.results.map((hit) => {
+                const preview = hit.previewMacros;
+                const hasPreview =
+                  preview != null &&
+                  (preview.calories != null ||
+                    preview.proteinG != null ||
+                    preview.carbsG != null ||
+                    preview.fatG != null);
+                return (
                 <TouchableOpacity
                   key={`catalog-${hit.source ?? 'usda'}-${hit.fdcId}`}
                   style={styles.logFoodSuggestRow}
@@ -4163,6 +4193,36 @@ export default function FitnessScreen({
                   activeOpacity={0.78}
                 >
                   <Text style={styles.logFoodSuggestTitle}>{hit.description}</Text>
+                  {hasPreview && preview ? (
+                    <Text style={styles.logFoodSuggestMacros}>
+                      <Text style={styles.logFoodSuggestMacroBasis}>{preview.basisLabel}: </Text>
+                      {preview.calories != null ? (
+                        <Text style={styles.logFoodSuggestMacroCal}>{Math.round(preview.calories)} cal</Text>
+                      ) : null}
+                      {preview.proteinG != null ? (
+                        <Text style={styles.logFoodSuggestMacroProtein}>
+                          {preview.calories != null ? ' · ' : ''}
+                          {preview.proteinG}g P
+                        </Text>
+                      ) : null}
+                      {preview.carbsG != null ? (
+                        <Text style={styles.logFoodSuggestMacroCarbs}>
+                          {preview.calories != null || preview.proteinG != null ? ' · ' : ''}
+                          {preview.carbsG}g C
+                        </Text>
+                      ) : null}
+                      {preview.fatG != null ? (
+                        <Text style={styles.logFoodSuggestMacroFat}>
+                          {preview.calories != null ||
+                          preview.proteinG != null ||
+                          preview.carbsG != null
+                            ? ' · '
+                            : ''}
+                          {preview.fatG}g F
+                        </Text>
+                      ) : null}
+                    </Text>
+                  ) : null}
                   <Text style={styles.logFoodSuggestSub}>
                     {hit.dataType ?? 'Food'}
                     {hit.brandOwner ? ` · ${hit.brandOwner}` : ''}
@@ -4171,7 +4231,8 @@ export default function FitnessScreen({
                       : ''}
                   </Text>
                 </TouchableOpacity>
-              ))}
+                );
+              })}
               {logFoodInlineUsda.meta.source === 'fatsecret' ? (
                 <FatSecretAttribution style={{ marginTop: 4, marginBottom: 2 }} />
               ) : null}
@@ -4298,6 +4359,10 @@ export default function FitnessScreen({
     const openLogFood = () => {
       resetLogFoodForm();
       setLogFoodSlot(defaultSlotNow());
+      if (!isPremium) {
+        setNutritionLoggingMode('precision');
+        void saveNutritionLoggingMode('precision');
+      }
       setShowLogFoodModal(true);
     };
 
@@ -4872,6 +4937,11 @@ export default function FitnessScreen({
                           ref={logFoodModeAiRef}
                           nativeID={TOUR_TARGET_IDS.logFoodModeAi}
                           onPress={() => {
+                            if (!isPremium) {
+                              presentUpgrade();
+                              fireTourTargetIfNeeded(TOUR_TARGET_IDS.logFoodModeAi);
+                              return;
+                            }
                             setNutritionLoggingModeWithPersist('ai');
                             fireTourTargetIfNeeded(TOUR_TARGET_IDS.logFoodModeAi);
                           }}
@@ -7625,8 +7695,35 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: AppTheme.textPrimary,
   },
-  logFoodSuggestSub: {
+  logFoodSuggestMacros: {
     marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  logFoodSuggestMacroBasis: {
+    fontWeight: '600',
+    color: AppTheme.textMuted,
+  },
+  logFoodSuggestMacroCal: {
+    fontWeight: '700',
+    color: AppTheme.textPrimary,
+  },
+  logFoodSuggestMacroProtein: {
+    fontWeight: '700',
+    color: '#00ff88',
+  },
+  logFoodSuggestMacroCarbs: {
+    fontWeight: '700',
+    color: '#4dabf7',
+  },
+  logFoodSuggestMacroFat: {
+    fontWeight: '700',
+    color: '#ff922b',
+  },
+  logFoodSuggestSub: {
+    marginTop: 3,
     fontSize: 12,
     lineHeight: 17,
     color: AppTheme.textMuted,

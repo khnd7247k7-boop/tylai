@@ -1,0 +1,6 @@
+# Firebase Cloud Functions — Smart Notification Engine
+node_modules/
+lib/
+*.local
+.env
+firebase-debug.log

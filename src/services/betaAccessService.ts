@@ -63,6 +63,25 @@ function unverifiedStatus(): StripeSubscriptionStatus {
   };
 }
 
+async function getIdTokenWithRetry(user: { getIdToken: (force?: boolean) => Promise<string> }): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await user.getIdToken(attempt > 0);
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const code =
+        err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
+      const isNetwork =
+        code === 'auth/network-request-failed' || /network-request-failed|network error/i.test(msg);
+      if (!isNetwork || attempt === 2) break;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptionStatus> {
   const user = auth?.currentUser;
   if (!user?.email || auth?._isMock) {
@@ -72,7 +91,9 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
   }
 
   try {
-    const idToken = await user.getIdToken();
+    // Simulator NetInfo often lies for a second after launch; give RN networking a beat.
+    await new Promise((r) => setTimeout(r, 600));
+    const idToken = await getIdTokenWithRetry(user);
     const res = await fetch(getBetaAccessApiUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -114,7 +135,7 @@ export async function openStripeBillingPortal(): Promise<boolean> {
   }
 
   try {
-    const idToken = await user.getIdToken();
+    const idToken = await getIdTokenWithRetry(user);
     const res = await fetch(getBillingPortalApiUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

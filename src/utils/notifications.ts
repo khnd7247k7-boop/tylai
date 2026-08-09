@@ -130,6 +130,20 @@ export async function scheduleDailyNotification(time: string = '09:00') {
 
 export async function updateNotificationSchedule() {
   try {
+    try {
+      const { loadSmartNotificationPrefs, shouldSuppressLegacyDailyReminder } = await import(
+        '../services/notificationPrefsService'
+      );
+      const smartPrefs = await loadSmartNotificationPrefs();
+      if (shouldSuppressLegacyDailyReminder(smartPrefs)) {
+        await cancelAllNotifications();
+        console.log('Legacy daily reminder suppressed (Smart Coach enabled)');
+        return;
+      }
+    } catch {
+      /* fall through to legacy schedule */
+    }
+
     const settings = await loadUserData<AppSettings>('appSettings');
 
     if (settings?.notifications && settings?.reminderTime && settings.reminderTime !== 'Off') {

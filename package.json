@@ -34,7 +34,9 @@
     "preflight:testflight": "bash scripts/preflight-testflight.sh",
     "deploy:proxy": "bash scripts/deploy-gemini-proxy.sh",
     "testflight": "eas build --platform ios --profile production && eas submit --platform ios --profile production --latest",
-    "testflight:setup": "bash scripts/testflight-eas.sh"
+    "testflight:setup": "bash scripts/testflight-eas.sh",
+    "functions:build": "npm --prefix functions run build",
+    "functions:deploy": "npm --prefix functions run build && firebase deploy --only functions,firestore:rules,firestore:indexes"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

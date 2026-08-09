@@ -1,9 +1,38 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
     // Per-user app data (saved workouts, active plans, etc.)
     match /users/{userId}/appData/{docId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
+    }
+
+    // Expo push device tokens
+    match /users/{userId}/devices/{deviceId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Smart notification preferences (canonical for the engine)
+    match /users/{userId}/notificationPrefs/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // History: user reads; may mark opened/acted/dismissed. Creates via Admin SDK.
+    match /users/{userId}/notificationHistory/{notificationId} {
+      allow read: if isOwner(userId);
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['openedAt', 'actedAt', 'dismissedAt']);
+      allow create, delete: if false;
+    }
+
+    // Engine state: Admin SDK only
+    match /users/{userId}/smartNotificationState/{docId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
     }
   }
 }

@@ -44,8 +44,22 @@ export async function cancelMicroGoalNudge(): Promise<void> {
 /**
  * If user has had no small win for 5+ days, schedule a one-shot local notification
  * (next day ~9:00 local) suggesting a micro-goal.
+ * Skipped when Smart Coach notifications are enabled (server Celebration covers this).
  */
 export async function scheduleMicroGoalNudgeIfNeeded(lastSmallWinAgeDays: number | null): Promise<void> {
+  try {
+    const { loadSmartNotificationPrefs, shouldSuppressLegacyDailyReminder } = await import(
+      '../services/notificationPrefsService'
+    );
+    const prefs = await loadSmartNotificationPrefs();
+    if (shouldSuppressLegacyDailyReminder(prefs) && prefs.categories.celebration !== false) {
+      await cancelMicroGoalNudge();
+      return;
+    }
+  } catch {
+    /* continue with local nudge */
+  }
+
   if (lastSmallWinAgeDays == null || lastSmallWinAgeDays < 5) {
     await cancelMicroGoalNudge();
     return;
