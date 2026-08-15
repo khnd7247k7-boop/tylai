@@ -121,11 +121,18 @@ export function resolvePhotoUri(
 }
 
 function hydrateSessionPhotos(session: PhotoSession): PhotoSessionPhotos {
-  return {
-    front: resolvePhotoUri(session.photos?.front, session.id, 'front'),
-    side: resolvePhotoUri(session.photos?.side, session.id, 'side'),
-    back: resolvePhotoUri(session.photos?.back, session.id, 'back'),
-  };
+  const out: PhotoSessionPhotos = {};
+  for (const pose of PHOTO_POSES) {
+    const stored = session.photos?.[pose];
+    const onDisk = photoFile(session.id, pose).exists;
+    if (!onDisk && !stored) continue;
+    // Skip ghost paths that don't resolve to a real file.
+    const uri = resolvePhotoUri(stored, session.id, pose);
+    if (onDisk || fileExists(uri) || (stored && fileExists(stored))) {
+      out[pose] = uri;
+    }
+  }
+  return out;
 }
 
 function sessionHasAnyPhotoOnDisk(sessionId: string): boolean {
@@ -204,15 +211,18 @@ function recoverSessionsFromDisk(known: PhotoSession[]): PhotoSession[] {
       const stampMs = Number(name.replace(/^ps_/, ''));
       const captured = Number.isFinite(stampMs) ? new Date(stampMs) : new Date();
       const date = localDateKey(captured);
+      const photos: PhotoSessionPhotos = {};
+      for (const pose of PHOTO_POSES) {
+        if (photoFile(name, pose).exists) {
+          photos[pose] = relativePhotoPath(name, pose);
+        }
+      }
+      if (!Object.keys(photos).length) continue;
       recovered.push({
         id: name,
         date,
         timestamp: captured.toISOString(),
-        photos: {
-          front: relativePhotoPath(name, 'front'),
-          side: relativePhotoPath(name, 'side'),
-          back: relativePhotoPath(name, 'back'),
-        },
+        photos,
       });
     }
   } catch (error) {
@@ -225,13 +235,16 @@ function normalizeLoadedSessions(raw: PhotoSession[]): PhotoSession[] {
   const byId = new Map<string, PhotoSession>();
   for (const session of raw) {
     if (!session?.id || !session.date) continue;
+    const photos: PhotoSessionPhotos = {};
+    for (const pose of PHOTO_POSES) {
+      const stored = session.photos?.[pose];
+      if (stored || photoFile(session.id, pose).exists) {
+        photos[pose] = stored ?? relativePhotoPath(session.id, pose);
+      }
+    }
     byId.set(session.id, {
       ...session,
-      photos: {
-        front: session.photos?.front ?? relativePhotoPath(session.id, 'front'),
-        side: session.photos?.side ?? relativePhotoPath(session.id, 'side'),
-        back: session.photos?.back ?? relativePhotoPath(session.id, 'back'),
-      },
+      photos,
     });
   }
 
@@ -257,14 +270,15 @@ export async function loadPhotoSessions(): Promise<PhotoSession[]> {
   if (needsPersist) {
     await saveUserData(
       STORAGE_KEY,
-      sessions.map((s) => ({
-        ...s,
-        photos: {
-          front: relativePhotoPath(s.id, 'front'),
-          side: relativePhotoPath(s.id, 'side'),
-          back: relativePhotoPath(s.id, 'back'),
-        },
-      }))
+      sessions.map((s) => {
+        const photos: PhotoSessionPhotos = {};
+        for (const pose of PHOTO_POSES) {
+          if (s.photos?.[pose] || photoFile(s.id, pose).exists) {
+            photos[pose] = relativePhotoPath(s.id, pose);
+          }
+        }
+        return { ...s, photos };
+      })
     );
   }
 
@@ -273,14 +287,15 @@ export async function loadPhotoSessions(): Promise<PhotoSession[]> {
 
 async function writeSessions(sessions: PhotoSession[]): Promise<void> {
   // Always persist relative paths (not ephemeral absolute URIs).
-  const toStore = sessions.map((s) => ({
-    ...s,
-    photos: {
-      front: relativePhotoPath(s.id, 'front'),
-      side: relativePhotoPath(s.id, 'side'),
-      back: relativePhotoPath(s.id, 'back'),
-    },
-  }));
+  const toStore = sessions.map((s) => {
+    const photos: PhotoSessionPhotos = {};
+    for (const pose of PHOTO_POSES) {
+      if (s.photos?.[pose] || photoFile(s.id, pose).exists) {
+        photos[pose] = relativePhotoPath(s.id, pose);
+      }
+    }
+    return { ...s, photos };
+  });
   await saveUserData(STORAGE_KEY, toStore);
   notifyUserDataReady();
 }
@@ -296,11 +311,17 @@ export async function getSessionForDate(dateKey: string): Promise<PhotoSession |
  *
  * Pass `date` / `timestamp` when importing library photos so the session lands on
  * the photo's capture day in the timeline (not "today").
+ * Any subset of front / side / back is allowed (side is optional).
  */
 export async function createSessionFromCaptures(
-  captures: Record<PhotoPose, string>,
+  captures: Partial<Record<PhotoPose, string>>,
   opts?: { date?: string; timestamp?: string | Date }
 ): Promise<PhotoSession> {
+  const present = PHOTO_POSES.filter((pose) => Boolean(captures[pose]));
+  if (!present.length) {
+    throw new Error('Add at least one progress photo before saving.');
+  }
+
   const stampDate =
     opts?.timestamp instanceof Date
       ? opts.timestamp
@@ -316,11 +337,10 @@ export async function createSessionFromCaptures(
   // Unique even when batch-importing many days in one tick
   const id = `ps_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-  const photosRelative = {
-    front: await persistPhoto(captures.front, id, 'front'),
-    side: await persistPhoto(captures.side, id, 'side'),
-    back: await persistPhoto(captures.back, id, 'back'),
-  };
+  const photosRelative: PhotoSessionPhotos = {};
+  for (const pose of present) {
+    photosRelative[pose] = await persistPhoto(captures[pose]!, id, pose);
+  }
 
   const session: PhotoSession = {
     id,
@@ -341,12 +361,13 @@ export async function createSessionFromCaptures(
   kept.push(session);
   await writeSessions(kept);
 
-  const absoluteUris = {
-    front: resolvePhotoUri(photosRelative.front, id, 'front'),
-    side: resolvePhotoUri(photosRelative.side, id, 'side'),
-    back: resolvePhotoUri(photosRelative.back, id, 'back'),
-  };
-  await saveSessionPhotosIfEnabled([absoluteUris.front, absoluteUris.side, absoluteUris.back]);
+  const absoluteUris: PhotoSessionPhotos = {};
+  for (const pose of present) {
+    absoluteUris[pose] = resolvePhotoUri(photosRelative[pose], id, pose);
+  }
+  await saveSessionPhotosIfEnabled(
+    present.map((pose) => absoluteUris[pose]!).filter(Boolean)
+  );
 
   return {
     ...session,
@@ -354,11 +375,69 @@ export async function createSessionFromCaptures(
   };
 }
 
-export async function deletePhotoSession(sessionId: string): Promise<void> {
-  await deleteSessionFiles(sessionId);
-  const sessions = await loadUserData<PhotoSession[]>(STORAGE_KEY);
-  const next = (Array.isArray(sessions) ? sessions : []).filter((s) => s.id !== sessionId);
-  await writeSessions(next);
+export async function updateSessionPosePhotos(
+  sessionId: string,
+  captures: Partial<Record<PhotoPose, string>>
+): Promise<PhotoSession> {
+  const existing = await loadUserData<PhotoSession[]>(STORAGE_KEY);
+  const prior = Array.isArray(existing) ? existing : [];
+  const current = prior.find((s) => s.id === sessionId);
+  if (!current) {
+    throw new Error('Progress photo session not found.');
+  }
+
+  const present = PHOTO_POSES.filter((pose) => Boolean(captures[pose]));
+  if (!present.length) {
+    throw new Error('Keep at least one progress photo.');
+  }
+
+  // Materialize sources first so swapping poses cannot overwrite an unread file.
+  const ImageManipulator = await import('expo-image-manipulator');
+  const temps: Partial<Record<PhotoPose, string>> = {};
+  for (const pose of present) {
+    const uri = captures[pose]!;
+    const result = await ImageManipulator.manipulateAsync(uri, [], {
+      compress: 0.92,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    temps[pose] = result.uri;
+  }
+
+  const photosRelative: PhotoSessionPhotos = {};
+  for (const pose of present) {
+    photosRelative[pose] = await persistPhoto(temps[pose]!, sessionId, pose);
+  }
+  // Remove pose files the user cleared.
+  for (const pose of PHOTO_POSES) {
+    if (present.includes(pose)) continue;
+    const dest = photoFile(sessionId, pose);
+    if (dest.exists) {
+      try {
+        dest.delete();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const nextSession: PhotoSession = {
+    ...current,
+    photos: photosRelative,
+    metadata: {
+      ...(current.metadata && typeof current.metadata === 'object' ? current.metadata : {}),
+      posesEditedAt: new Date().toISOString(),
+    },
+  };
+
+  const kept = prior.map((s) => (s.id === sessionId ? nextSession : s));
+  await writeSessions(kept);
+
+  const absoluteUris: PhotoSessionPhotos = {};
+  for (const pose of present) {
+    absoluteUris[pose] = resolvePhotoUri(photosRelative[pose], sessionId, pose);
+  }
+
+  return { ...nextSession, photos: absoluteUris };
 }
 
 export function computeWeeklyPhotoStreak(sessions: PhotoSession[]): number {

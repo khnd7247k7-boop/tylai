@@ -11,11 +11,13 @@ import {
 } from '../utils/healthDataPermissions';
 import {
   fetchQuantitySamplesNative,
+  fetchWorkoutsNative,
   hasHealthKitAuthFlowCompletedNative,
   isHealthDataAvailableNative,
   isHealthKitBridgeAvailable,
   requestHealthKitAuthorizationNative,
   type HealthKitQuantityMetric,
+  type HealthKitWorkoutSample,
 } from '../native/healthKitBridge';
 
 export interface HealthMetrics {
@@ -616,6 +618,29 @@ class HealthService {
     } catch (error) {
       console.warn('[HealthService] Body weight sync failed:', error);
       return empty;
+    }
+  }
+
+  /**
+   * Apple Watch / Health discrete workouts overlapping a window.
+   * Used to prefill Track Cardio and merge watch calories/distance with user type + duration.
+   */
+  async fetchNearbyCardioWorkouts(
+    start: Date,
+    end: Date
+  ): Promise<HealthKitWorkoutSample[]> {
+    try {
+      if (!(await this.isHealthDataSyncEnabled())) return [];
+      if (!isHealthKitBridgeAvailable()) return [];
+      if (!(await this.checkPermissions())) return [];
+      const rows = await fetchWorkoutsNative(start, end);
+      return rows.filter((w) => {
+        const label = String(w.activityLabel || '').toLowerCase();
+        return !/strength|core|flexibility/.test(label);
+      });
+    } catch (error) {
+      console.warn('[HealthService] fetchNearbyCardioWorkouts failed:', error);
+      return [];
     }
   }
 }

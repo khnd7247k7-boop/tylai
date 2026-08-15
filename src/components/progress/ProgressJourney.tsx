@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import type { PhotoSession, PhotoPose } from '../../types/progressPhotos';
+import { firstAvailablePose } from '../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../types/sessionProgressMetrics';
 import type { WorkoutSession } from '../../../data/workoutPrograms';
 import type { LoggedMeal } from '../../utils/loggedMeals';
@@ -49,6 +50,7 @@ import type { LibraryImportResult } from './photos/PhotoLibraryImportFlow';
 import ProgressPhotoCameraRollPrompt from './photos/ProgressPhotoCameraRollPrompt';
 import ProgressReplayControls from './photos/ProgressReplayControls';
 import PhotoSessionDetailModal from './photos/PhotoSessionDetailModal';
+import PhotoSessionPoseEditModal from './photos/PhotoSessionPoseEditModal';
 import PhotoHeroCard from './photos/PhotoHeroCard';
 import ProgressPhotosEmptyState from './photos/ProgressPhotosEmptyState';
 import HistoryLineChart from '../HistoryLineChart';
@@ -116,6 +118,7 @@ export default function ProgressJourney({
   const [retakeMode, setRetakeMode] = useState(false);
   const [showCameraRollPrompt, setShowCameraRollPrompt] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
+  const [poseEditVisible, setPoseEditVisible] = useState(false);
   const [selectedPose, setSelectedPose] = useState<PhotoPose>('front');
   const [metricsModalVisible, setMetricsModalVisible] = useState(false);
   const [inlineCompare, setInlineCompare] = useState(false);
@@ -248,23 +251,28 @@ export default function ProgressJourney({
         : 'This week'
       : 'This week';
 
-  /** Score for the week of the photo on screen — always matches the visible frame. */
+  /** Until the user scrubs the timeline, keep the glance on this week's score (same as the top card). */
   const photoWeekScore = useMemo(() => {
-    if (!scoreInput || !selectedSession?.date) return progressResult;
+    if (!scoreInput) return progressResult;
+    if (selectedProgressDate == null) return progressResult;
+    if (!selectedSession?.date) return progressResult;
     const dateKey = selectedSession.date.slice(0, 10);
     return computeProgressScores({
       ...scoreInput,
       referenceDate: new Date(`${dateKey}T12:00:00`),
     });
-  }, [progressResult, scoreInput, selectedSession?.date]);
+  }, [progressResult, scoreInput, selectedProgressDate, selectedSession?.date]);
 
-  const photoWeekLabel = selectedSession
-    ? formatTimelineLabel(
-        selectedSession,
-        Math.max(0, selectedIndex),
-        selectedSession.date === localDateKey()
-      )
-    : weekLabel;
+  const photoWeekLabel =
+    selectedProgressDate == null
+      ? 'This week'
+      : selectedSession
+        ? formatTimelineLabel(
+            selectedSession,
+            Math.max(0, selectedIndex),
+            selectedSession.date === localDateKey()
+          )
+        : weekLabel;
 
   useEffect(() => {
     if (selectedSession) warmSessionPhotos(selectedSession.photos);
@@ -273,6 +281,11 @@ export default function ProgressJourney({
   useEffect(() => {
     setInlineCompare(false);
   }, [selectedSession?.id]);
+
+  useEffect(() => {
+    if (!selectedSession) return;
+    setSelectedPose((prev) => firstAvailablePose(selectedSession.photos, prev));
+  }, [selectedSession?.id, selectedSession?.photos.front, selectedSession?.photos.side, selectedSession?.photos.back]);
 
   const emitWeekForSession = useCallback((session: PhotoSession) => {
     userDrivenWeekRef.current = true;
@@ -485,9 +498,18 @@ export default function ProgressJourney({
           >
             <Text style={styles.photoActionSecondaryText}>Upload from library</Text>
           </TouchableOpacity>
+          {selectedSession ? (
+            <TouchableOpacity
+              style={styles.photoActionSecondary}
+              onPress={() => setPoseEditVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.photoActionSecondaryText}>Fix front / side / back</Text>
+            </TouchableOpacity>
+          ) : null}
           <Text style={styles.photoCadenceHint}>
             Weekly photos are a great baseline — take them daily anytime you want. Library uploads
-            use each photo&apos;s date so past shots land in the right place on your timeline.
+            detect front, side, and back automatically (you can fix mix-ups anytime).
           </Text>
         </View>
       ) : null}
@@ -550,7 +572,21 @@ export default function ProgressJourney({
         metrics={displayMetrics}
         initialPose={selectedPose}
         onPoseChange={setSelectedPose}
+        onEditPoses={() => {
+          setDetailVisible(false);
+          setPoseEditVisible(true);
+        }}
         onClose={() => setDetailVisible(false)}
+      />
+
+      <PhotoSessionPoseEditModal
+        visible={poseEditVisible}
+        session={selectedSession}
+        onClose={() => setPoseEditVisible(false)}
+        onSaved={(updated) => {
+          setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          setSelectedId(updated.id);
+        }}
       />
 
       <ProgressBodyMetricsModal

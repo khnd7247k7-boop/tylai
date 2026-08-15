@@ -47,6 +47,13 @@ export const DURABLE_USER_DATA_KEYS = [
   'interfaceSettings',
   'userPreferences',
   'coachingProfile',
+  'movementProfile',
+  'discomfortReports',
+  'trainingConstraints',
+  'movementAssessments',
+  'postWorkoutMovementFeedback',
+  'latestMovementAdaptationPlan',
+  'exerciseCompetencyRecords',
   'healthDataPermissions',
   // Tasks / onboarding
   'completedTasks',

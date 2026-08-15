@@ -34,6 +34,17 @@ export async function appendCompletedWorkoutSession(
   };
   const next = dedupeWorkoutSessions([withFlag, ...existing]);
   await saveUserData('workoutHistory', next);
+
+  // Soft competency update — never blocks history save / builder.
+  try {
+    const { recordCompetencyFromWorkoutSession } = await import(
+      '../services/ExerciseCompetencyService'
+    );
+    await recordCompetencyFromWorkoutSession(withFlag);
+  } catch (e) {
+    console.warn('[workoutHistory] competency update skipped', e);
+  }
+
   if (opts?.notify !== false) {
     notifyUserDataReady();
   }

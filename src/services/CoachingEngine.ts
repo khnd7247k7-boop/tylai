@@ -12,6 +12,7 @@ import { DEFAULT_USER_MILESTONES } from '../types/userMilestones';
 import UserProfileService, { type UserProfileData } from './UserProfileService';
 import { loadCoachingProfile } from './CoachingProfileService';
 import { parseWeightToKg } from '../utils/bodyMetricsParse';
+import type { MovementIntelligenceAiContext } from './MovementIntelligenceAiContext';
 import {
   buildGoalAdaptationSummary,
   buildWorkoutGenerationModifiers,
@@ -114,6 +115,8 @@ export interface CoachingContextSnapshot {
     recoveryScore: number;
     nutrition: NutritionAdaptationResult | null;
   };
+  /** Structured Movement Intelligence pack for the AI coach (read-only; AI must not override). */
+  movementIntelligence?: MovementIntelligenceAiContext | null;
 }
 
 function localDateKey(d: Date): string {
@@ -448,6 +451,14 @@ export async function buildCoachingContextSnapshot(): Promise<CoachingContextSna
     adherence.nutritionCompliance
   );
 
+  let movementIntelligence = null;
+  try {
+    const { buildMovementIntelligenceAiContext } = await import('./MovementIntelligenceAiContext');
+    movementIntelligence = await buildMovementIntelligenceAiContext();
+  } catch (e) {
+    console.warn('[CoachingEngine] Movement Intelligence AI context unavailable', e);
+  }
+
   const injuries = [profile?.injuries, profile?.limitations].filter(Boolean).join('; ') || null;
 
   const primaryGoalLabel = coaching?.goalProfile.primaryGoal
@@ -511,5 +522,6 @@ export async function buildCoachingContextSnapshot(): Promise<CoachingContextSna
       recoveryScore,
       nutrition: nutritionAdaptation,
     },
+    movementIntelligence,
   };
 }

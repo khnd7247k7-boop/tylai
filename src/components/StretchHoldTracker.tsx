@@ -13,6 +13,7 @@ type StretchHoldTrackerProps = {
   roundIndex: number;
   completed: boolean;
   onComplete: () => void;
+  onFinishWorkout?: () => void;
   onEdit?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
@@ -29,6 +30,7 @@ export default function StretchHoldTracker({
   roundIndex,
   completed,
   onComplete,
+  onFinishWorkout,
   onEdit,
   onPrevious,
   onNext,
@@ -120,9 +122,19 @@ export default function StretchHoldTracker({
         </TouchableOpacity>
       ) : (
         <View style={styles.doneRow}>
-          <View style={styles.donePill}>
-            <Text style={styles.doneText}>✓ Complete</Text>
-          </View>
+          {onFinishWorkout ? (
+            <TouchableOpacity
+              style={[styles.completeBtn, { flex: 1 }]}
+              onPress={onFinishWorkout}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.completeBtnText}>Done</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.donePill}>
+              <Text style={styles.doneText}>✓ Complete</Text>
+            </View>
+          )}
           {onEdit ? (
             <TouchableOpacity style={styles.editBtn} onPress={onEdit}>
               <Text style={styles.editText}>Undo</Text>

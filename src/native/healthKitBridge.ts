@@ -19,6 +19,17 @@ type AuthResult = {
   completed: boolean;
 };
 
+export type HealthKitWorkoutSample = {
+  uuid: string;
+  activityType: number;
+  activityLabel: string;
+  startMs: number;
+  endMs: number;
+  durationMin: number;
+  calories?: number;
+  distanceM?: number;
+};
+
 type NativeBridge = {
   isHealthDataAvailable?: () => Promise<boolean>;
   hasCompletedAuthFlow?: () => Promise<boolean>;
@@ -28,6 +39,7 @@ type NativeBridge = {
     startMs: number,
     endMs: number
   ) => Promise<HealthKitQuantitySample[]>;
+  fetchWorkouts?: (startMs: number, endMs: number) => Promise<unknown[]>;
 };
 
 function getBridge(): NativeBridge | null {
@@ -93,6 +105,44 @@ export async function fetchQuantitySamplesNative(
         typeof row.value === 'number' &&
         Number.isFinite(row.value)
     );
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchWorkoutsNative(
+  start: Date,
+  end: Date
+): Promise<HealthKitWorkoutSample[]> {
+  const mod = getBridge();
+  if (!mod?.fetchWorkouts) return [];
+  try {
+    const raw = await mod.fetchWorkouts(start.getTime(), end.getTime());
+    if (!Array.isArray(raw)) return [];
+    const out: HealthKitWorkoutSample[] = [];
+    for (const row of raw) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as Record<string, unknown>;
+      const uuid = typeof r.uuid === 'string' ? r.uuid : '';
+      const activityLabel = typeof r.activityLabel === 'string' ? r.activityLabel : 'Cardio';
+      const startMs = Number(r.startMs);
+      const endMs = Number(r.endMs);
+      const durationMin = Number(r.durationMin);
+      if (!uuid || !Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+      const calories = Number(r.calories);
+      const distanceM = Number(r.distanceM);
+      out.push({
+        uuid,
+        activityType: Number(r.activityType) || 0,
+        activityLabel,
+        startMs,
+        endMs,
+        durationMin: Number.isFinite(durationMin) && durationMin > 0 ? durationMin : Math.max(1, (endMs - startMs) / 60000),
+        calories: Number.isFinite(calories) && calories > 0 ? calories : undefined,
+        distanceM: Number.isFinite(distanceM) && distanceM > 0 ? distanceM : undefined,
+      });
+    }
+    return out;
   } catch {
     return [];
   }

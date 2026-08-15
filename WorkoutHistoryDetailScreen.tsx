@@ -77,6 +77,49 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
           </View>
         </View>
 
+        {session.cardio ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Cardio</Text>
+            <View style={styles.healthMetricsContainer}>
+              <View style={styles.healthMetricItem}>
+                <Text style={styles.healthMetricLabel}>Type</Text>
+                <Text style={styles.healthMetricValue}>{session.cardio.activity}</Text>
+              </View>
+              <View style={styles.healthMetricItem}>
+                <Text style={styles.healthMetricLabel}>Duration</Text>
+                <Text style={styles.healthMetricValue}>{session.cardio.durationMin} min</Text>
+              </View>
+              {session.cardio.calories != null ? (
+                <View style={styles.healthMetricItem}>
+                  <Text style={styles.healthMetricLabel}>Calories</Text>
+                  <Text style={styles.healthMetricValue}>{session.cardio.calories} kcal</Text>
+                </View>
+              ) : null}
+              {session.cardio.distanceM != null ? (
+                <View style={styles.healthMetricItem}>
+                  <Text style={styles.healthMetricLabel}>Distance</Text>
+                  <Text style={styles.healthMetricValue}>
+                    {(session.cardio.distanceM / 1000).toFixed(
+                      session.cardio.distanceM >= 1000 ? 1 : 2
+                    )}{' '}
+                    km
+                  </Text>
+                </View>
+              ) : null}
+              <View style={styles.healthMetricItem}>
+                <Text style={styles.healthMetricLabel}>Source</Text>
+                <Text style={styles.healthMetricValue}>
+                  {session.cardio.source === 'healthkit'
+                    ? 'Apple Watch'
+                    : session.cardio.source === 'mixed'
+                      ? 'Watch + your input'
+                      : 'Logged manually'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {/* Health Metrics */}
         {session.healthMetrics && (
           <View style={styles.section}>

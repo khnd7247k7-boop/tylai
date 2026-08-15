@@ -1007,8 +1007,8 @@ export default function SavedPlanViewScreen({
                               </Text>
                               <Text style={styles.exerciseDetails}>
                                 {(exercise.durationSeconds ?? 0) > 0
-                                  ? `${exercise.sets} × ${exercise.durationSeconds}s`
-                                  : `${exercise.sets} sets × ${exercise.reps} reps`}
+                                  ? `${exercise.setsPrescription || exercise.sets} × ${exercise.durationSeconds}s`
+                                  : `${exercise.setsPrescription || exercise.sets} sets × ${exercise.repsPrescription || exercise.reps} reps`}
                                 {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
                                 {' • '}{exercise.restTime}s rest
                                 {exercise.supersetId ? ' • superset' : ''}
@@ -1082,8 +1082,8 @@ export default function SavedPlanViewScreen({
                     </Text>
                     <Text style={styles.exerciseDetails}>
                       {(exercise.durationSeconds ?? 0) > 0
-                        ? `${exercise.sets} × ${exercise.durationSeconds}s`
-                        : `${exercise.sets} sets × ${exercise.reps} reps`}
+                        ? `${exercise.setsPrescription || exercise.sets} × ${exercise.durationSeconds}s`
+                        : `${exercise.setsPrescription || exercise.sets} sets × ${exercise.repsPrescription || exercise.reps} reps`}
                       {exercise.weight > 0 && ` @ ${exercise.weight} lbs`}
                       {' • '}{exercise.restTime || 60}s rest
                       {exercise.supersetId ? ' • superset' : ''}

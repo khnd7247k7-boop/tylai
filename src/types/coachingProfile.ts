@@ -66,6 +66,7 @@ export interface RecoveryProfile {
   dailyActivityLevel: DailyActivityLevel | null;
 }
 
+/** Free-text injury / avoid notes from onboarding. Structured MI lives in movementIntelligence types. */
 export interface ConstraintProfile {
   hasInjuries: boolean | null;
   injuryDetails?: string;

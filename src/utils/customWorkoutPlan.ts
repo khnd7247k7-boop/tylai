@@ -49,11 +49,14 @@ export type SavedPlanWeek = {
     dayName: string;
     workoutName: string;
     focus: string;
-    exercises: Array<{
+      exercises: Array<{
       id: string;
       name: string;
       sets: number;
       reps: number;
+      /** Original builder text so ranges like "4-6" / "8-12" survive save + edit. */
+      setsPrescription?: string;
+      repsPrescription?: string;
       weight: number;
       restTime: number;
       category: 'strength';
@@ -222,6 +225,8 @@ export function dayWorkoutsToSavedWeekDays(
         name: ex.name,
         sets: setsNum,
         reps: repsNum,
+        setsPrescription: ex.sets.trim(),
+        repsPrescription: ex.reps.trim(),
         weight: ex.weight,
         restTime: ex.restTime,
         category: 'strength' as const,
@@ -281,8 +286,8 @@ function savedExerciseToCustom(ex: SavedPlanWeek['weekDays'][0]['exercises'][0])
   return {
     id: ex.id || `exercise-${Date.now()}-${Math.random()}`,
     name: ex.name,
-    sets: String(ex.sets),
-    reps: String(ex.reps),
+    sets: ex.setsPrescription?.trim() || String(ex.sets),
+    reps: ex.repsPrescription?.trim() || String(ex.reps),
     weight: ex.weight ?? 0,
     restTime: ex.restTime ?? 60,
     ...(ex.durationSeconds != null && ex.durationSeconds > 0

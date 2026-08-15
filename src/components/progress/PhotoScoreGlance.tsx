@@ -11,8 +11,8 @@ interface PhotoScoreGlanceProps {
 }
 
 /**
- * Compact week score that rides with the progress photo —
- * so scrubbing the timeline keeps score and picture in the same frame.
+ * Compact week score under the photo scrubber.
+ * Stays on the current week until the user scrubs the timeline.
  */
 export default function PhotoScoreGlance({
   result,

@@ -68,7 +68,7 @@ export async function cancelAllNotifications() {
   if (!Notifications) return;
 
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  const keepTypes = new Set(['rest_timer_complete', 'micro_goal_nudge']);
+  const keepTypes = new Set(['rest_timer_complete', 'micro_goal_nudge', 'workout_complete']);
   await Promise.all(
     scheduled.map(async (item) => {
       const type = (item.content?.data as { type?: string } | undefined)?.type;

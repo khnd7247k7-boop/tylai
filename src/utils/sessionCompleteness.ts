@@ -20,7 +20,9 @@ export function computeSessionCompleteness(
   metrics: SessionProgressMetrics | null | undefined,
   opts?: { hasReflection?: boolean }
 ): SessionCompleteness {
-  const photos = !!(session.photos?.front && session.photos?.side && session.photos?.back);
+  const photos = Boolean(
+    session.photos?.front || session.photos?.side || session.photos?.back
+  );
   const weight = metrics?.weight.status === 'available';
   const measurements = metrics?.measurements.status === 'available';
   const reflection = opts?.hasReflection === true;

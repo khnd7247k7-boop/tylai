@@ -25,6 +25,7 @@ import SettingsScreen from './SettingsScreen';
 import SpiritualScreen from './SpiritualScreen';
 import HealthScreen, { type TrendGraphId } from './HealthScreen';
 import AppleHealthDataScreen from './AppleHealthDataScreen';
+import MovementIntelligenceScreen from './MovementIntelligenceScreen';
 import SwipeNavigation from './SwipeNavigation';
 import SmoothTransition from './SmoothTransition';
 import { ToastProvider } from './src/components/ToastProvider';
@@ -104,7 +105,8 @@ type LoggedInScreen =
   | 'health'
   | 'appleHealthData'
   | 'nutritionSearch'
-  | 'moreHub';
+  | 'moreHub'
+  | 'movementIntelligence';
 
 /** Screens reachable from the More menu — back / task-complete should return to moreHub when opened from there. */
 const MORE_MENU_CHILD_SCREENS: LoggedInScreen[] = [
@@ -116,6 +118,7 @@ const MORE_MENU_CHILD_SCREENS: LoggedInScreen[] = [
   'mental',
   'workout',
   'nutritionSearch',
+  'movementIntelligence',
 ];
 
 function AppInner() {
@@ -1217,6 +1220,11 @@ function AppInner() {
         case 'emotional':
         case 'nutritionSearch':
           return 'more';
+        case 'movementIntelligence': {
+          const miIdx = navigationHistory.lastIndexOf('movementIntelligence');
+          const prev = miIdx > 0 ? navigationHistory[miIdx - 1] : null;
+          return prev === 'progress' ? 'progress' : 'more';
+        }
         case 'ai':
           return 'dashboard';
         default:
@@ -1307,7 +1315,12 @@ function AppInner() {
       case 'progress':
         body = (
           <SmoothTransition isVisible={true} direction="fadeIn">
-            <ProgressScreen />
+            <ProgressScreen
+              onOpenMovementIntelligence={() => {
+                openedFromMoreMenuRef.current = false;
+                navigateToScreen('movementIntelligence');
+              }}
+            />
           </SmoothTransition>
         );
         break;
@@ -1371,6 +1384,15 @@ function AppInner() {
           <SmoothTransition isVisible={true} direction="slideInRight">
             <SwipeNavigation onSwipeBack={handleGoBack}>
               <HealthScreen onBack={handleGoBack} initialTrendGraph={healthInitialTrendGraph} />
+            </SwipeNavigation>
+          </SmoothTransition>
+        );
+        break;
+      case 'movementIntelligence':
+        body = (
+          <SmoothTransition isVisible={true} direction="slideInRight">
+            <SwipeNavigation onSwipeBack={handleGoBack}>
+              <MovementIntelligenceScreen onBack={handleGoBack} />
             </SwipeNavigation>
           </SmoothTransition>
         );
@@ -1441,6 +1463,9 @@ function AppInner() {
                     break;
                   case 'nutritionSearch':
                     openScreenFromMoreMenu('nutritionSearch');
+                    break;
+                  case 'movementIntelligence':
+                    openScreenFromMoreMenu('movementIntelligence');
                     break;
                 }
               }}

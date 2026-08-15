@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,11 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
-import { PHOTO_POSES, PHOTO_POSE_LABELS } from '../../../types/progressPhotos';
+import {
+  PHOTO_POSE_LABELS,
+  availablePoses,
+  isPhotoUri,
+} from '../../../types/progressPhotos';
 import { findComparisonSessions } from '../../../services/sessionProgressMetricsService';
 import { formatDisplayDate } from '../../../services/PhotoService';
 import { AppTheme } from '../../../theme/appVisualTheme';
@@ -40,6 +44,24 @@ export default function PhotoComparisonMode({
     () => findComparisonSessions(sessions, range),
     [sessions, range]
   );
+
+  const poses = useMemo(() => {
+    if (!pair) return [] as PhotoPose[];
+    const after = availablePoses(pair.after.photos);
+    const before = new Set(availablePoses(pair.before.photos));
+    const shared = after.filter((p) => before.has(p));
+    return shared.length ? shared : after;
+  }, [pair]);
+
+  useEffect(() => {
+    if (!poses.length) return;
+    if (!poses.includes(pose)) setPose(poses[0]);
+  }, [poses, pose]);
+
+  const afterUri =
+    pair && isPhotoUri(pair.after.photos[pose]) ? pair.after.photos[pose] : undefined;
+  const beforeUri =
+    pair && isPhotoUri(pair.before.photos[pose]) ? pair.before.photos[pose] : undefined;
 
   const onLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width;
@@ -105,18 +127,22 @@ export default function PhotoComparisonMode({
             </View>
 
             <View style={styles.sliderFrame} onLayout={onLayout} {...pan.panHandlers}>
-              <Image
-                source={{ uri: pair.after.photos[pose] }}
-                style={styles.fullImage}
-                resizeMode="cover"
-              />
-              <View style={[styles.beforeClip, { width: width * slider }]}>
-                <Image
-                  source={{ uri: pair.before.photos[pose] }}
-                  style={[styles.fullImage, width > 0 ? { width } : null]}
-                  resizeMode="cover"
-                />
-              </View>
+              {afterUri ? (
+                <Image source={{ uri: afterUri }} style={styles.fullImage} resizeMode="cover" />
+              ) : (
+                <View style={[styles.fullImage, styles.missingPose]}>
+                  <Text style={styles.missingPoseText}>No after photo</Text>
+                </View>
+              )}
+              {beforeUri ? (
+                <View style={[styles.beforeClip, { width: width * slider }]}>
+                  <Image
+                    source={{ uri: beforeUri }}
+                    style={[styles.fullImage, width > 0 ? { width } : null]}
+                    resizeMode="cover"
+                  />
+                </View>
+              ) : null}
               <View style={[styles.handle, { left: Math.max(0, width * slider - 1) }]}>
                 <View style={styles.handleKnob} />
               </View>
@@ -124,19 +150,21 @@ export default function PhotoComparisonMode({
               <Text style={styles.badgeRight}>After</Text>
             </View>
 
-            <View style={styles.poseRow}>
-              {PHOTO_POSES.map((p) => (
-                <TouchableOpacity
-                  key={p}
-                  style={[styles.poseChip, pose === p && styles.poseChipActive]}
-                  onPress={() => setPose(p)}
-                >
-                  <Text style={[styles.poseText, pose === p && styles.poseTextActive]}>
-                    {PHOTO_POSE_LABELS[p]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {poses.length > 0 ? (
+              <View style={styles.poseRow}>
+                {poses.map((p) => (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.poseChip, pose === p && styles.poseChipActive]}
+                    onPress={() => setPose(p)}
+                  >
+                    <Text style={[styles.poseText, pose === p && styles.poseTextActive]}>
+                      {PHOTO_POSE_LABELS[p]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
             <Text style={styles.hint}>
               {slider <= 0.02 ? 'Drag the line to reveal your before photo' : 'Drag across the image to compare'}
             </Text>
@@ -191,6 +219,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     width: '100%',
     height: '100%',
+  },
+  missingPose: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0a0a0a',
+  },
+  missingPoseText: {
+    color: AppTheme.textMuted,
+    fontWeight: '600',
   },
   beforeClip: {
     position: 'absolute',

@@ -28,6 +28,7 @@ import { DEFAULT_USER_MILESTONES } from './src/types/userMilestones';
 import ProgressJourney, {
   type ProgressJourneyDataBundle,
 } from './src/components/progress/ProgressJourney';
+import MovementIntelligenceSection from './src/components/movement/MovementIntelligenceSection';
 import { subscribeUserDataReady } from './src/utils/userDataEvents';
 import { loadDedupedWorkoutHistory } from './src/utils/workoutHistoryStorage';
 import type { MeasurementEntry } from './src/types/bodyMeasurements';
@@ -49,7 +50,11 @@ type ScoreInput = {
 };
 
 /** Progress scores default to this calendar week; scrubbing photos/chart rewrites the week cursor. */
-export default function ProgressScreen(): React.ReactElement {
+export default function ProgressScreen({
+  onOpenMovementIntelligence,
+}: {
+  onOpenMovementIntelligence?: () => void;
+} = {}): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [bundle, setBundle] = useState<ProgressJourneyDataBundle | null>(null);
   const [baseScoreInput, setBaseScoreInput] = useState<ScoreInput | null>(null);
@@ -153,7 +158,7 @@ export default function ProgressScreen(): React.ReactElement {
       <StatusBar style="light" />
       <View style={styles.header}>
         <Text style={styles.title}>Progress</Text>
-        <Text style={styles.subtitle}>Scrub through your transformation</Text>
+        <Text style={styles.subtitle}>Today&apos;s report — scrub the timeline to look back</Text>
       </View>
 
       <ScrollView
@@ -168,14 +173,17 @@ export default function ProgressScreen(): React.ReactElement {
             <ActivityIndicator size="large" color={AppTheme.accent} />
           </View>
         ) : progressResult ? (
-          <ProgressJourney
-            progressResult={progressResult}
-            scoreInput={baseScoreInput}
-            weightSeries={weightSeries}
-            dataBundle={bundle}
-            selectedProgressDate={selectedProgressDate}
-            onProgressDateChange={handleProgressDateChange}
-          />
+          <>
+            <ProgressJourney
+              progressResult={progressResult}
+              scoreInput={baseScoreInput}
+              weightSeries={weightSeries}
+              dataBundle={bundle}
+              selectedProgressDate={selectedProgressDate}
+              onProgressDateChange={handleProgressDateChange}
+            />
+            <MovementIntelligenceSection onOpenFullScreen={onOpenMovementIntelligence} />
+          </>
         ) : null}
       </ScrollView>
     </SafeAreaView>

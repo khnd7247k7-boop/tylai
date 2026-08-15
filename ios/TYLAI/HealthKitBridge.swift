@@ -67,4 +67,24 @@ class HealthKitBridge: NSObject {
       resolve(samples)
     }
   }
+
+  @objc(fetchWorkouts:endMs:resolver:rejecter:)
+  func fetchWorkouts(
+    _ startMs: NSNumber,
+    endMs: NSNumber,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    let start = startMs.doubleValue
+    let end = endMs.doubleValue
+    guard start > 0, end > start else {
+      resolve([])
+      return
+    }
+    Task { @MainActor in
+      let manager = HealthKitManager()
+      let workouts = await manager.fetchWorkouts(startMs: start, endMs: end)
+      resolve(workouts)
+    }
+  }
 }

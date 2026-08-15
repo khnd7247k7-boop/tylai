@@ -26,6 +26,23 @@ export function buildUserExerciseRecord(displayName: string): ExerciseData {
     category: 'strength',
     muscleGroups: ['general'],
     equipment: ['none'],
+    // Sparse MI defaults — customs are unknown until the user tags them later.
+    primaryMuscles: ['general'],
+    secondaryMuscles: [],
+    jointDemands: [],
+    mobilityDemand: 'low',
+    stabilityDemand: 'low',
+    strengthDemand: 'low',
+    coordinationDemand: 'low',
+    balanceDemand: 'low',
+    movementControlDemand: 'low',
+    technicalComplexity: 'low',
+    movementQualities: [],
+    laterality: 'bilateral',
+    regressions: [],
+    progressions: [],
+    variations: [],
+    miMovementPattern: 'other',
   };
 }
 
@@ -55,6 +72,42 @@ export async function addUserCustomExercise(displayName: string): Promise<Exerci
   const created = buildUserExerciseRecord(trimmed);
   await saveUserCustomExercises([...existing, created]);
   return created;
+}
+
+/**
+ * Ensure every plan exercise name exists in the catalog.
+ * Built-ins are left alone; missing names are added to the user's custom library
+ * so scanned programs keep wording like "Dumbbell Squats" instead of collapsing to "Squats".
+ */
+export async function ensureExercisesInUserCatalog(names: string[]): Promise<ExerciseData[]> {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trimmed);
+  }
+  if (!unique.length) return loadUserCustomExercises();
+
+  const existing = await loadUserCustomExercises();
+  const byName = new Map(existing.map((e) => [e.name.toLowerCase(), e]));
+  let changed = false;
+  const next = [...existing];
+
+  for (const name of unique) {
+    if (getExerciseData(name)) continue;
+    if (byName.has(name.toLowerCase())) continue;
+    const created = buildUserExerciseRecord(name);
+    next.push(created);
+    byName.set(name.toLowerCase(), created);
+    changed = true;
+  }
+
+  if (changed) await saveUserCustomExercises(next);
+  return next;
 }
 
 export function resolveExerciseData(name: string, userCustom: ExerciseData[]): ExerciseData | undefined {

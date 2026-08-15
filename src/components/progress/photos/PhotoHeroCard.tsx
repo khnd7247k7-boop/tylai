@@ -9,7 +9,12 @@ import {
   Dimensions,
 } from 'react-native';
 import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
-import { PHOTO_POSES, PHOTO_POSE_LABELS } from '../../../types/progressPhotos';
+import {
+  PHOTO_POSE_LABELS,
+  availablePoses,
+  firstAvailablePose,
+  isPhotoUri,
+} from '../../../types/progressPhotos';
 import type { SessionCompleteness } from '../../../utils/sessionCompleteness';
 import { formatTimelineLabel, formatSessionStamp } from '../../../services/PhotoService';
 import { AppTheme } from '../../../theme/appVisualTheme';
@@ -54,8 +59,11 @@ export default function PhotoHeroCard({
   pose: poseProp,
   onPoseChange,
 }: PhotoHeroCardProps): React.ReactElement {
-  const [poseLocal, setPoseLocal] = useState<PhotoPose>('front');
-  const pose = poseProp ?? poseLocal;
+  const [poseLocal, setPoseLocal] = useState<PhotoPose>(() =>
+    firstAvailablePose(session.photos, 'front')
+  );
+  const poses = useMemo(() => availablePoses(session.photos), [session.photos]);
+  const pose = poseProp && poses.includes(poseProp) ? poseProp : poseLocal;
   const setPose = (next: PhotoPose) => {
     onPoseChange?.(next);
     if (poseProp === undefined) setPoseLocal(next);
@@ -72,13 +80,19 @@ export default function PhotoHeroCard({
   const widthRef = useRef(0);
 
   const label = formatTimelineLabel(session, weekIndex, isToday);
-  const uri = session.photos[pose];
-  const compareUri = compareSession?.photos[pose];
-  const canCompare = Boolean(compareSession && compareSession.id !== session.id);
+  const uri = isPhotoUri(session.photos[pose]) ? session.photos[pose] : undefined;
+  const compareUri =
+    compareSession && isPhotoUri(compareSession.photos[pose])
+      ? compareSession.photos[pose]
+      : undefined;
+  const canCompare = Boolean(compareSession && compareSession.id !== session.id && compareUri && uri);
 
   useEffect(() => {
-    // Keep the selected pose (front/side/back) when scrubbing weeks so users
-    // can compare the same angle over time. Only reset compare UI.
+    // Keep the selected pose when scrubbing weeks when that pose exists.
+    if (!poses.includes(pose)) {
+      const next = firstAvailablePose(session.photos, poses[0]);
+      setPose(next);
+    }
     setCompareMode(false);
     setSlider(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on session change
@@ -144,7 +158,13 @@ export default function PhotoHeroCard({
           {...pan.panHandlers}
         >
           {/* Current (after) photo — no crossfade; swap instantly to avoid flashing */}
-          <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
+          {uri ? (
+            <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.heroEmpty}>
+              <Text style={styles.heroEmptyText}>No photo for this pose</Text>
+            </View>
+          )}
 
           {compareMode && compareUri ? (
             <>
@@ -200,20 +220,22 @@ export default function PhotoHeroCard({
         ) : null}
       </View>
 
-      <View style={styles.poseRow}>
-        {PHOTO_POSES.map((p) => (
-          <TouchableOpacity
-            key={p}
-            style={[styles.poseChip, pose === p && styles.poseChipActive]}
-            onPress={() => setPose(p)}
-            activeOpacity={0.85}
-          >
-            <Text style={[styles.poseText, pose === p && styles.poseTextActive]}>
-              {PHOTO_POSE_LABELS[p]}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {poses.length > 0 ? (
+        <View style={styles.poseRow}>
+          {poses.map((p) => (
+            <TouchableOpacity
+              key={p}
+              style={[styles.poseChip, pose === p && styles.poseChipActive]}
+              onPress={() => setPose(p)}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.poseText, pose === p && styles.poseTextActive]}>
+                {PHOTO_POSE_LABELS[p]}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
 
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.ghostBtn} onPress={onOpenDetails} activeOpacity={0.85}>
@@ -282,6 +304,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0a0a',
   },
   heroImage: { width: '100%', height: '100%' },
+  heroEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0a0a0a',
+  },
+  heroEmptyText: { color: AppTheme.textMuted, fontSize: 14, fontWeight: '600' },
   stampWrap: {
     position: 'absolute',
     left: 10,

@@ -123,28 +123,31 @@ app.post('/api/gemini', requireAuth, geminiLimiter, async (req, res) => {
 
     const modelClient = genAI.getGenerativeModel({ model });
 
-    /** Optional multimodal payload: { mimeType, data } where data is base64 (no data: prefix). */
-    let content;
-    if (
-      image &&
-      typeof image === 'object' &&
-      typeof image.data === 'string' &&
-      image.data.trim() &&
-      typeof image.mimeType === 'string' &&
-      image.mimeType.trim()
-    ) {
-      const mimeType = String(image.mimeType).trim();
-      const data = String(image.data).replace(/^data:[^;]+;base64,/, '').trim();
-      if (!data) {
-        return res.status(400).json({ error: 'image.data must be non-empty base64.' });
+    /** Optional multimodal: single `image` or `images` array of { mimeType, data } (base64, no data: prefix). */
+    const rawImages = Array.isArray(req.body?.images)
+      ? req.body.images
+      : image
+        ? [image]
+        : [];
+    const inlineParts = [];
+    for (const img of rawImages) {
+      if (
+        !img ||
+        typeof img !== 'object' ||
+        typeof img.data !== 'string' ||
+        !img.data.trim() ||
+        typeof img.mimeType !== 'string' ||
+        !img.mimeType.trim()
+      ) {
+        continue;
       }
-      content = [
-        { text: prompt },
-        { inlineData: { mimeType, data } },
-      ];
-    } else {
-      content = prompt;
+      const mimeType = String(img.mimeType).trim();
+      const data = String(img.data).replace(/^data:[^;]+;base64,/, '').trim();
+      if (!data) continue;
+      inlineParts.push({ inlineData: { mimeType, data } });
     }
+    const content =
+      inlineParts.length > 0 ? [{ text: prompt }, ...inlineParts] : prompt;
 
     const result = await modelClient.generateContent(content);
     const text = result.response?.text?.() || '';

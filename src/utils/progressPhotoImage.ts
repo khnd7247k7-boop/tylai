@@ -21,7 +21,11 @@ export function warmImageUri(uri: string | null | undefined): void {
   }
 }
 
-export function warmSessionPhotos(photos: { front: string; side: string; back: string }): void {
+export function warmSessionPhotos(photos: {
+  front?: string;
+  side?: string;
+  back?: string;
+}): void {
   warmImageUri(photos.front);
   warmImageUri(photos.side);
   warmImageUri(photos.back);

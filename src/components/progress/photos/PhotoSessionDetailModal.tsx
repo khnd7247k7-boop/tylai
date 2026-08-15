@@ -12,7 +12,12 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { PhotoPose, PhotoSession } from '../../../types/progressPhotos';
-import { PHOTO_POSES, PHOTO_POSE_LABELS } from '../../../types/progressPhotos';
+import {
+  PHOTO_POSE_LABELS,
+  availablePoses,
+  firstAvailablePose,
+  isPhotoUri,
+} from '../../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../../types/sessionProgressMetrics';
 import { formatSessionStamp } from '../../../services/PhotoService';
 import { AppTheme } from '../../../theme/appVisualTheme';
@@ -24,6 +29,7 @@ interface PhotoSessionDetailModalProps {
   onClose: () => void;
   initialPose?: PhotoPose;
   onPoseChange?: (pose: PhotoPose) => void;
+  onEditPoses?: () => void;
 }
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -35,21 +41,24 @@ export default function PhotoSessionDetailModal({
   onClose,
   initialPose = 'front',
   onPoseChange,
+  onEditPoses,
 }: PhotoSessionDetailModalProps): React.ReactElement {
-  const [poseIndex, setPoseIndex] = useState(() =>
-    Math.max(0, PHOTO_POSES.indexOf(initialPose))
+  const poses = useMemo(
+    () => (session ? availablePoses(session.photos) : []),
+    [session]
   );
-  const pose = PHOTO_POSES[poseIndex];
+  const [pose, setPose] = useState<PhotoPose>(() =>
+    firstAvailablePose(session?.photos, initialPose)
+  );
 
   useEffect(() => {
-    if (!visible) return;
-    const idx = PHOTO_POSES.indexOf(initialPose);
-    if (idx >= 0) setPoseIndex(idx);
-  }, [visible, initialPose, session?.id]);
+    if (!visible || !session) return;
+    setPose(firstAvailablePose(session.photos, initialPose));
+  }, [visible, initialPose, session?.id, session?.photos]);
 
-  const selectPose = (index: number) => {
-    setPoseIndex(index);
-    onPoseChange?.(PHOTO_POSES[index]);
+  const selectPose = (next: PhotoPose) => {
+    setPose(next);
+    onPoseChange?.(next);
   };
 
   const workoutLine = useMemo(() => {
@@ -65,6 +74,8 @@ export default function PhotoSessionDetailModal({
 
   if (!session) return <></>;
 
+  const photoUri = isPhotoUri(session.photos[pose]) ? session.photos[pose] : undefined;
+
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={styles.safe}>
@@ -79,29 +90,39 @@ export default function PhotoSessionDetailModal({
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.photoFrame}>
-            <Image
-              source={{ uri: session.photos[pose] }}
-              style={styles.photo}
-              resizeMode="cover"
-            />
+            {photoUri ? (
+              <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
+            ) : (
+              <View style={styles.photoEmpty}>
+                <Text style={styles.photoEmptyText}>No photo for this pose</Text>
+              </View>
+            )}
             <View style={styles.stampWrap} pointerEvents="none">
               <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
             </View>
           </View>
 
-          <View style={styles.poseRow}>
-            {PHOTO_POSES.map((p, i) => (
-              <TouchableOpacity
-                key={p}
-                style={[styles.poseChip, i === poseIndex && styles.poseChipActive]}
-                onPress={() => selectPose(i)}
-              >
-                <Text style={[styles.poseChipText, i === poseIndex && styles.poseChipTextActive]}>
-                  {PHOTO_POSE_LABELS[p]}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {poses.length > 0 ? (
+            <View style={styles.poseRow}>
+              {poses.map((p) => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.poseChip, p === pose && styles.poseChipActive]}
+                  onPress={() => selectPose(p)}
+                >
+                  <Text style={[styles.poseChipText, p === pose && styles.poseChipTextActive]}>
+                    {PHOTO_POSE_LABELS[p]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+
+          {onEditPoses ? (
+            <TouchableOpacity style={styles.editPosesBtn} onPress={onEditPoses} activeOpacity={0.85}>
+              <Text style={styles.editPosesBtnText}>Fix poses</Text>
+            </TouchableOpacity>
+          ) : null}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Body & training</Text>
@@ -178,6 +199,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   photo: { width: '100%', height: '100%' },
+  photoEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0a0a0a',
+  },
+  photoEmptyText: { color: AppTheme.textMuted, fontWeight: '600' },
   stampWrap: {
     position: 'absolute',
     left: 10,
@@ -194,7 +222,22 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.2,
   },
-  poseRow: { flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 20 },
+  poseRow: { flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 12 },
+  editPosesBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: AppTheme.radiusPill,
+    borderWidth: 1,
+    borderColor: AppTheme.border,
+    backgroundColor: AppTheme.inputBg,
+  },
+  editPosesBtnText: {
+    color: AppTheme.accent,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   poseChip: {
     flex: 1,
     paddingVertical: 10,

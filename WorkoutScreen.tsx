@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -17,7 +17,21 @@ import { loadUserData, saveUserData } from './src/utils/userStorage';
 import AIService, { ProgramAdaptation } from './AIService';
 import { MAX_WORKING_SETS, clampWorkingSets, canAddWorkingSet, applyWeightProgression, roundToPlateWeight, MIN_WEIGHT_PROGRESSION_LBS } from './src/utils/progressionLimits';
 import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exerciseDatabase';
+import {
+  buildWorkoutBuilderMiContext,
+  emptyWorkoutBuilderMiContext,
+  enrichExercisePoolWithMi,
+  mergeExcludedWithMi,
+  miBiasedShuffle,
+  pickMiSupportAccessories,
+  type WorkoutBuilderMiContext,
+} from './src/services/WorkoutBuilderMiIntegration';
 import { AppTheme } from './src/theme/appVisualTheme';
+import DiscomfortAssessmentFlow, {
+  DiscomfortReportCTA,
+} from './src/components/movement/DiscomfortAssessmentFlow';
+import MovementResponseFeedbackModal from './src/components/movement/MovementResponseFeedbackModal';
+import { shouldPromptMovementResponseFeedback } from './src/services/MovementFeedbackLoopService';
 
 /** Plyometric exercises (by id) — used when user wants athleticism, mobility, or stability */
 const PLYOMETRIC_EXERCISE_IDS = new Set([
@@ -185,6 +199,11 @@ export default function WorkoutScreen({
   const [currentSetIndex, setCurrentSetIndex] = useState(0);
   const [exerciseLogs, setExerciseLogs] = useState<ExerciseLog[]>([]);
   const [notes, setNotes] = useState('');
+  const [discomfortVisible, setDiscomfortVisible] = useState(false);
+  const [discomfortExerciseName, setDiscomfortExerciseName] = useState<string | null>(null);
+  const [movementFeedbackVisible, setMovementFeedbackVisible] = useState(false);
+  const [movementFeedbackExercise, setMovementFeedbackExercise] = useState<string | null>(null);
+  const pendingFinishFinalizeRef = useRef<(() => void) | null>(null);
   const [savedPlans, setSavedPlans] = useState<SavedWorkoutPlan[]>([]);
   const [showSavedPlans, setShowSavedPlans] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -830,6 +849,24 @@ export default function WorkoutScreen({
       coachingMods?.difficultyBias ?? 0
     );
 
+    // ─── Movement Intelligence → Exercise Selection (modular; does not replace builder) ───
+    let miContext: WorkoutBuilderMiContext;
+    try {
+      miContext = await buildWorkoutBuilderMiContext({
+        experienceLevel: level,
+        generatorGoal: resolvedGoal,
+        primaryGoal: coachingMods?.primaryGoal ?? null,
+        baseExcluded: excludedExercises,
+      });
+    } catch (e) {
+      console.warn('[WorkoutBuilder] MI context unavailable; using base pool', e);
+      miContext = emptyWorkoutBuilderMiContext(level, resolvedGoal);
+    }
+    const effectiveExcluded = mergeExcludedWithMi(excludedExercises, miContext);
+    if (miContext.summary && miContext.summary !== 'mi_skipped') {
+      console.log('[WorkoutBuilder] MI influence:', miContext.summary);
+    }
+
     // ─── Step 5: Select movements (equipment + injuries/limitations + goal + split) ───
     const getExercisePool = (): ExerciseData[] => {
       let pool: ExerciseData[] = [];
@@ -872,8 +909,9 @@ export default function WorkoutScreen({
       pool = pool.filter(ex => {
         return difficultyAllow.has(ex.difficulty as 'beginner' | 'intermediate' | 'advanced');
       });
-      pool = pool.filter(ex => !excludedExercises.includes(ex.name));
-      return pool;
+      pool = pool.filter(ex => !effectiveExcluded.includes(ex.name));
+      // MI re-ranks within the goal/equipment/difficulty pool (goal remains primary).
+      return enrichExercisePoolWithMi(pool, miContext);
     };
     const exercisePool = getExercisePool();
 
@@ -886,7 +924,7 @@ export default function WorkoutScreen({
         }
         return ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
       });
-      candidates = candidates.filter(ex => !excludedExercises.includes(ex.name));
+      candidates = candidates.filter(ex => !effectiveExcluded.includes(ex.name));
       if (userEquipment && userEquipment !== 'full gym' && userEquipment !== 'all') {
         const getEquipment = (ex: ExerciseData) => ex.equipmentRequired || ex.equipment || [];
         if (userEquipment.includes('bodyweight') || userEquipment.includes('no equipment')) {
@@ -903,7 +941,8 @@ export default function WorkoutScreen({
           });
         }
       }
-      return candidates;
+      // Soft MI demotion of high-balance plyos when stability is developing
+      return enrichExercisePoolWithMi(candidates, miContext);
     };
 
     const plyometricPool = useOptimalPeakStructure ? getFilteredPlyometricPool() : [];
@@ -1170,21 +1209,9 @@ export default function WorkoutScreen({
 
     // Helper function to select exercises ensuring different muscle regions are targeted
     // Helper function to shuffle and select exercises
-    // Use variationIndex to create different shuffles for different workout options
-    const shuffleArray = <T,>(array: T[]): T[] => {
-      const shuffled = [...array];
-      // Create a pseudo-random seed based on variationIndex
-      let seed = variationIndex * 7919; // Use a prime number for better distribution
-      const random = () => {
-        seed = (seed * 9301 + 49297) % 233280; // Linear congruential generator
-        return seed / 233280;
-      };
-      
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      return shuffled;
+    // MI-biased: prefers higher-ranked pool items while keeping Option 1/2/3 variation.
+    const shuffleArray = <T extends { id?: string; name?: string }>(array: T[]): T[] => {
+      return miBiasedShuffle(array, exercisePool, variationIndex);
     };
 
     const exerciseIsCompoundLift = (ex: Exercise): boolean => (ex.muscleGroups?.length ?? 0) > 1;
@@ -1220,8 +1247,17 @@ export default function WorkoutScreen({
         .map(ex => ({ ...ex }));
       const targetAccessoryCount = level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5;
       const used = new Set([...mainLift, ...secondary, ...accessory].map(e => e.name));
+
+      // MI support accessories (≤1): stability/control stimulus without replacing hypertrophy work
+      const miSupport = pickMiSupportAccessories(miContext, focus, used, 1);
+      for (const support of miSupport) {
+        if (accessory.length >= targetAccessoryCount) break;
+        accessory.push(getExerciseDetails(support));
+        used.add(support.name);
+      }
+
       const accessoryCandidates = exercisePool.filter(ex => {
-        if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (used.has(ex.name) || effectiveExcluded.includes(ex.name)) return false;
         if (!exerciseDataFitsDayFocus(ex, focus)) return false;
         if (ex.category === 'balance') return true;
         if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
@@ -1241,7 +1277,7 @@ export default function WorkoutScreen({
       }
 
       const finisherCandidates = exercisePool.filter(ex => {
-        if (used.has(ex.name) || excludedExercises.includes(ex.name)) return false;
+        if (used.has(ex.name) || effectiveExcluded.includes(ex.name)) return false;
         if (!exerciseDataFitsDayFocus(ex, focus)) return false;
         if (ex.category === 'cardio' || ex.category === 'balance') return true;
         if (ex.category === 'strength' && (ex.secondaryMuscleGroups?.length ?? 0) === 0) return true;
@@ -1969,7 +2005,7 @@ export default function WorkoutScreen({
 
         // Ensure no excluded exercises are included and exercises match the day's focus
         dayExercises = dayExercises
-          .filter(ex => !excludedExercises.includes(ex.name))
+          .filter(ex => !effectiveExcluded.includes(ex.name))
           .filter(ex => exerciseFitsDayFocus(ex, focus));
         
         // If we don't have enough exercises after filtering, add more from the pool
@@ -1977,7 +2013,7 @@ export default function WorkoutScreen({
           const additionalNeeded = exercisesPerDay - dayExercises.length;
           const usedExerciseNames = dayExercises.map(e => e.name);
           const availableExercises = filterExercisePoolForFocus(exercisePool, focus)
-              .filter(ex => !usedExerciseNames.includes(ex.name) && !excludedExercises.includes(ex.name));
+              .filter(ex => !usedExerciseNames.includes(ex.name) && !effectiveExcluded.includes(ex.name));
           
           if (availableExercises.length > 0) {
             const shuffledAvailable = shuffleArray(availableExercises);
@@ -2338,14 +2374,57 @@ export default function WorkoutScreen({
     };
 
     const progressionAdjustedPlan = await (async () => {
+      let plan: WeeklyWorkoutPlan = weeklyPlan;
+      let allowProgression = true;
       try {
         const { buildCoachingContextSnapshot } = await import('./src/services/CoachingEngine');
         const ctx = await buildCoachingContextSnapshot();
-        if (!ctx.progressionAllowed) return weeklyPlan;
+        if (!ctx.progressionAllowed) allowProgression = false;
       } catch {
         /* fall through — apply progression if coaching context unavailable */
       }
-      return applyProgressionLogic(weeklyPlan);
+
+      if (allowProgression) {
+        try {
+          const { applyEarnedProgressionToWeeklyPlan } = await import(
+            './src/services/ProgressionEngine'
+          );
+          const { plan: earnedPlan, summary } = await applyEarnedProgressionToWeeklyPlan({
+            plan: weeklyPlan,
+            history: workoutHistory as any,
+            level,
+            recoveryScore: coachingMods?.recoveryScore,
+            miContext,
+          });
+          if (summary) {
+            console.log('[WorkoutBuilder] Earned progression:', summary);
+          }
+          plan = earnedPlan as WeeklyWorkoutPlan;
+        } catch (e) {
+          console.warn('[WorkoutBuilder] Earned progression failed; falling back:', e);
+          plan = applyProgressionLogic(weeklyPlan);
+        }
+      }
+
+      // Structured safety constraints always apply (even when load progression is blocked).
+      try {
+        const { applyMiConstraintsToWeeklyPlan } = await import(
+          './src/services/WorkoutBuilderMiIntegration'
+        );
+        const { plan: constrainedPlan, appliedCount, notes: miNotes } =
+          applyMiConstraintsToWeeklyPlan(plan as any, miContext);
+        if (appliedCount > 0) {
+          console.log(
+            '[WorkoutBuilder] MI constraints applied:',
+            appliedCount,
+            miNotes.slice(0, 6).join(' | ')
+          );
+        }
+        return constrainedPlan as WeeklyWorkoutPlan;
+      } catch (e) {
+        console.warn('[WorkoutBuilder] MI constraint apply failed:', e);
+        return plan;
+      }
     })();
     const finalWeeklyPlan = enforceSystemicWeeklySetTargets(progressionAdjustedPlan);
 
@@ -2656,7 +2735,7 @@ export default function WorkoutScreen({
       return;
     }
 
-    const completedSets = exerciseLogs.flatMap(log => 
+    const completedSets = exerciseLogs.flatMap(log =>
       log.sets.filter(set => set.completed)
     );
     if (completedSets.length === 0) {
@@ -2678,15 +2757,49 @@ export default function WorkoutScreen({
       duration: currentWorkout.duration
     };
 
-    setWorkoutLogs(prev => [workoutLog, ...prev]);
-    setShowWorkoutModal(false);
-    setCurrentWorkout(null);
-    setCurrentWeeklyPlan(null);
-    setExerciseLogs([]);
-    setCurrentExerciseIndex(0);
-    setCurrentSetIndex(0);
-    setNotes('');
-    Alert.alert('Success', 'Workout completed and logged!');
+    const finalize = () => {
+      setWorkoutLogs(prev => [workoutLog, ...prev]);
+      setShowWorkoutModal(false);
+      setCurrentWorkout(null);
+      setCurrentWeeklyPlan(null);
+      setExerciseLogs([]);
+      setCurrentExerciseIndex(0);
+      setCurrentSetIndex(0);
+      setNotes('');
+      void import('./src/utils/workoutCompleteNotifications').then(({ notifyWorkoutCompleted }) =>
+        notifyWorkoutCompleted({
+          programName: currentWorkout.name,
+          duration: workoutLog.duration,
+          exerciseCount: completedExercises.length,
+        })
+      );
+    };
+
+    void (async () => {
+      try {
+        const shouldAsk = await shouldPromptMovementResponseFeedback();
+        if (shouldAsk) {
+          const lastName =
+            completedExercises[completedExercises.length - 1]?.name ??
+            trackingExercises[currentExerciseIndex]?.name ??
+            null;
+          setMovementFeedbackExercise(lastName);
+          pendingFinishFinalizeRef.current = finalize;
+          setMovementFeedbackVisible(true);
+          return;
+        }
+      } catch (e) {
+        console.warn('[WorkoutScreen] movement feedback gate failed', e);
+      }
+      finalize();
+    })();
+  };
+
+  const completeMovementFeedbackAndFinish = () => {
+    setMovementFeedbackVisible(false);
+    const pending = pendingFinishFinalizeRef.current;
+    pendingFinishFinalizeRef.current = null;
+    if (pending) pending();
   };
 
   const getCompletionRate = () => {
@@ -3145,6 +3258,16 @@ export default function WorkoutScreen({
                 )}
                   </>
                 )}
+                <DiscomfortReportCTA
+                  compact
+                  label="Report discomfort"
+                  onPress={() => {
+                    setDiscomfortExerciseName(
+                      trackingExercises[currentExerciseIndex]?.name ?? null
+                    );
+                    setDiscomfortVisible(true);
+                  }}
+                />
               </View>
             )}
 
@@ -3205,6 +3328,16 @@ export default function WorkoutScreen({
               />
             </View>
 
+            <DiscomfortReportCTA
+              label="Something doesn't feel right?"
+              onPress={() => {
+                setDiscomfortExerciseName(
+                  trackingExercises[currentExerciseIndex]?.name ?? null
+                );
+                setDiscomfortVisible(true);
+              }}
+            />
+
             {/* Save and Finish Buttons */}
             <View style={styles.workoutActions}>
               <TouchableOpacity
@@ -3235,6 +3368,19 @@ export default function WorkoutScreen({
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      <DiscomfortAssessmentFlow
+        visible={discomfortVisible}
+        exerciseName={discomfortExerciseName}
+        onClose={() => setDiscomfortVisible(false)}
+      />
+
+      <MovementResponseFeedbackModal
+        visible={movementFeedbackVisible}
+        exerciseName={movementFeedbackExercise}
+        onClose={completeMovementFeedbackAndFinish}
+        onDone={completeMovementFeedbackAndFinish}
+      />
 
       {/* Save Plan Modal */}
       <Modal

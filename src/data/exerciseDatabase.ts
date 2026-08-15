@@ -1,17 +1,37 @@
 /**
  * Comprehensive Exercise Database
- * 
+ *
  * Contains detailed information for each exercise including:
  * - ID: Unique identifier
  * - Name: Exercise name
  * - Movement pattern: Type of movement
- * - Primary Muscle Group: Main muscle targeted
- * - Secondary Muscle Groups: Additional muscles worked
- * - Equipment Required: Equipment needed
- * - Difficulty Level: Beginner, intermediate, or advanced
- * - Potential Risks/Injuries: Common risks associated with the exercise
- * - Alternative movements: Similar exercises
+ * - Primary / secondary muscles
+ * - Equipment, difficulty, risks, alternatives
+ * - Movement Intelligence fields (qualities, joint demands, regressions/progressions)
+ *
+ * Workout generation is unchanged in this phase; MI metadata is for future adaptive programming.
  */
+
+import {
+  applyMovementIntelligenceToCatalog,
+  type DemandLevel,
+  type ExerciseLaterality,
+  type ExerciseMovementQuality,
+  type JointDemand,
+  type MiMovementPattern,
+} from './exerciseMovementIntelligence';
+
+export type { DemandLevel, ExerciseLaterality, ExerciseMovementQuality, JointDemand, MiMovementPattern };
+export {
+  applyMovementIntelligenceToCatalog,
+  enrichExerciseWithMovementIntelligence,
+  findSubstitutesByQuality,
+  getExerciseEquipment,
+  getExerciseRelationships,
+  getExercisesByMovementQuality,
+  resolveExerciseNameInCatalog,
+  toMiMovementPattern,
+} from './exerciseMovementIntelligence';
 
 export type MovementPattern = 
   | 'push' 
@@ -86,6 +106,38 @@ export interface ExerciseData {
   videoUrl?: string;
   // Video thumbnail URL (optional)
   videoThumbnail?: string;
+
+  // ---- Movement Intelligence (populated for catalog rows; optional for customs) ----
+  /** Normalized primary muscles (mirrors primaryMuscleGroup). */
+  primaryMuscles?: string[];
+  /** Normalized secondary muscles (mirrors secondaryMuscleGroups). */
+  secondaryMuscles?: string[];
+  jointDemands?: JointDemand[];
+  mobilityDemand?: DemandLevel;
+  stabilityDemand?: DemandLevel;
+  strengthDemand?: DemandLevel;
+  /** Multi-joint / multi-limb coordination load. */
+  coordinationDemand?: DemandLevel;
+  /** Balance / base-of-support challenge. */
+  balanceDemand?: DemandLevel;
+  /**
+   * Motor-control / precision demand (scapular timing, knee tracking, etc.).
+   * Distinct from coordinationDemand (whole-body sequencing).
+   */
+  movementControlDemand?: DemandLevel;
+  /** Skill / learning cost of the movement (form cues, timing, positions). */
+  technicalComplexity?: DemandLevel;
+  movementQualities?: ExerciseMovementQuality[];
+  /** unilateral | bilateral | alternating */
+  laterality?: ExerciseLaterality;
+  /** Easier related exercises (catalog names when resolved). */
+  regressions?: string[];
+  /** Harder related exercises (catalog names when resolved). */
+  progressions?: string[];
+  /** Peer variations resolved from alternatives (+ aliases). */
+  variations?: string[];
+  /** MI-aligned pattern (overhead / rotate / isolation / other, etc.). */
+  miMovementPattern?: MiMovementPattern;
 }
 
 export const exerciseDatabase: ExerciseData[] = [
@@ -2691,7 +2743,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'hip-thrusts-barbell',
     name: 'Hip Thrusts (Barbell)',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['barbell', 'bench'],
@@ -2705,7 +2757,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'hip-thrusts-dumbbells',
     name: 'Hip Thrusts (Dumbbells)',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['dumbbells', 'bench'],
@@ -2719,7 +2771,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'hip-thrusts-resistance-bands',
     name: 'Hip Thrusts (Resistance Bands)',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['resistance bands', 'bench'],
@@ -2733,7 +2785,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'glute-bridge-bodyweight',
     name: 'Glute Bridge (Bodyweight)',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['mat'],
@@ -2747,7 +2799,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'glute-bridge-dumbbells',
     name: 'Glute Bridge (Dumbbells)',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['dumbbells', 'mat'],
@@ -2761,7 +2813,7 @@ export const exerciseDatabase: ExerciseData[] = [
   {
     id: 'banded-glute-bridges',
     name: 'Banded Glute Bridges',
-    movementPattern: 'push',
+    movementPattern: 'hinge',
     primaryMuscleGroup: 'glutes',
     secondaryMuscleGroups: ['hamstrings', 'core'],
     equipmentRequired: ['resistance bands', 'mat'],
@@ -2774,20 +2826,6 @@ export const exerciseDatabase: ExerciseData[] = [
   },
 
   // Core Exercise Variations
-  {
-    id: 'side-plank',
-    name: 'Side Plank',
-    movementPattern: 'isometric',
-    primaryMuscleGroup: 'core',
-    secondaryMuscleGroups: ['obliques', 'shoulders'],
-    equipmentRequired: ['mat'],
-    difficulty: 'intermediate',
-    potentialRisks: ['Lower back strain', 'Wrist strain', 'Shoulder fatigue'],
-    alternatives: ['Plank', 'Knee Side Plank', 'Bird Dog'],
-    category: 'balance',
-    muscleGroups: ['core', 'obliques', 'shoulders'],
-    equipment: ['mat']
-  },
   {
     id: 'forearm-plank',
     name: 'Forearm Plank',
@@ -3536,6 +3574,9 @@ export const exerciseDatabase: ExerciseData[] = [
   }
 ];
 
+/** Number of catalog rows enriched with Movement Intelligence metadata at load. */
+export const EXERCISE_MI_ENRICHED_COUNT = applyMovementIntelligenceToCatalog(exerciseDatabase);
+
 /**
  * Get exercise data by name
  */
@@ -3584,8 +3625,36 @@ export const getExercisesByMovementPattern = (pattern: MovementPattern): Exercis
 export const getAlternativeExercises = (exerciseName: string): ExerciseData[] => {
   const exercise = getExerciseData(exerciseName);
   if (!exercise) return [];
-  
-  return exercise.alternatives
-    .map(altName => getExerciseData(altName))
+
+  // Prefer MI-resolved variations (aliases applied at catalog load).
+  const labels =
+    exercise.variations && exercise.variations.length > 0
+      ? exercise.variations
+      : exercise.alternatives;
+
+  return labels
+    .map((altName) => getExerciseData(altName))
+    .filter((ex): ex is ExerciseData => ex !== undefined);
+};
+
+/**
+ * Regressions (easier related movements) when present on the catalog row.
+ */
+export const getRegressionExercises = (exerciseName: string): ExerciseData[] => {
+  const exercise = getExerciseData(exerciseName);
+  if (!exercise?.regressions?.length) return [];
+  return exercise.regressions
+    .map((n) => getExerciseData(n))
+    .filter((ex): ex is ExerciseData => ex !== undefined);
+};
+
+/**
+ * Progressions (harder related movements) when present on the catalog row.
+ */
+export const getProgressionExercises = (exerciseName: string): ExerciseData[] => {
+  const exercise = getExerciseData(exerciseName);
+  if (!exercise?.progressions?.length) return [];
+  return exercise.progressions
+    .map((n) => getExerciseData(n))
     .filter((ex): ex is ExerciseData => ex !== undefined);
 };

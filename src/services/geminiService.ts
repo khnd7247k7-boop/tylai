@@ -12,10 +12,14 @@ import { getGeminiProxyUrl, getLegacyGeminiApiKey, getGeminiModelOverride, isGem
 import { humanizeGeminiError } from '../utils/geminiErrors';
 import type { AiMealEstimate } from '../types/nutritionLogging';
 import { parseAiMealEstimatePayload } from '../utils/aiMealEstimateParse';
+import { getRestaurantRecommendations } from './NutritionService';
+import {
+  enforceAiSafetyConstraints,
+  MOVEMENT_INTELLIGENCE_AI_RULES,
+  type MovementIntelligenceAiContext,
+} from './MovementIntelligenceAiContext';
 
 export { parseAiMealEstimatePayload } from '../utils/aiMealEstimateParse';
-
-import { getRestaurantRecommendations } from './NutritionService';
 
 /** Default low-latency models (newest first); 1.5 Flash often returns 404 on current API. */
 const DEFAULT_MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'] as const;
@@ -112,7 +116,7 @@ When adherence is low, distinguish: low motivation, lack of time, poor recovery,
 
 Tone: encouraging, practical, respectful. You are not a physician; do not diagnose or prescribe medication. If asked for medical advice, direct to a qualified clinician.
 
-Data rule: For any statement about the user's numbers, habits, streaks, nutrition, training volume, or wearable metrics, rely ONLY on the JSON labeled "health_context". If a detail is missing, say you do not have that data — do not guess. General wellness education that does not depend on private metrics is fine.
+Data rule: For any statement about the user's numbers, habits, streaks, nutrition, training volume, wearable metrics, or movement adaptations, rely ONLY on the JSON labeled "health_context". If a detail is missing, say you do not have that data — do not guess. General wellness education that does not depend on private metrics is fine.
 
 Onboarding rule: Training goals, schedule, experience, equipment, preferences, recovery, injuries, and challenge level come from health_context.assessment and onboardingComplete. Nutrition calorie targets come from assessment.bmr, assessment.tdee, assessment.calorieGoal, and assessment.proteinGoal when present — suggest food logging to refine targets; mention goalAdaptation.nutrition when the user asks about plateaus or changing calories. If onboardingComplete is false or assessment fields are null, tell the user to finish the onboarding wizard — do not invent a training plan or assume their schedule, goals, or constraints.
 
@@ -123,7 +127,7 @@ function buildCoachSystemInstruction(mindfulMinutes: number | null): string {
     mindfulMinutes === null
       ? `Mindfulness (HealthKit mindfulSession total minutes for today): unknown. Do not assume the user logged zero mindful minutes. Avoid guilt; optional micro-practices are fine when relevant.`
       : `Mindfulness (HealthKit mindfulSession aggregate for the user's local calendar day; no raw event timestamps): ${mindfulMinutes} minutes. If this is 0, suggest a quick 1-minute breathing exercise when it fits the conversation. If greater than 0, praise their consistency and connect mindfulness to physical recovery using only recovery-related metrics present in health_context (for example sleep or activity summaries). Never invent HRV values unless explicit HRV fields appear in health_context.`;
-  return `${COACH_BASE_INSTRUCTION}\n\n${mindfulLine}`;
+  return `${COACH_BASE_INSTRUCTION}\n\n${mindfulLine}\n\n${MOVEMENT_INTELLIGENCE_AI_RULES}`;
 }
 
 const DAILY_MINDSET_SYSTEM = `You are a Certified Fitness & Wellness Coach. Output exactly one short "State of Mind" check-in prompt the user can answer in one sentence.
@@ -169,13 +173,95 @@ async function generateMultimodalViaProxy(
   image: { mimeType: string; data: string },
   model?: string
 ): Promise<string> {
+  return generateMultimodalImagesViaProxy(prompt, [image], model);
+}
+
+async function generateMultimodalImagesViaProxy(
+  prompt: string,
+  images: Array<{ mimeType: string; data: string }>,
+  model?: string
+): Promise<string> {
   const body = await proxyJsonFetch<{ text?: string; error?: string; details?: string }>('/api/gemini', {
     method: 'POST',
-    body: JSON.stringify({ prompt, model, image }),
+    body: JSON.stringify({
+      prompt,
+      model,
+      images: images.map((img) => ({
+        mimeType: img.mimeType,
+        data: img.data.replace(/^data:[^;]+;base64,/, '').trim(),
+      })),
+    }),
   });
   const text = body && typeof body.text === 'string' ? body.text.trim() : '';
   if (!text) throw new Error('Empty text response from Gemini proxy.');
   return text;
+}
+
+async function generateMultimodalImagesWithModelFallback(
+  systemInstruction: string,
+  userPayload: string,
+  images: Array<{ mimeType: string; data: string }>,
+  options?: { modelCandidates?: string[] }
+): Promise<string> {
+  if (!images.length) throw new Error('No images provided for multimodal request.');
+  if (images.length === 1) {
+    return generateMultimodalWithModelFallback(systemInstruction, userPayload, images[0], options);
+  }
+
+  const candidates =
+    options?.modelCandidates?.length && options.modelCandidates.length > 0
+      ? options.modelCandidates
+      : resolveModelCandidates();
+  const proxyUrl = getGeminiProxyUrlLocal();
+  const prompt = `[system]\n${systemInstruction}\n\n[user]\n${userPayload}`;
+  let lastError: unknown;
+
+  for (const modelId of candidates) {
+    try {
+      if (proxyUrl) {
+        try {
+          return await generateMultimodalImagesViaProxy(prompt, images, modelId);
+        } catch (proxyErr) {
+          if (isModelNotFoundError(proxyErr) && candidates.indexOf(modelId) < candidates.length - 1) {
+            lastError = proxyErr;
+            continue;
+          }
+          throw humanizeGeminiError(proxyErr);
+        }
+      }
+
+      if (__DEV__) {
+        const legacyKey = getLegacyGeminiApiKey();
+        if (legacyKey) {
+          const genAI = new GoogleGenerativeAI(legacyKey);
+          const model = genAI.getGenerativeModel({ model: modelId, systemInstruction });
+          const result = await withGeminiRetries(() =>
+            model.generateContent([
+              { text: userPayload },
+              ...images.map((img) => ({
+                inlineData: { mimeType: img.mimeType, data: img.data },
+              })),
+            ])
+          );
+          const text = result.response?.text?.() || '';
+          if (!text.trim()) throw new Error('Empty text response from Gemini.');
+          return text.trim();
+        }
+      }
+
+      throw new Error(
+        'Gemini is not configured. Add EXPO_PUBLIC_GEMINI_PROXY_URL (and run gemini-proxy) or EXPO_PUBLIC_GEMINI_API_KEY for dev.'
+      );
+    } catch (err) {
+      lastError = err;
+      if (isModelNotFoundError(err) && candidates.indexOf(modelId) < candidates.length - 1) {
+        continue;
+      }
+      throw humanizeGeminiError(err);
+    }
+  }
+
+  throw humanizeGeminiError(lastError ?? new Error('Gemini request failed.'));
 }
 
 async function generateMultimodalWithModelFallback(
@@ -361,7 +447,25 @@ export async function getCoachResponse(
   const payload = `[health_context — JSON; only source for user-specific metrics]\n${JSON.stringify(healthData)}\n\n${
     historyText ? `[chat_history]\n${historyText}\n\n` : ''
   }[user message]\n${trimmed}`;
-  return generateTextWithModelFallback(systemInstruction, payload);
+  const text = await generateTextWithModelFallback(systemInstruction, payload);
+
+  try {
+    const coaching = healthData.coachingContext as
+      | { movementIntelligence?: MovementIntelligenceAiContext }
+      | undefined;
+    const mi = coaching?.movementIntelligence;
+    if (mi?.source === 'tyl_movement_intelligence_v1') {
+      const enforced = enforceAiSafetyConstraints(text, mi);
+      if (enforced.conflicts.length) {
+        console.warn('[getCoachResponse] MI constraint conflicts', enforced.conflicts);
+      }
+      return enforced.text;
+    }
+  } catch {
+    // non-blocking
+  }
+
+  return text;
 }
 
 /** Remaining macros today (or custom limits) for eating-out suggestions. */
@@ -963,4 +1067,47 @@ Return JSON with this schema:
     data,
   });
   return parseFoodPackageVisionPayload(text);
+}
+
+const PROGRESS_POSE_VISION_SYSTEM = `You classify physique progress photos for a fitness app.
+Decide whether each photo shows the person from the FRONT, SIDE (profile), or BACK.
+Use body orientation, face visibility, and silhouette — not clothing color.
+Return JSON only. Prefer distinct photo indices for front, side, and back when enough photos exist.`;
+
+/**
+ * Classify a set of same-day progress photos into front / side / back.
+ * Images are ordered Photo 0..N-1. Does not require Premium (structural grouping).
+ */
+export async function classifyProgressPhotoPoses(
+  images: Array<{ mimeType: string; data: string }>
+): Promise<string> {
+  if (!images.length) throw new Error('No progress photos to classify.');
+  const n = images.length;
+  const userPayload = `These ${n} image(s) are progress photos from the same day, labeled Photo 0 through Photo ${n - 1} in the order provided.
+
+Return JSON:
+{
+  "assignments": {
+    "front": <index 0..${n - 1} or omit if not present>,
+    "side": <index 0..${n - 1} or omit if not present>,
+    "back": <index 0..${n - 1} or omit if not present>
+  },
+  "confidence": <0..1>,
+  "notes": string|null
+}
+
+Rules:
+- Use each index at most once.
+- Only assign poses you can see. If there are fewer than 3 photos, omit missing poses from "assignments" (do not reuse an index for a pose that is not in the set).
+- Prefer unique front / side / back when all three are present.
+- If unsure, pick the most likely pose and lower confidence.`;
+
+  return generateMultimodalImagesWithModelFallback(
+    PROGRESS_POSE_VISION_SYSTEM,
+    userPayload,
+    images.map((img) => ({
+      mimeType: img.mimeType || 'image/jpeg',
+      data: img.data.replace(/^data:[^;]+;base64,/, '').trim(),
+    }))
+  );
 }

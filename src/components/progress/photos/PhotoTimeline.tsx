@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { AppTheme } from '../../../theme/appVisualTheme';
 import type { PhotoSession, PhotoPose } from '../../../types/progressPhotos';
+import { firstAvailablePose, isPhotoUri } from '../../../types/progressPhotos';
 import type { SessionProgressMetrics } from '../../../types/sessionProgressMetrics';
 import { formatTimelineLabel } from '../../../services/PhotoService';
 import { computeSessionCompleteness } from '../../../utils/sessionCompleteness';
@@ -160,7 +161,13 @@ export default function PhotoTimeline({
                 <WeekNode
                   label={label}
                   selected={selected}
-                  thumbUri={session.photos[thumbPose] || session.photos.front}
+                  thumbUri={
+                    (thumbPose && isPhotoUri(session.photos[thumbPose])
+                      ? session.photos[thumbPose]
+                      : undefined) ||
+                    session.photos[firstAvailablePose(session.photos)] ||
+                    undefined
+                  }
                   filled={completeness.ratio}
                   milestoneEmoji={marks[0]?.emoji}
                   onPress={() => {

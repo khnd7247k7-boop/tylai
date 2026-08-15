@@ -25,7 +25,8 @@ type MoreTarget =
   | 'emotional'
   | 'mental'
   | 'workout'
-  | 'nutritionSearch';
+  | 'nutritionSearch'
+  | 'movementIntelligence';
 
 type RowDef = {
   key: MoreTarget | 'premium' | 'support' | 'feedback';
@@ -72,6 +73,12 @@ const SECTIONS: SectionDef[] = [
         key: 'workout',
         title: 'AI Workout Builder',
         subtitle: 'Personalized plans from your coaching profile',
+        premiumOnly: true,
+      },
+      {
+        key: 'movementIntelligence',
+        title: 'Movement Intelligence',
+        subtitle: 'See how training adapts to your body',
         premiumOnly: true,
       },
       {

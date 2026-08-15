@@ -45,7 +45,7 @@ if (Platform.OS !== 'web') {
 interface PhotoCaptureFlowProps {
   visible: boolean;
   onClose: () => void;
-  onComplete: (captures: Record<PhotoPose, string>) => Promise<void>;
+  onComplete: (captures: Partial<Record<PhotoPose, string>>) => Promise<void>;
   /** When set, pre-fill retake flow for an existing session date. */
   retake?: boolean;
 }
@@ -100,6 +100,25 @@ export default function PhotoCaptureFlow({
     setCameraFacing((prev) => (prev === 'front' ? 'back' : 'front'));
   };
 
+  const capturedCount = PHOTO_POSES.filter((p) => Boolean(captures[p])).length;
+
+  const finishWithCaptures = async (nextCaptures: Partial<Record<PhotoPose, string>>) => {
+    if (!PHOTO_POSES.some((p) => Boolean(nextCaptures[p]))) {
+      Alert.alert('Need a photo', 'Capture at least one pose before finishing.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onComplete(nextCaptures);
+      onClose();
+    } catch (e) {
+      Alert.alert('Save failed', 'Could not save progress photos. Please try again.');
+      console.warn('[PhotoCaptureFlow]', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCapture = async () => {
     if (!cameraRef.current || capturing) return;
     setCapturing(true);
@@ -116,17 +135,32 @@ export default function PhotoCaptureFlow({
       if (stepIndex < PHOTO_POSES.length - 1) {
         setStepIndex(stepIndex + 1);
       } else {
-        setSaving(true);
-        await onComplete(nextCaptures as Record<PhotoPose, string>);
-        onClose();
+        await finishWithCaptures(nextCaptures);
       }
     } catch (e) {
       Alert.alert('Capture failed', 'Could not take the photo. Please try again.');
       console.warn('[PhotoCaptureFlow]', e);
     } finally {
       setCapturing(false);
-      setSaving(false);
     }
+  };
+
+  const handleSkipPose = async () => {
+    if (capturing || saving) return;
+    const nextCaptures = { ...captures };
+    delete nextCaptures[currentPose];
+    setCaptures(nextCaptures);
+
+    if (stepIndex < PHOTO_POSES.length - 1) {
+      setStepIndex(stepIndex + 1);
+      return;
+    }
+    await finishWithCaptures(nextCaptures);
+  };
+
+  const handleFinishEarly = async () => {
+    if (capturing || saving) return;
+    await finishWithCaptures(captures);
   };
 
   const handleBack = () => {
@@ -155,10 +189,22 @@ export default function PhotoCaptureFlow({
           <View style={styles.headerCenter}>
             <Text style={styles.stepLabel}>
               Step {stepIndex + 1} of {PHOTO_POSES.length}
+              {capturedCount > 0 ? ` · ${capturedCount} saved` : ''}
             </Text>
             <Text style={styles.poseTitle}>{PHOTO_POSE_LABELS[currentPose]}</Text>
           </View>
-          <View style={styles.headerBtn} />
+          {capturedCount > 0 ? (
+            <TouchableOpacity
+              onPress={() => void handleFinishEarly()}
+              style={styles.headerBtnRight}
+              hitSlop={12}
+              disabled={capturing || saving}
+            >
+              <Text style={styles.headerBtnText}>Done</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerBtn} />
+          )}
         </View>
 
         <View style={styles.previewWrap}>
@@ -250,10 +296,22 @@ export default function PhotoCaptureFlow({
           <Text style={styles.captureHint}>
             {saving
               ? 'Saving session…'
-              : `Capture ${PHOTO_POSE_LABELS[currentPose]} · ${
-                  cameraFacing === 'back' ? 'rear camera' : 'front camera'
-                }`}
+              : `Capture ${PHOTO_POSE_LABELS[currentPose]} · optional — skip if you don’t want this pose`}
           </Text>
+          <TouchableOpacity
+            style={styles.skipBtn}
+            onPress={() => void handleSkipPose()}
+            disabled={capturing || saving}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.skipBtnText}>
+              {stepIndex < PHOTO_POSES.length - 1
+                ? `Skip ${PHOTO_POSE_LABELS[currentPose]}`
+                : capturedCount > 0
+                  ? `Skip ${PHOTO_POSE_LABELS[currentPose]} & finish`
+                  : `Skip ${PHOTO_POSE_LABELS[currentPose]}`}
+            </Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     </Modal>
@@ -274,9 +332,24 @@ const styles = StyleSheet.create({
   headerBtn: {
     width: 72,
   },
+  headerBtnRight: {
+    width: 72,
+    alignItems: 'flex-end',
+  },
   headerBtnText: {
     color: AppTheme.accent,
     fontSize: 16,
+    fontWeight: '600',
+  },
+  skipBtn: {
+    marginTop: 14,
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  skipBtnText: {
+    color: AppTheme.textMuted,
+    fontSize: 15,
     fontWeight: '600',
   },
   headerCenter: {

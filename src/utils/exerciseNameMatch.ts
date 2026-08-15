@@ -51,11 +51,35 @@ function tokenOverlap(a: string, b: string): number {
   return hit / Math.max(ta.size, tb.size);
 }
 
+function tokensOf(normalized: string): string[] {
+  return normalized.split(' ').filter(Boolean);
+}
+
+/**
+ * True when raw is a more specific variant of candidate
+ * (e.g. "dumbbell squats" vs "squats") — never collapse those.
+ */
+export function isMoreSpecificExerciseName(rawName: string, candidateName: string): boolean {
+  const a = tokensOf(normalizeExerciseName(rawName));
+  const b = tokensOf(normalizeExerciseName(candidateName));
+  if (!a.length || !b.length || a.length <= b.length) return false;
+  return b.every((t) => a.includes(t));
+}
+
 export function scoreExerciseNameMatch(rawName: string, candidateName: string): number {
   const a = normalizeExerciseName(rawName);
   const b = normalizeExerciseName(candidateName);
   if (!a || !b) return 0;
   if (a === b) return 1;
+
+  // "Dumbbell Squats" contains "Squats" — that is NOT a near-exact match.
+  if (isMoreSpecificExerciseName(a, b) || isMoreSpecificExerciseName(b, a)) {
+    const tokens = tokenOverlap(a, b);
+    const bigram = bigramSimilarity(a, b);
+    // Cap below the auto-remap threshold so the plan keeps its wording.
+    return Math.min(0.7, Math.max(bigram * 0.85, tokens * 0.85));
+  }
+
   if (a.includes(b) || b.includes(a)) {
     return 0.92;
   }
@@ -108,7 +132,8 @@ export function matchExerciseName(
     if (!best || score > best.score) best = { entry, score };
   }
 
-  if (!best || best.score < 0.72) {
+  if (!best || best.score < 0.72 || isMoreSpecificExerciseName(trimmed, best.entry.name)) {
+    // Keep the plan's exact wording (e.g. "Dumbbell Squats") and add it as a custom later.
     return {
       matchedName: trimmed,
       matchConfidence: 'unmapped',

@@ -23,8 +23,15 @@ import {
   loadUserCustomExercises,
   resolveExerciseData,
 } from './src/utils/userCustomExercises';
-import { cascadeStringSetFieldToNext } from './src/utils/setLoggingPrefill';
+import {
+  cascadeStringSetFieldToNext,
+  plannedRepsInput,
+  plannedWeightInput,
+  resolveSetSlotCount,
+} from './src/utils/setLoggingPrefill';
 import { useSmallWins } from './src/context/SmallWinsContext';
+import TrackCardioSection from './src/components/workout/TrackCardioSection';
+import type { CardioLog } from './data/workoutPrograms';
 
 interface LogPastWorkoutScreenProps {
   onBack: () => void;
@@ -100,6 +107,14 @@ export default function LogPastWorkoutScreen({
   const [datePickerKey, setDatePickerKey] = useState(0);
   /** Manual adds default expanded; plan-loaded rows start collapsed until the user expands. */
   const [expandOverride, setExpandOverride] = useState<Record<string, boolean>>({});
+  const [cardio, setCardio] = useState<CardioLog | null>(null);
+  const cardioWindow = useMemo(() => {
+    const center = selectedDate.getTime();
+    return {
+      start: new Date(center - 3 * 60 * 60 * 1000),
+      end: new Date(center + 3 * 60 * 60 * 1000),
+    };
+  }, [selectedDate]);
 
   const isExerciseExpanded = useCallback(
     (ex: ExerciseEntry) => expandOverride[ex.id] !== false,
@@ -350,24 +365,26 @@ export default function LogPastWorkoutScreen({
   };
 
   const handleSetChange = (exerciseId: string, setNumber: number, field: 'weight' | 'reps', value: string) => {
-    setExercises(exercises.map(ex => {
-      if (ex.id !== exerciseId) return ex;
-      const setIdx = ex.sets.findIndex((s) => s.setNumber === setNumber);
-      let sets = ex.sets.map((set) => {
-        if (set.setNumber === setNumber) {
-          return {
-            ...set,
-            [field]: value,
-            completed: value.trim() !== '',
-          };
+    setExercises((prev) =>
+      prev.map((ex) => {
+        if (ex.id !== exerciseId) return ex;
+        const setIdx = ex.sets.findIndex((s) => s.setNumber === setNumber);
+        let sets = ex.sets.map((set) => {
+          if (set.setNumber === setNumber) {
+            return {
+              ...set,
+              [field]: value,
+              completed: value.trim() !== '',
+            };
+          }
+          return set;
+        });
+        if (setIdx >= 0) {
+          sets = cascadeStringSetFieldToNext(sets, setIdx, field, value);
         }
-        return set;
-      });
-      if (setIdx >= 0) {
-        sets = cascadeStringSetFieldToNext(sets, setIdx, field, value);
-      }
-      return { ...ex, sets };
-    }));
+        return { ...ex, sets };
+      })
+    );
   };
 
   const clonePlanForTemplate = (plan: any) => {
@@ -405,14 +422,16 @@ export default function LogPastWorkoutScreen({
     if (plan.weeklyPlan?.weekDays?.length > 0) {
       const dayExercises = plan.weeklyPlan.weekDays[dayIndex]?.exercises ?? [];
       dayExercises.forEach((ex: any, idx: number) => {
+        const weight = plannedWeightInput(ex?.weight);
+        const reps = plannedRepsInput(ex);
         planExercises.push({
           // Fresh ids so this log is not linked to saved-plan exercise rows
           id: `log-${Date.now()}-${dayIndex}-${idx}`,
           name: String(ex?.name || `Exercise ${idx + 1}`),
-          sets: Array.from({ length: ex.sets || 3 }, (_, i) => ({
+          sets: Array.from({ length: resolveSetSlotCount(ex?.sets) }, (_, i) => ({
             setNumber: i + 1,
-            weight: '',
-            reps: '',
+            weight,
+            reps,
             completed: false,
           })),
         });
@@ -423,13 +442,15 @@ export default function LogPastWorkoutScreen({
       }
     } else if (Array.isArray(plan.exercises)) {
       plan.exercises.forEach((ex: any, idx: number) => {
+        const weight = plannedWeightInput(ex?.weight);
+        const reps = plannedRepsInput(ex);
         planExercises.push({
           id: `log-${Date.now()}-${idx}`,
           name: String(ex?.name || `Exercise ${idx + 1}`),
-          sets: Array.from({ length: ex.sets || 3 }, (_, i) => ({
+          sets: Array.from({ length: resolveSetSlotCount(ex?.sets) }, (_, i) => ({
             setNumber: i + 1,
-            weight: '',
-            reps: '',
+            weight,
+            reps,
             completed: false,
           })),
         });
@@ -495,6 +516,8 @@ export default function LogPastWorkoutScreen({
     const workoutDate = new Date(selectedDate);
     workoutDate.setSeconds(0, 0);
     const dateString = workoutDate.toISOString();
+    const strengthMin = completedExercises.length * 5;
+    const cardioMin = cardio && cardio.durationMin > 0 ? cardio.durationMin : 0;
 
     const session: WorkoutSession = {
       id: Date.now().toString(),
@@ -502,7 +525,7 @@ export default function LogPastWorkoutScreen({
       programId: isDaily ? `daily-${Date.now()}` : templatePlanId || 'manual',
       programName: workoutName,
       date: dateString,
-      duration: completedExercises.length * 5, // Estimate 5 min per exercise
+      duration: strengthMin + cardioMin,
       exercises: completedExercises,
       notes: isDaily
         ? templatePlanName
@@ -510,6 +533,7 @@ export default function LogPastWorkoutScreen({
           : 'Daily workout'
         : '',
       completed: true,
+      cardio: cardio && cardio.durationMin > 0 ? cardio : undefined,
     };
 
     // Save to history + refresh Progress / Fitness
@@ -525,6 +549,13 @@ export default function LogPastWorkoutScreen({
       }
 
       notifyUserDataReady();
+
+      const { notifyWorkoutCompleted } = await import('./src/utils/workoutCompleteNotifications');
+      void notifyWorkoutCompleted({
+        programName: workoutName,
+        duration: session.duration,
+        exerciseCount: completedExercises.length,
+      });
 
       const finish = () => {
         onComplete(session);
@@ -858,6 +889,18 @@ export default function LogPastWorkoutScreen({
               </Text>
             </View>
           )}
+
+          <TrackCardioSection
+            value={cardio}
+            onChange={setCardio}
+            windowStart={cardioWindow.start}
+            windowEnd={cardioWindow.end}
+            workoutSummary={{
+              name: workoutName.trim() || (isDaily ? 'Daily workout' : 'Logged workout'),
+              exerciseNames: exercises.map((ex) => ex.name).filter(Boolean),
+              durationMin: exercises.length > 0 ? exercises.length * 5 : undefined,
+            }}
+          />
 
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveButtonText}>

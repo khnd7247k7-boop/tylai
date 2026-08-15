@@ -25,7 +25,7 @@ import {
   persistExerciseSubstitutionInSavedPlan,
   type ExerciseSubstitutionPersistTarget,
 } from './src/utils/persistExerciseSubstitution';
-import { prefillNumericSetFromPrevious } from './src/utils/setLoggingPrefill';
+import { prefillNumericSetFromPrevious, resolveSetSlotCount } from './src/utils/setLoggingPrefill';
 import {
   formatStretchProtocolLabel,
   getStretchProtocol,
@@ -38,6 +38,14 @@ import {
   getSupersetGroupIndices,
 } from './src/utils/workoutSupersets';
 import type { ActiveWorkoutSnapshot } from './src/context/ActiveWorkoutContext';
+import TrackCardioPromptModal from './src/components/workout/TrackCardioPromptModal';
+import type { CardioLog } from './data/workoutPrograms';
+import { notifyWorkoutCompleted } from './src/utils/workoutCompleteNotifications';
+import DiscomfortAssessmentFlow, {
+  DiscomfortReportCTA,
+} from './src/components/movement/DiscomfortAssessmentFlow';
+import MovementResponseFeedbackModal from './src/components/movement/MovementResponseFeedbackModal';
+import { shouldPromptMovementResponseFeedback } from './src/services/MovementFeedbackLoopService';
 // HealthService is imported dynamically to avoid errors if expo-health isn't installed
 let HealthService: any;
 try {
@@ -103,6 +111,30 @@ export default function ProgramExecutionScreen({
   );
   const [isFinishingWorkout, setIsFinishingWorkout] = useState(false);
   const finishingWorkoutRef = useRef(false);
+  const [cardioPromptVisible, setCardioPromptVisible] = useState(false);
+  const [pendingCardio, setPendingCardio] = useState<CardioLog | null>(null);
+  const [discomfortVisible, setDiscomfortVisible] = useState(false);
+  const [discomfortExerciseName, setDiscomfortExerciseName] = useState<string | null>(null);
+  const [movementFeedbackVisible, setMovementFeedbackVisible] = useState(false);
+  const [movementFeedbackExercise, setMovementFeedbackExercise] = useState<string | null>(null);
+  const pendingFinishCardioRef = useRef<CardioLog | null>(null);
+  const [cardioWindowEnd, setCardioWindowEnd] = useState(() => new Date());
+  const pendingFinishRef = useRef<{
+    data: Array<{
+      exerciseId: string;
+      name: string;
+      skipped?: boolean;
+      sets: Array<{
+        setNumber: number;
+        reps: number;
+        weight: number;
+        restTime: number;
+        completed: boolean;
+        rir?: number;
+      }>;
+    }>;
+    notes: string;
+  } | null>(null);
   const [showSubstitutionModal, setShowSubstitutionModal] = useState(false);
   const [substitutionExerciseIndex, setSubstitutionExerciseIndex] = useState<number | null>(null);
   const [substitutionAlternatives, setSubstitutionAlternatives] = useState<ExerciseData[]>([]);
@@ -141,7 +173,7 @@ export default function ProgramExecutionScreen({
       const initialData = program.exercises.map((exercise) => ({
         exerciseId: exercise.id,
         name: exercise.name,
-        sets: Array.from({ length: exercise.sets }, (_, index) => ({
+        sets: Array.from({ length: resolveSetSlotCount(exercise.sets) }, (_, index) => ({
           setNumber: index + 1,
           reps: exercise.reps,
           weight: exercise.weight || 0,
@@ -493,7 +525,8 @@ export default function ProgramExecutionScreen({
           rir?: number;
         }>;
       }>,
-      workoutNotes: string
+      workoutNotes: string,
+      cardio?: CardioLog | null
     ) => {
       if (finishingWorkoutRef.current) return;
       finishingWorkoutRef.current = true;
@@ -523,16 +556,19 @@ export default function ProgramExecutionScreen({
           }
         }
 
+        const cardioMin =
+          cardio && cardio.durationMin > 0 ? Math.round(cardio.durationMin) : 0;
         const session: WorkoutSession = {
           id: Date.now().toString(),
           programId: currentProgram.id,
           programName: currentProgram.name,
           date: startTime.toISOString(),
-          duration,
+          duration: duration + cardioMin,
           exercises: completedExercises,
           notes: workoutNotes,
           completed: true,
           healthMetrics,
+          cardio: cardio && cardio.durationMin > 0 ? cardio : undefined,
         };
 
         try {
@@ -554,6 +590,12 @@ export default function ProgramExecutionScreen({
           console.error('Error saving workout history:', error);
         }
 
+        void notifyWorkoutCompleted({
+          programName: currentProgram.name,
+          duration: session.duration,
+          exerciseCount: completedExercises.length,
+        });
+
         onComplete(session);
       } catch (error) {
         console.error('Error finishing workout:', error);
@@ -564,6 +606,72 @@ export default function ProgramExecutionScreen({
     },
     [currentProgram, healthMetricsEnabled, onComplete, onWorkoutSessionSaved, startTime]
   );
+
+  const promptThenFinish = useCallback(
+    (
+      data: Array<{
+        exerciseId: string;
+        name: string;
+        skipped?: boolean;
+        sets: Array<{
+          setNumber: number;
+          reps: number;
+          weight: number;
+          restTime: number;
+          completed: boolean;
+          rir?: number;
+        }>;
+      }>,
+      workoutNotes: string
+    ) => {
+      if (finishingWorkoutRef.current) return;
+      pendingFinishRef.current = { data, notes: workoutNotes };
+      setCardioWindowEnd(new Date(Date.now() + 30 * 60 * 1000));
+      setCardioPromptVisible(true);
+    },
+    []
+  );
+
+  const commitPendingFinish = useCallback(
+    (cardio: CardioLog | null) => {
+      const pending = pendingFinishRef.current;
+      setCardioPromptVisible(false);
+      if (!pending) return;
+      pendingFinishCardioRef.current = cardio;
+      void (async () => {
+        try {
+          const shouldAsk = await shouldPromptMovementResponseFeedback();
+          if (shouldAsk) {
+            const names = pending.data
+              .filter((ex) => ex.skipped || ex.sets.some((s) => s.completed))
+              .map((ex) => ex.name);
+            setMovementFeedbackExercise(
+              names[names.length - 1] ??
+                exerciseData[currentExerciseIndex]?.name ??
+                null
+            );
+            setMovementFeedbackVisible(true);
+            return;
+          }
+        } catch (e) {
+          console.warn('[ProgramExecution] movement feedback gate failed', e);
+        }
+        pendingFinishRef.current = null;
+        void finishWorkout(pending.data, pending.notes, cardio);
+      })();
+    },
+    [currentExerciseIndex, exerciseData, finishWorkout]
+  );
+
+  const completeMovementFeedbackAndFinish = useCallback(() => {
+    const pending = pendingFinishRef.current;
+    const cardio = pendingFinishCardioRef.current;
+    setMovementFeedbackVisible(false);
+    pendingFinishRef.current = null;
+    pendingFinishCardioRef.current = null;
+    if (!pending) return;
+    void finishWorkout(pending.data, pending.notes, cardio);
+  }, [finishWorkout]);
 
   const handleSetComplete = (
     exerciseIndex: number,
@@ -605,10 +713,8 @@ export default function ProgramExecutionScreen({
       setExerciseData(newData);
     }
 
-    if (isWorkoutFullyDone(newData)) {
-      void finishWorkout(newData, notes);
-      return;
-    }
+    // Last set of the day: stay on this set and show Done. Auto-opening
+    // the cardio sheet used to swallow the Done/Finish tap.
 
     if (restTimerEnabled && next != null && restSec > 0) {
       setRestModalSeconds(restSec);
@@ -638,7 +744,7 @@ export default function ProgramExecutionScreen({
         setCurrentExerciseIndex(after);
         setCurrentSetIndex(0);
       } else if (isWorkoutFullyDone(exerciseData)) {
-        void finishWorkout(exerciseData, notes);
+        promptThenFinish(exerciseData, notes);
       }
       return;
     }
@@ -652,7 +758,7 @@ export default function ProgramExecutionScreen({
       setCurrentExerciseIndex(currentExerciseIndex + 1);
       resetInputsForNextExercise();
     } else if (isWorkoutFullyDone(exerciseData)) {
-      void finishWorkout(exerciseData, notes);
+      promptThenFinish(exerciseData, notes);
     }
   };
 
@@ -666,7 +772,8 @@ export default function ProgramExecutionScreen({
       return;
     }
     if (isWorkoutFullyDone(exerciseData)) {
-      void finishWorkout(exerciseData, notes);
+      // Re-open the cardio sheet if it was dismissed — never no-op.
+      promptThenFinish(exerciseData, notes);
       return;
     }
     Alert.alert(
@@ -678,7 +785,7 @@ export default function ProgramExecutionScreen({
           text: 'Log workout',
           style: 'default',
           onPress: () => {
-            void finishWorkout(exerciseData, notes);
+            promptThenFinish(exerciseData, notes);
           },
         },
       ]
@@ -759,7 +866,7 @@ export default function ProgramExecutionScreen({
             setExerciseData(newData);
 
             if (isWorkoutFullyDone(newData)) {
-              void finishWorkout(newData, notes);
+              promptThenFinish(newData, notes);
               return;
             }
 
@@ -993,6 +1100,9 @@ export default function ProgramExecutionScreen({
                             loggedSecs
                           );
                         }}
+                        onFinishWorkout={
+                          isWorkoutFullyDone(exerciseData) ? handleFinishWorkoutPress : undefined
+                        }
                         onEdit={() => handleEditSet(currentExerciseIndex, currentSetIndex)}
                         onPrevious={() => {
                           if (currentSetIndex > 0) {
@@ -1015,6 +1125,10 @@ export default function ProgramExecutionScreen({
                   set={currentExerciseData.sets[currentSetIndex]}
                   setIndex={currentSetIndex}
                   totalSets={currentExerciseData.sets.length}
+                  targetRepsLabel={currentExercise.repsPrescription}
+                  onFinishWorkout={
+                    isWorkoutFullyDone(exerciseData) ? handleFinishWorkoutPress : undefined
+                  }
                   onComplete={(weight, reps, rir) =>
                     handleSetComplete(currentExerciseIndex, currentSetIndex, weight, reps, rir)
                   }
@@ -1095,50 +1209,18 @@ export default function ProgramExecutionScreen({
             const allSetsCompleted = currentExerciseSets.every((set) => set.completed);
             const hasSets = currentExerciseSets.length > 0;
             const isLastExercise = currentExerciseIndex >= currentProgram.exercises.length - 1;
-            const allExercisesCompleted = isWorkoutFullyDone(exerciseData);
-            const hasProgress = exerciseData.some(
-              (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
-            );
-
-            if (isFinishingWorkout) {
-              return (
-                <View style={styles.doneWorkoutButton}>
-                  <Text style={styles.doneWorkoutButtonText}>Saving workout…</Text>
-                </View>
-              );
-            }
-
             const showNext =
               (allSetsCompleted && hasSets && !isLastExercise) ||
               !!exerciseData[currentExerciseIndex]?.skipped;
 
+            if (!showNext) return null;
             return (
-              <>
-                {allExercisesCompleted && hasProgress ? (
-                  <TouchableOpacity
-                    style={styles.doneWorkoutButton}
-                    onPress={handleFinishWorkoutPress}
-                  >
-                    <Text style={styles.doneWorkoutButtonText}>Finish Workout</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {showNext ? (
-                  <TouchableOpacity
-                    style={styles.nextExerciseButton}
-                    onPress={handleExerciseComplete}
-                  >
-                    <Text style={styles.nextExerciseButtonText}>Next Exercise</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {hasProgress && !allExercisesCompleted ? (
-                  <TouchableOpacity
-                    style={styles.finishWorkoutButton}
-                    onPress={handleFinishWorkoutPress}
-                  >
-                    <Text style={styles.finishWorkoutButtonText}>Finish Workout</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </>
+              <TouchableOpacity
+                style={styles.nextExerciseButton}
+                onPress={handleExerciseComplete}
+              >
+                <Text style={styles.nextExerciseButtonText}>Next Exercise</Text>
+              </TouchableOpacity>
             );
           })()}
 
@@ -1151,6 +1233,14 @@ export default function ProgramExecutionScreen({
               <Text style={styles.skipExerciseButtonText}>Skip Exercise</Text>
             </TouchableOpacity>
           )}
+
+          <DiscomfortReportCTA
+            label="Something doesn't feel right?"
+            onPress={() => {
+              setDiscomfortExerciseName(currentExercise?.name ?? null);
+              setDiscomfortVisible(true);
+            }}
+          />
         </View>
 
         {/* Exercise List */}
@@ -1229,7 +1319,9 @@ export default function ProgramExecutionScreen({
                       if (exercise.durationSeconds != null && exercise.durationSeconds > 0) {
                         return `1 set • ${exercise.durationSeconds} sec`;
                       }
-                      return `${exercise.sets} sets • ${exercise.reps} reps`;
+                      const setsLabel = exercise.setsPrescription || exercise.sets;
+                      const repsLabel = exercise.repsPrescription || exercise.reps;
+                      return `${setsLabel} sets • ${repsLabel} reps`;
                     })()}
                   </Text>
                   {!isSkipped && exerciseSets.length > 0 ? (
@@ -1274,8 +1366,61 @@ export default function ProgramExecutionScreen({
             multiline
             numberOfLines={3}
           />
+          <DiscomfortReportCTA
+            label="Something doesn't feel right?"
+            onPress={() => {
+              setDiscomfortExerciseName(currentExercise?.name ?? null);
+              setDiscomfortVisible(true);
+            }}
+          />
         </View>
       </ScrollView>
+
+      {(() => {
+        const hasProgress = exerciseData.some(
+          (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
+        );
+        if (!hasProgress && !isFinishingWorkout) return null;
+        const allDone = isWorkoutFullyDone(exerciseData);
+        return (
+          <View style={styles.stickyFinishBar}>
+            {isFinishingWorkout ? (
+              <View style={styles.doneWorkoutButton}>
+                <Text style={styles.doneWorkoutButtonText}>Saving workout…</Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.doneWorkoutButton}
+                  onPress={handleFinishWorkoutPress}
+                  accessibilityRole="button"
+                  accessibilityLabel={allDone ? 'Done' : 'Finish workout'}
+                >
+                  <Text style={styles.doneWorkoutButtonText}>
+                    {allDone ? 'Done' : 'Finish Workout'}
+                  </Text>
+                </TouchableOpacity>
+                {allDone ? (
+                  <DiscomfortReportCTA
+                    compact
+                    label="Report discomfort"
+                    onPress={() => {
+                      setDiscomfortExerciseName(currentExercise?.name ?? null);
+                      setDiscomfortVisible(true);
+                    }}
+                  />
+                ) : null}
+              </>
+            )}
+          </View>
+        );
+      })()}
+
+      <DiscomfortAssessmentFlow
+        visible={discomfortVisible}
+        exerciseName={discomfortExerciseName}
+        onClose={() => setDiscomfortVisible(false)}
+      />
 
       <RestTimerModal
         visible={restModalVisible}
@@ -1313,6 +1458,38 @@ export default function ProgramExecutionScreen({
           }}
         />
       ) : null}
+
+      <TrackCardioPromptModal
+        visible={cardioPromptVisible}
+        value={pendingCardio}
+        onChange={setPendingCardio}
+        windowStart={startTime}
+        windowEnd={cardioWindowEnd}
+        workoutSummary={{
+          name: currentProgram.name,
+          exerciseNames: exerciseData
+            .filter((ex) => ex.skipped || ex.sets.some((s) => s.completed))
+            .map((ex) => ex.name),
+          durationMin: Math.max(
+            1,
+            Math.round((Date.now() - startTime.getTime()) / 1000 / 60)
+          ),
+        }}
+        onDismiss={() => setCardioPromptVisible(false)}
+        onSkip={() => commitPendingFinish(null)}
+        onSave={() => commitPendingFinish(pendingCardio)}
+        onReportDiscomfort={() => {
+          setDiscomfortExerciseName(currentExercise?.name ?? null);
+          setDiscomfortVisible(true);
+        }}
+      />
+
+      <MovementResponseFeedbackModal
+        visible={movementFeedbackVisible}
+        exerciseName={movementFeedbackExercise}
+        onClose={completeMovementFeedbackAndFinish}
+        onDone={completeMovementFeedbackAndFinish}
+      />
     </SafeAreaView>
   );
 }
@@ -1329,11 +1506,13 @@ interface SetTrackerProps {
   setIndex: number;
   totalSets: number;
   onComplete: (weight: number, reps: number, rir?: number) => void;
+  onFinishWorkout?: () => void;
   onEdit?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
   canGoPrevious?: boolean;
   canGoNext?: boolean;
+  targetRepsLabel?: string;
   previousSetData?: {
     setNumber: number;
     weight: number;
@@ -1341,7 +1520,7 @@ interface SetTrackerProps {
   };
 }
 
-const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, onNext, canGoPrevious, canGoNext, previousSetData }: SetTrackerProps) => {
+const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, onNext, canGoPrevious, canGoNext, previousSetData, targetRepsLabel, onFinishWorkout }: SetTrackerProps) => {
   // All hooks must be called before any conditional returns
   const [weight, setWeight] = useState(() => {
     const weightValue = set?.weight;
@@ -1477,6 +1656,9 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
             onBlur={handleRepsBlur}
             editable={true}
           />
+          {targetRepsLabel && String(targetRepsLabel).includes('-') ? (
+            <Text style={styles.rirHint}>Target: {targetRepsLabel} reps</Text>
+          ) : null}
         </View>
       </View>
       <View style={styles.rirRow}>
@@ -1511,9 +1693,20 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
         </TouchableOpacity>
       ) : (
         <View style={styles.completedSetContainer}>
-        <View style={styles.completedSet}>
-            <Text style={styles.completedSetText}>✓ DONE</Text>
-          </View>
+          {onFinishWorkout ? (
+            <TouchableOpacity
+              style={styles.completeSetButton}
+              onPress={onFinishWorkout}
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+            >
+              <Text style={styles.completeSetButtonText}>Done</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.completedSet}>
+              <Text style={styles.completedSetText}>✓ DONE</Text>
+            </View>
+          )}
           {onEdit && (
             <TouchableOpacity style={styles.editSetButton} onPress={onEdit}>
               <Text style={styles.editSetButtonText}>Edit</Text>
@@ -1813,12 +2006,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
   },
+  stickyFinishBar: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 12,
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
   doneWorkoutButton: {
     backgroundColor: '#4CAF50',
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 0,
   },
   doneWorkoutButtonText: {
     fontSize: 20,

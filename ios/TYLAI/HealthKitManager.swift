@@ -89,6 +89,7 @@ final class HealthKitManager: ObservableObject {
         if let t = distanceType { set.append(t) }
         if let t = sleepType { set.append(t) }
         if let t = mindfulSessionType { set.append(t) }
+        set.append(HKObjectType.workoutType())
         typesToRead = set
 
         refreshAuthorizationStatus()
@@ -483,6 +484,65 @@ final class HealthKitManager: ObservableObject {
                 "dateMs": sample.startDate.timeIntervalSince1970 * 1000.0,
                 "value": doubleValue(for: sample.quantity, metric: metric),
             ]
+        }
+    }
+
+    /// Discrete Apple Watch / Health workouts in a time window (for combining with manual cardio logs).
+    func fetchWorkouts(startMs: Double, endMs: Double) async -> [[String: Any]] {
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let start = Date(timeIntervalSince1970: startMs / 1000.0)
+        let end = Date(timeIntervalSince1970: endMs / 1000.0)
+        guard end > start else { return [] }
+
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let workouts: [HKWorkout] = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: 40,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+            ) { _, results, _ in
+                continuation.resume(returning: (results as? [HKWorkout]) ?? [])
+            }
+            healthStore.execute(query)
+        }
+
+        return workouts.map { workout in
+            var row: [String: Any] = [
+                "uuid": workout.uuid.uuidString,
+                "activityType": Int(workout.workoutActivityType.rawValue),
+                "activityLabel": Self.cardioLabel(for: workout.workoutActivityType),
+                "startMs": workout.startDate.timeIntervalSince1970 * 1000.0,
+                "endMs": workout.endDate.timeIntervalSince1970 * 1000.0,
+                "durationMin": workout.duration / 60.0,
+            ]
+            if let energy = workout.totalEnergyBurned {
+                row["calories"] = energy.doubleValue(for: .kilocalorie())
+            }
+            if let distance = workout.totalDistance {
+                row["distanceM"] = distance.doubleValue(for: .meter())
+            }
+            return row
+        }
+    }
+
+    private static func cardioLabel(for type: HKWorkoutActivityType) -> String {
+        switch type {
+        case .running: return "Running"
+        case .walking: return "Walking"
+        case .cycling: return "Cycling"
+        case .swimming: return "Swimming"
+        case .rowing: return "Rowing"
+        case .elliptical: return "Elliptical"
+        case .stairClimbing: return "Stair Climber"
+        case .hiking: return "Hiking"
+        case .jumpRope: return "Jump Rope"
+        case .highIntensityIntervalTraining: return "HIIT"
+        case .traditionalStrengthTraining, .functionalStrengthTraining: return "Strength"
+        case .coreTraining: return "Core"
+        case .mixedCardio: return "Mixed Cardio"
+        case .wheelchairRunPace, .wheelchairWalkPace: return "Wheelchair"
+        default: return "Cardio"
         }
     }
 

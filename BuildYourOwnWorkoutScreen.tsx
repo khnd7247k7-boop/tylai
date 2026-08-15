@@ -807,6 +807,8 @@ export default function BuildYourOwnWorkoutScreen({
         name: ex.name,
         sets: setsNum,
         reps: repsNum,
+        setsPrescription: ex.sets.trim(),
+        repsPrescription: ex.reps.trim(),
         weight: ex.weight,
         restTime: ex.restTime,
         category: 'strength' as const,

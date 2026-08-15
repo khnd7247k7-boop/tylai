@@ -106,6 +106,12 @@ export function startSmartNotificationListeners(opts: {
 
       responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
         const data = (response.notification.request.content.data || {}) as SmartPushData;
+        if (data.type === 'workout_complete') {
+          opts.onNavigate(mapScreenToTarget(data.screen) !== 'dashboard'
+            ? mapScreenToTarget(data.screen)
+            : mapActionToTarget(data.action));
+          return;
+        }
         if (data.type !== 'smart_notification') return;
         const historyId = data.historyId;
         if (historyId) void markHistoryEvent(String(historyId), 'acted');

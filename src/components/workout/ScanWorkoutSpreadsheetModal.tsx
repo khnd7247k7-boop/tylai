@@ -36,6 +36,7 @@ import type {
 import type { EditableSavedProgram } from '../../utils/customWorkoutPlan';
 import ExerciseNamePickerModal from './ExerciseNamePickerModal';
 import { getExerciseData } from '../../data/exerciseDatabase';
+import { ensureExercisesInUserCatalog } from '../../utils/userCustomExercises';
 
 type Phase = 'capture' | 'camera' | 'analyzing' | 'review';
 
@@ -66,13 +67,13 @@ type Props = {
 function confidenceLabel(c: ExerciseMatchConfidence): string {
   if (c === 'high') return 'Matched';
   if (c === 'medium') return 'Likely match';
-  return 'Unmapped';
+  return 'New exercise';
 }
 
 function confidenceColor(c: ExerciseMatchConfidence): string {
   if (c === 'high') return AppTheme.accent;
   if (c === 'medium') return '#FBBF24';
-  return '#F87171';
+  return '#7EB6FF';
 }
 
 function cloneRoutine(r: MatchedSpreadsheetRoutine): MatchedSpreadsheetRoutine {
@@ -107,6 +108,7 @@ export default function ScanWorkoutSpreadsheetModal({
   /** Hide this RN Modal before system ImagePicker so iOS can present the camera/library. */
   const [suppressModal, setSuppressModal] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -116,6 +118,7 @@ export default function ScanWorkoutSpreadsheetModal({
     setPickerTarget(null);
     setSuppressModal(false);
     setCapturing(false);
+    setSaving(false);
     setStatusLine('Photograph a spreadsheet, printed plan, or handwritten workout log.');
   }, [visible]);
 
@@ -354,14 +357,32 @@ export default function ScanWorkoutSpreadsheetModal({
     });
   };
 
-  const handleSaveRoutine = () => {
+  const handleSaveRoutine = async () => {
     if (!routine || !routine.days.some((d) => d.exercises.length > 0)) {
       Alert.alert('Nothing to save', 'Add at least one exercise before saving.');
       return;
     }
-    const program = matchedRoutineToEditableProgram(routine);
-    onApply(program);
-    onClose();
+    if (saving) return;
+
+    const names = routine.days.flatMap((d) =>
+      d.exercises.map((ex) => (ex.matchedName || ex.name || '').trim()).filter(Boolean)
+    );
+
+    setSaving(true);
+    try {
+      await ensureExercisesInUserCatalog(names);
+      const program = matchedRoutineToEditableProgram(routine);
+      onApply(program);
+      onClose();
+    } catch (e) {
+      console.warn('[ScanWorkout] could not add custom exercises', e);
+      Alert.alert(
+        'Could not save',
+        e instanceof Error ? e.message : 'Failed to add new exercises to your catalog.'
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -483,8 +504,9 @@ export default function ScanWorkoutSpreadsheetModal({
 
               {unmappedCount > 0 ? (
                 <Text style={styles.warnBanner}>
-                  {unmappedCount} exercise{unmappedCount === 1 ? '' : 's'} could not be matched — tap
-                  Change or a suggestion chip to fix.
+                  {unmappedCount} exercise{unmappedCount === 1 ? '' : 's'} aren’t in the catalog yet —
+                  they’ll be added automatically with the exact names from your plan (e.g. Dumbbell
+                  Squats stays Dumbbell Squats). Tap Change only if a name looks wrong.
                 </Text>
               ) : (
                 <Text style={styles.okBanner}>
@@ -510,12 +532,18 @@ export default function ScanWorkoutSpreadsheetModal({
                         (n) => n.trim() && n.toLowerCase() !== ex.matchedName.toLowerCase()
                       )
                       .slice(0, 3);
-                    const needsAttention = ex.matchConfidence !== 'high';
+                    // Medium = possible OCR remap; new exercises are expected and auto-added.
+                    const needsAttention = ex.matchConfidence === 'medium';
+                    const isNewExercise = ex.matchConfidence === 'unmapped';
 
                     return (
                       <View
                         key={`ex-${dayIndex}-${exIndex}`}
-                        style={[styles.exCard, needsAttention && styles.exCardWarn]}
+                        style={[
+                          styles.exCard,
+                          needsAttention && styles.exCardWarn,
+                          isNewExercise && styles.exCardNew,
+                        ]}
                       >
                         <View style={styles.exHeader}>
                           <View
@@ -562,7 +590,11 @@ export default function ScanWorkoutSpreadsheetModal({
                         {altSuggestions.length > 0 ? (
                           <View style={styles.suggestBlock}>
                             <Text style={styles.suggestLabel}>
-                              {needsAttention ? 'Did you mean…' : 'Other matches'}
+                              {needsAttention
+                                ? 'Did you mean…'
+                                : isNewExercise
+                                  ? 'Catalog alternatives'
+                                  : 'Other matches'}
                             </Text>
                             <View style={styles.suggestRow}>
                               {altSuggestions.map((name) => (
@@ -667,8 +699,15 @@ export default function ScanWorkoutSpreadsheetModal({
             </ScrollView>
 
             <View style={styles.footer}>
-              <TouchableOpacity style={styles.primaryBtn} onPress={handleSaveRoutine} activeOpacity={0.88}>
-                <Text style={styles.primaryBtnText}>Save Routine</Text>
+              <TouchableOpacity
+                style={[styles.primaryBtn, saving && styles.primaryBtnDisabled]}
+                onPress={handleSaveRoutine}
+                activeOpacity={0.88}
+                disabled={saving}
+              >
+                <Text style={styles.primaryBtnText}>
+                  {saving ? 'Saving…' : 'Save Routine'}
+                </Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -885,10 +924,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   warnBanner: {
-    backgroundColor: 'rgba(248, 113, 113, 0.12)',
+    backgroundColor: 'rgba(126, 182, 255, 0.12)',
     borderRadius: 10,
     padding: 12,
-    color: '#FCA5A5',
+    color: '#BFDBFE',
     fontSize: 13,
     lineHeight: 18,
     marginVertical: 8,
@@ -915,6 +954,12 @@ const styles = StyleSheet.create({
   },
   exCardWarn: {
     borderColor: 'rgba(251, 191, 36, 0.45)',
+  },
+  exCardNew: {
+    borderColor: 'rgba(126, 182, 255, 0.45)',
+  },
+  primaryBtnDisabled: {
+    opacity: 0.65,
   },
   exHeader: {
     flexDirection: 'row',

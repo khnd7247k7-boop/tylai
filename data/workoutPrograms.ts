@@ -4,6 +4,9 @@ export interface Exercise {
   sets: number;
   reps: number;
   weight?: number;
+  /** Builder text such as "4-6" / "8-12" when the numeric fields are the low end. */
+  setsPrescription?: string;
+  repsPrescription?: string;
   restTime: number; // in seconds
   category: 'strength' | 'cardio' | 'flexibility' | 'balance';
   instructions?: string;
@@ -53,6 +56,18 @@ export interface GeneratedWorkoutPlan {
   weeklyPlan?: { weekDays: GeneratedWorkoutPlanDay[] };
 }
 
+export type CardioSource = 'manual' | 'healthkit' | 'mixed';
+
+export interface CardioLog {
+  activity: string;
+  durationMin: number;
+  distanceM?: number;
+  calories?: number;
+  averageHeartRate?: number;
+  source: CardioSource;
+  watchWorkoutId?: string;
+}
+
 export interface WorkoutSession {
   id: string;
   programId: string;
@@ -76,6 +91,8 @@ export interface WorkoutSession {
   }>;
   notes: string;
   completed: boolean;
+  /** Optional cardio logged with this session (manual, watch, or both). */
+  cardio?: CardioLog;
   sorenessLevel?: number; // 1-5 scale
   energyLevel?: number; // 1-5 scale
   motivationLevel?: number; // 1-5 scale

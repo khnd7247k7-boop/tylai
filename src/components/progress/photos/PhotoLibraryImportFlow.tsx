@@ -39,11 +39,15 @@ import {
   type DaySessionDraft,
   type LibraryPhotoItem,
 } from '../../../utils/progressPhotoImportGroups';
+import {
+  assignPosesForDaySmart,
+  groupPhotosIntoDayDraftsSmart,
+} from '../../../utils/progressPoseClassify';
 
 export const LIBRARY_IMPORT_MAX_PHOTOS = 15;
 
 export type LibraryImportSession = {
-  captures: Record<PhotoPose, string>;
+  captures: Partial<Record<PhotoPose, string>>;
   date: string;
   timestamp: string;
 };
@@ -93,6 +97,8 @@ export default function PhotoLibraryImportFlow({
   const [items, setItems] = useState<LibraryPhotoItem[]>([]);
   const [drafts, setDrafts] = useState<DaySessionDraft[]>([]);
   const [picking, setPicking] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [usedVision, setUsedVision] = useState(false);
   const [saving, setSaving] = useState(false);
   const [phase, setPhase] = useState<Phase>('pick');
   const [confirmMeta, setConfirmMeta] = useState<DayConfirmMeta[]>([]);
@@ -104,6 +110,8 @@ export default function PhotoLibraryImportFlow({
     setItems([]);
     setDrafts([]);
     setPicking(false);
+    setClassifying(false);
+    setUsedVision(false);
     setSaving(false);
     setPhase('pick');
     setConfirmMeta([]);
@@ -111,9 +119,26 @@ export default function PhotoLibraryImportFlow({
     modalDismissResolveRef.current = null;
   }, [visible]);
 
-  const rebuildDrafts = useCallback((nextItems: LibraryPhotoItem[]) => {
+  const rebuildDrafts = useCallback(async (nextItems: LibraryPhotoItem[]) => {
     setItems(nextItems);
-    setDrafts(groupPhotosIntoDayDrafts(nextItems));
+    if (!nextItems.length) {
+      setDrafts([]);
+      setUsedVision(false);
+      return;
+    }
+    setClassifying(true);
+    try {
+      const { drafts: nextDrafts, usedVision: vision } =
+        await groupPhotosIntoDayDraftsSmart(nextItems);
+      setDrafts(nextDrafts);
+      setUsedVision(vision);
+    } catch (e) {
+      console.warn('[PhotoLibraryImportFlow] smart group failed', e);
+      setDrafts(groupPhotosIntoDayDrafts(nextItems));
+      setUsedVision(false);
+    } finally {
+      setClassifying(false);
+    }
   }, []);
 
   /** Wait until our RN Modal is fully gone — iOS can't present PHPicker on top of it. */
@@ -231,7 +256,7 @@ export default function PhotoLibraryImportFlow({
       }
 
       const merged = [...items, ...incoming].slice(0, LIBRARY_IMPORT_MAX_PHOTOS);
-      rebuildDrafts(merged);
+      await rebuildDrafts(merged);
       setPhase('review');
     } catch (e) {
       setSuppressModal(false);
@@ -248,41 +273,75 @@ export default function PhotoLibraryImportFlow({
   }, [dismissImportModal, items, picking, rebuildDrafts, saving]);
 
   const clearAll = () => {
-    rebuildDrafts([]);
+    void rebuildDrafts([]);
     setPhase('pick');
     setConfirmMeta([]);
   };
 
   const removePhoto = (uri: string) => {
-    rebuildDrafts(items.filter((i) => i.uri !== uri));
+    void rebuildDrafts(items.filter((i) => i.uri !== uri));
   };
 
   const cyclePoseAssignment = (dateKey: string, pose: PhotoPose) => {
     setDrafts((prev) =>
       prev.map((draft) => {
-        if (draft.dateKey !== dateKey || draft.photos.length < 2) return draft;
+        if (draft.dateKey !== dateKey || !draft.photos.length) return draft;
         const current = draft.poses[pose];
+        // Cycle photos, then clear — side (or any pose) can stay empty.
+        const options: Array<LibraryPhotoItem | null> = [...draft.photos, null];
         const idx = Math.max(
           0,
-          draft.photos.findIndex((p) => p.uri === current?.uri)
+          options.findIndex((p) => (p?.uri ?? null) === (current?.uri ?? null))
         );
-        const nextPhoto = draft.photos[(idx + 1) % draft.photos.length];
-        return {
-          ...draft,
-          poses: { ...draft.poses, [pose]: nextPhoto },
-        };
+        const nextPhoto = options[(idx + 1) % options.length];
+        const nextPoses = { ...draft.poses };
+        if (!nextPhoto) {
+          delete nextPoses[pose];
+          return { ...draft, poses: nextPoses };
+        }
+        const swapPose = PHOTO_POSES.find(
+          (p) => p !== pose && draft.poses[p]?.uri === nextPhoto.uri
+        );
+        nextPoses[pose] = nextPhoto;
+        if (swapPose) {
+          if (current) nextPoses[swapPose] = current;
+          else delete nextPoses[swapPose];
+        }
+        return { ...draft, poses: nextPoses };
       })
     );
   };
 
   const autoAssignDay = (dateKey: string) => {
-    setDrafts((prev) =>
-      prev.map((draft) =>
-        draft.dateKey === dateKey
-          ? { ...draft, poses: assignPosesForDay(draft.photos) }
-          : draft
-      )
-    );
+    void (async () => {
+      setClassifying(true);
+      try {
+        setDrafts((prev) => {
+          // optimistic timestamp while async runs — replaced below
+          return prev;
+        });
+        const draft = drafts.find((d) => d.dateKey === dateKey);
+        if (!draft) return;
+        const assigned = await assignPosesForDaySmart(draft.photos);
+        setDrafts((prev) =>
+          prev.map((d) =>
+            d.dateKey === dateKey ? { ...d, poses: assigned.poses } : d
+          )
+        );
+        if (assigned.source === 'vision') setUsedVision(true);
+      } catch (e) {
+        console.warn('[PhotoLibraryImportFlow] auto-assign failed', e);
+        setDrafts((prev) =>
+          prev.map((draft) =>
+            draft.dateKey === dateKey
+              ? { ...draft, poses: assignPosesForDay(draft.photos) }
+              : draft
+          )
+        );
+      } finally {
+        setClassifying(false);
+      }
+    })();
   };
 
   const readySessions = useMemo(() => {
@@ -307,13 +366,15 @@ export default function PhotoLibraryImportFlow({
         const captures = capturesFromDayDraft(draft);
         if (!captures) continue;
         const existing = await getSessionForDate(draft.dateKey);
-        const uniqueUris = new Set(PHOTO_POSES.map((p) => draft.poses[p]?.uri).filter(Boolean));
+        const uniqueUris = new Set(
+          PHOTO_POSES.map((p) => draft.poses[p]?.uri).filter(Boolean)
+        );
         meta.push({
           dateKey: draft.dateKey,
           displayDate: formatDisplayDate(draft.dateKey),
           replace: Boolean(existing),
-          poseCount: draft.photos.length,
-          reusedPoses: uniqueUris.size < 3,
+          poseCount: uniqueUris.size,
+          reusedPoses: false,
         });
       }
       setConfirmMeta(meta);
@@ -394,13 +455,12 @@ export default function PhotoLibraryImportFlow({
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
             <Text style={styles.hero}>Upload progress history</Text>
             <Text style={styles.bodyText}>
-              Select up to {LIBRARY_IMPORT_MAX_PHOTOS} photos (about 4–5 weeks of front / side /
-              back). We read each photo&apos;s timestamp and place it on the correct day in your
-              timeline.
+              Select up to {LIBRARY_IMPORT_MAX_PHOTOS} photos. Front, side, and back are all
+              optional — two photos (e.g. front + back) is fine. We group by capture day and detect
+              which pose is which. Fix any mix-ups before saving.
             </Text>
             <Text style={styles.bodyText}>
-              Tip: pick photos in any order — we group by date, then assign Front → Side → Back by
-              time within that day.
+              Tip: pick photos in any order — date grouping and pose detection handle the rest.
             </Text>
             {__DEV__ && Platform.OS === 'ios' ? (
               <Text style={styles.bodyText}>
@@ -442,9 +502,19 @@ export default function PhotoLibraryImportFlow({
               {items.length === 1 ? '' : 's'}
             </Text>
             <Text style={styles.bodyText}>
-              Check each day. Tap a pose thumbnail to cycle which photo is used. Days with fewer
-              than 3 photos reuse the last shot for missing poses.
+              {usedVision
+                ? 'Poses were auto-detected from each photo. Tap a thumbnail to swap if Front / Side / Back got mixed up.'
+                : 'Poses were grouped by capture time. Tap a thumbnail to cycle photos — or tap Auto-detect to re-run pose detection.'}
+              {' '}
+              Empty slots stay empty — you don’t need a side photo.
             </Text>
+
+            {classifying ? (
+              <View style={styles.classifyingRow}>
+                <ActivityIndicator color={AppTheme.accent} />
+                <Text style={styles.classifyingText}>Detecting front, side, and back…</Text>
+              </View>
+            ) : null}
 
             <TouchableOpacity
               style={[styles.secondaryBtn, styles.secondaryBtnSpaced]}
@@ -467,7 +537,7 @@ export default function PhotoLibraryImportFlow({
                   <View style={styles.dayHeader}>
                     <Text style={styles.dayTitle}>{formatDisplayDate(draft.dateKey)}</Text>
                     <TouchableOpacity onPress={() => autoAssignDay(draft.dateKey)} hitSlop={8}>
-                      <Text style={styles.resetText}>Auto-assign</Text>
+                      <Text style={styles.resetText}>Auto-detect</Text>
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.dayMeta}>
@@ -529,9 +599,8 @@ export default function PhotoLibraryImportFlow({
               <View key={m.dateKey} style={styles.confirmRow}>
                 <Text style={styles.confirmDate}>{m.displayDate}</Text>
                 <Text style={styles.confirmMeta}>
-                  {m.poseCount} photo{m.poseCount === 1 ? '' : 's'}
+                  {m.poseCount} pose{m.poseCount === 1 ? '' : 's'}
                   {m.replace ? ' · replaces existing' : ''}
-                  {m.reusedPoses ? ' · some poses reused' : ''}
                 </Text>
               </View>
             ))}
@@ -559,16 +628,19 @@ export default function PhotoLibraryImportFlow({
             <TouchableOpacity
               style={[
                 styles.primaryBtn,
-                (!readySessions.length || picking || saving) && styles.primaryBtnDisabled,
+                (!readySessions.length || picking || saving || classifying) &&
+                  styles.primaryBtnDisabled,
               ]}
               onPress={() => void goToConfirm()}
-              disabled={!readySessions.length || picking || saving}
+              disabled={!readySessions.length || picking || saving || classifying}
               activeOpacity={0.85}
             >
               <Text style={styles.primaryBtnText}>
-                {readySessions.length
-                  ? `Review & save ${readySessions.length} day${readySessions.length === 1 ? '' : 's'}`
-                  : 'Add photos to continue'}
+                {classifying
+                  ? 'Detecting poses…'
+                  : readySessions.length
+                    ? `Review & save ${readySessions.length} day${readySessions.length === 1 ? '' : 's'}`
+                    : 'Add photos to continue'}
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -621,6 +693,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 12,
+  },
+  classifyingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+    paddingVertical: 8,
+  },
+  classifyingText: {
+    color: AppTheme.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
   },
   primaryBtn: {
     backgroundColor: AppTheme.accent,

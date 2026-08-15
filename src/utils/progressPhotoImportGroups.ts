@@ -22,27 +22,29 @@ export type DaySessionDraft = {
   photos: LibraryPhotoItem[];
 };
 
-const MAX_POSES = PHOTO_POSES.length;
-
 /**
  * Assign front/side/back from time-ordered photos for one day.
  * Extra photos beyond 3 are ignored for poses (still listed on the draft).
- * If fewer than 3, missing poses reuse the last available so the session is complete.
+ * Missing poses stay empty — never reuse a photo into a blank slot.
  */
 export function assignPosesForDay(photos: LibraryPhotoItem[]): Partial<Record<PhotoPose, LibraryPhotoItem>> {
   const ordered = [...photos].sort((a, b) =>
     a.resolved.timestampIso.localeCompare(b.resolved.timestampIso)
   );
   const poses: Partial<Record<PhotoPose, LibraryPhotoItem>> = {};
+  if (ordered.length === 1) {
+    poses.front = ordered[0];
+    return poses;
+  }
+  if (ordered.length === 2) {
+    // Two-shot days are almost always front + back (side skipped).
+    poses.front = ordered[0];
+    poses.back = ordered[1];
+    return poses;
+  }
   PHOTO_POSES.forEach((pose, i) => {
     if (ordered[i]) poses[pose] = ordered[i];
   });
-  const last = ordered[Math.min(ordered.length, MAX_POSES) - 1];
-  if (last) {
-    for (const pose of PHOTO_POSES) {
-      if (!poses[pose]) poses[pose] = last;
-    }
-  }
   return poses;
 }
 
@@ -72,17 +74,22 @@ export function groupPhotosIntoDayDrafts(items: LibraryPhotoItem[]): DaySessionD
   return drafts.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 }
 
+export function dayDraftHasAnyPose(draft: DaySessionDraft): boolean {
+  return PHOTO_POSES.some((p) => Boolean(draft.poses[p]?.uri));
+}
+
+/** @deprecated Prefer dayDraftHasAnyPose — full three-pose days are no longer required. */
 export function dayDraftIsComplete(draft: DaySessionDraft): boolean {
-  return PHOTO_POSES.every((p) => Boolean(draft.poses[p]?.uri));
+  return dayDraftHasAnyPose(draft);
 }
 
 export function capturesFromDayDraft(
   draft: DaySessionDraft
-): Record<PhotoPose, string> | null {
-  if (!dayDraftIsComplete(draft)) return null;
-  return {
-    front: draft.poses.front!.uri,
-    side: draft.poses.side!.uri,
-    back: draft.poses.back!.uri,
-  };
+): Partial<Record<PhotoPose, string>> | null {
+  const captures: Partial<Record<PhotoPose, string>> = {};
+  for (const pose of PHOTO_POSES) {
+    const uri = draft.poses[pose]?.uri;
+    if (uri) captures[pose] = uri;
+  }
+  return Object.keys(captures).length > 0 ? captures : null;
 }

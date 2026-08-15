@@ -15,6 +15,7 @@ import React, {
 import type { WorkoutProgram, WorkoutSession } from '../../data/workoutPrograms';
 import type { ExerciseSubstitutionPersistTarget } from '../utils/persistExerciseSubstitution';
 import { loadUserData, saveUserData } from '../utils/userStorage';
+import { resolveSetSlotCount } from '../utils/setLoggingPrefill';
 
 export type ActiveWorkoutSet = {
   setNumber: number;
@@ -71,7 +72,7 @@ function buildInitialExerciseData(program: WorkoutProgram): ActiveWorkoutExercis
   return (program.exercises ?? []).map((exercise) => ({
     exerciseId: exercise.id,
     name: exercise.name,
-    sets: Array.from({ length: exercise.sets }, (_, index) => ({
+    sets: Array.from({ length: resolveSetSlotCount(exercise.sets) }, (_, index) => ({
       setNumber: index + 1,
       reps: exercise.reps,
       weight: exercise.weight || 0,

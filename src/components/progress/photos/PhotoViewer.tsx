@@ -11,8 +11,10 @@ import {
 } from 'react-native';
 import { AppTheme } from '../../../theme/appVisualTheme';
 import {
-  PHOTO_POSES,
   PHOTO_POSE_LABELS,
+  availablePoses,
+  firstAvailablePose,
+  isPhotoUri,
   type PhotoPose,
   type PhotoSession,
 } from '../../../types/progressPhotos';
@@ -34,19 +36,34 @@ export default function PhotoViewer({
   onSwipeSession,
   onOpenDetails,
 }: PhotoViewerProps): React.ReactElement {
+  const poses = useMemo(() => availablePoses(session.photos), [session.photos]);
   const [poseIndex, setPoseIndex] = useState(0);
-  const pose = PHOTO_POSES[poseIndex];
+  const pose = poses[poseIndex] ?? firstAvailablePose(session.photos);
   const [loading, setLoading] = useState(true);
   const fade = useRef(new Animated.Value(1)).current;
-  const [displayUri, setDisplayUri] = useState(session.photos.front);
+  const initialUri = isPhotoUri(session.photos[pose]) ? session.photos[pose]! : '';
+  const [displayUri, setDisplayUri] = useState(initialUri);
   const scale = useRef(new Animated.Value(1)).current;
   const baseScale = useRef(1);
   const pinchStart = useRef(1);
   const lastTap = useRef(0);
 
-  const uri = session.photos[pose];
+  const uri = isPhotoUri(session.photos[pose]) ? session.photos[pose]! : '';
 
   useEffect(() => {
+    setPoseIndex(0);
+  }, [session.id]);
+
+  useEffect(() => {
+    if (poseIndex >= poses.length) setPoseIndex(0);
+  }, [poseIndex, poses.length]);
+
+  useEffect(() => {
+    if (!uri) {
+      setDisplayUri('');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     if (!animate) {
       setDisplayUri(uri);
@@ -70,7 +87,8 @@ export default function PhotoViewer({
   }, [animate, fade, uri]);
 
   const goPose = (nextIndex: number) => {
-    const clamped = Math.max(0, Math.min(PHOTO_POSES.length - 1, nextIndex));
+    if (!poses.length) return;
+    const clamped = Math.max(0, Math.min(poses.length - 1, nextIndex));
     if (clamped === poseIndex) return;
     setPoseIndex(clamped);
   };
@@ -85,7 +103,6 @@ export default function PhotoViewer({
     }).start();
   };
 
-  // Keep the selected pose when changing weeks — same angle over time.
   useEffect(() => {
     resetZoom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,8 +154,9 @@ export default function PhotoViewer({
             lastTap.current = now;
           }
 
-          // Commit pinch scale from animated value
-          const currentScale = Number((scale as unknown as { _value?: number })._value ?? baseScale.current);
+          const currentScale = Number(
+            (scale as unknown as { _value?: number })._value ?? baseScale.current
+          );
           if (Number.isFinite(currentScale) && currentScale !== baseScale.current) {
             baseScale.current = Math.min(3, Math.max(1, currentScale));
             scale.setValue(baseScale.current);
@@ -147,7 +165,7 @@ export default function PhotoViewer({
           if (baseScale.current > 1.05) return;
 
           if (g.dx <= -SWIPE_THRESHOLD) {
-            if (poseIndex < PHOTO_POSES.length - 1) goPose(poseIndex + 1);
+            if (poseIndex < poses.length - 1) goPose(poseIndex + 1);
             else onSwipeSession?.('next');
           } else if (g.dx >= SWIPE_THRESHOLD) {
             if (poseIndex > 0) goPose(poseIndex - 1);
@@ -155,7 +173,7 @@ export default function PhotoViewer({
           }
         },
       }),
-    [onSwipeSession, poseIndex, scale]
+    [onSwipeSession, poseIndex, poses.length, scale]
   );
 
   return (
@@ -163,47 +181,56 @@ export default function PhotoViewer({
       <TouchableOpacity activeOpacity={0.9} onPress={onOpenDetails} disabled={!onOpenDetails}>
         <View style={styles.metaRow}>
           <Text style={styles.poseHint}>
-            {PHOTO_POSE_LABELS[pose]} · swipe poses · double-tap zoom
+            {PHOTO_POSE_LABELS[pose]}
+            {poses.length > 1 ? ' · swipe poses · double-tap zoom' : ' · double-tap zoom'}
           </Text>
         </View>
       </TouchableOpacity>
 
       <View style={styles.frame} {...pan.panHandlers}>
         {loading && <View style={styles.skeleton} />}
-        <Animated.View style={[styles.imageWrap, { opacity: fade, transform: [{ scale }] }]}>
-          <Image
-            source={{ uri: displayUri }}
-            style={styles.image}
-            resizeMode="cover"
-            onLoad={() => setLoading(false)}
-            onError={() => setLoading(false)}
-          />
-        </Animated.View>
+        {displayUri ? (
+          <Animated.View style={[styles.imageWrap, { opacity: fade, transform: [{ scale }] }]}>
+            <Image
+              source={{ uri: displayUri }}
+              style={styles.image}
+              resizeMode="cover"
+              onLoad={() => setLoading(false)}
+              onError={() => setLoading(false)}
+            />
+          </Animated.View>
+        ) : (
+          <View style={[styles.imageWrap, styles.emptyWrap]}>
+            <Text style={styles.emptyText}>No photo</Text>
+          </View>
+        )}
         <View style={styles.stampWrap} pointerEvents="none">
           <Text style={styles.stampText}>{formatSessionStamp(session)}</Text>
         </View>
       </View>
 
-      <View style={styles.segment}>
-        {PHOTO_POSES.map((p, i) => {
-          const active = i === poseIndex;
-          return (
-            <TouchableOpacity
-              key={p}
-              style={[styles.segmentBtn, active && styles.segmentBtnActive]}
-              onPress={() => {
-                resetZoom();
-                setPoseIndex(i);
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                {PHOTO_POSE_LABELS[p]}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {poses.length > 1 ? (
+        <View style={styles.segment}>
+          {poses.map((p, i) => {
+            const active = i === poseIndex;
+            return (
+              <TouchableOpacity
+                key={p}
+                style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+                onPress={() => {
+                  resetZoom();
+                  setPoseIndex(i);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                  {PHOTO_POSE_LABELS[p]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -257,6 +284,14 @@ const styles = StyleSheet.create({
   },
   imageWrap: {
     flex: 1,
+  },
+  emptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    color: AppTheme.textMuted,
+    fontWeight: '600',
   },
   image: {
     width: '100%',

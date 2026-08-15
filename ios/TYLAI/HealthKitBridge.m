@@ -17,4 +17,9 @@ RCT_EXTERN_METHOD(fetchQuantitySamples:(NSString *)metric
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(fetchWorkouts:(nonnull NSNumber *)startMs
+                  endMs:(nonnull NSNumber *)endMs
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

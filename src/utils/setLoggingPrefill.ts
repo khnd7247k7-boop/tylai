@@ -32,7 +32,11 @@ export function prefillStringSetFromPrevious(
   return next;
 }
 
-/** After editing set N, mirror empty fields on set N+1 when still blank. */
+/**
+ * After editing set N, copy the value onto following sets that are still blank
+ * or that we already auto-filled (so typing "150" does not leave set 2 stuck on "1").
+ * Stops at the first set the user clearly customized. Clearing set N does not wipe later sets.
+ */
 export function cascadeStringSetFieldToNext(
   sets: Array<{ setNumber: number; weight: string; reps: string; completed?: boolean }>,
   setIndex: number,
@@ -41,13 +45,44 @@ export function cascadeStringSetFieldToNext(
 ): typeof sets {
   if (setIndex < 0 || setIndex >= sets.length - 1) return sets;
   const next = [...sets];
-  const successor = { ...next[setIndex + 1] };
-  if (field === 'weight' && successor.weight.trim() === '') {
-    successor.weight = value;
+  const trimmed = value.trim();
+  if (trimmed === '') return next;
+  for (let i = setIndex + 1; i < next.length; i++) {
+    const successor = { ...next[i] };
+    const current = successor[field].trim();
+    const stillAutoFilled =
+      current === '' || trimmed.startsWith(current) || current.startsWith(trimmed);
+    if (!stillAutoFilled) break;
+    successor[field] = value;
+    next[i] = successor;
   }
-  if (field === 'reps' && successor.reps.trim() === '') {
-    successor.reps = value;
-  }
-  next[setIndex + 1] = successor;
   return next;
+}
+
+/** How many set rows to generate from a plan value like 3 or "4-6". */
+export function resolveSetSlotCount(sets: unknown, fallback = 3): number {
+  if (typeof sets === 'number' && Number.isFinite(sets) && sets > 0) {
+    return Math.min(20, Math.floor(sets));
+  }
+  if (typeof sets === 'string') {
+    const n = parseInt(sets.split(/[-–—]/)[0].trim(), 10);
+    if (Number.isFinite(n) && n > 0) return Math.min(20, n);
+  }
+  return fallback;
+}
+
+export function plannedWeightInput(weight: unknown): string {
+  if (weight == null || weight === '') return '';
+  if (typeof weight === 'number') {
+    return Number.isFinite(weight) && weight > 0 ? String(weight) : '';
+  }
+  const s = String(weight).trim();
+  return s && s !== '0' ? s : '';
+}
+
+export function plannedRepsInput(ex: { reps?: unknown; repsPrescription?: unknown }): string {
+  const raw = ex.repsPrescription ?? ex.reps;
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  return s && s !== '0' ? s : '';
 }
