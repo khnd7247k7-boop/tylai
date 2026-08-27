@@ -73,7 +73,7 @@ export function snapshotExerciseDemands(ex: ExerciseData): ExerciseDemandSnapsho
 }
 
 /** Target composite difficulty band by experience (soft center + width). */
-function targetDifficultyBand(level: SelectionExperienceLevel): { center: number; width: number } {
+export function targetDifficultyBand(level: SelectionExperienceLevel): { center: number; width: number } {
   switch (level) {
     case 'beginner':
       return { center: 0.22, width: 0.28 };
@@ -82,6 +82,90 @@ function targetDifficultyBand(level: SelectionExperienceLevel): { center: number
     case 'advanced':
       return { center: 0.72, width: 0.35 };
   }
+}
+
+/**
+ * Hard gate: does this exercise's MI complexity fit the user's experience toggle?
+ * Uses technicalComplexity / coordination / balance / composite — not catalog labels alone.
+ */
+export function exerciseFitsExperienceComplexity(
+  ex: ExerciseData,
+  level: SelectionExperienceLevel,
+  opts?: { difficultyBias?: number }
+): boolean {
+  const bias = opts?.difficultyBias ?? 0;
+  const d = snapshotExerciseDemands(ex);
+  const tech = demandLevelRank(d.technicalComplexity);
+  const coord = demandLevelRank(d.coordination);
+  const bal = demandLevelRank(d.balance);
+  const skill = isSkillHeavy(ex);
+
+  if (level === 'beginner') {
+    // Challenge dial can gently open the band; never auto-include olympic skill work.
+    if (skill && bias < 1) return false;
+    if (tech >= 2 && bias < 1) return false;
+    if (coord >= 2 && bal >= 1 && bias < 1) return false;
+    if (d.compositeDifficulty > 0.55 + Math.max(0, bias) * 0.1) return false;
+    return true;
+  }
+
+  if (level === 'intermediate') {
+    if (skill && bias < 0) return false;
+    if (tech >= 2 && coord >= 2 && bal >= 2 && bias < 1) return false;
+    if (d.compositeDifficulty > 0.85 && bias < 0) return false;
+    return true;
+  }
+
+  // Advanced: allow full spectrum; very elementary skill-light drills stay selectable as accessories.
+  return true;
+}
+
+/**
+ * Order a day/focus pool so picks match experience MI complexity:
+ * beginner → safer / lower technical demand first
+ * advanced → higher complexity / loading demand first
+ */
+export function orderPoolForExperience(
+  pool: ExerciseData[],
+  level: SelectionExperienceLevel
+): ExerciseData[] {
+  if (pool.length <= 1) return [...pool];
+  const band = targetDifficultyBand(level);
+  return [...pool].sort((a, b) => {
+    const da = snapshotExerciseDemands(a);
+    const db = snapshotExerciseDemands(b);
+    if (level === 'advanced') {
+      const scoreA =
+        da.compositeDifficulty * 2 +
+        demandLevelRank(da.technicalComplexity) * 0.2 +
+        demandLevelRank(da.strength) * 0.15 -
+        (a.difficulty === 'beginner' && da.compositeDifficulty < 0.3 ? 0.4 : 0);
+      const scoreB =
+        db.compositeDifficulty * 2 +
+        demandLevelRank(db.technicalComplexity) * 0.2 +
+        demandLevelRank(db.strength) * 0.15 -
+        (b.difficulty === 'beginner' && db.compositeDifficulty < 0.3 ? 0.4 : 0);
+      return scoreB - scoreA || a.name.localeCompare(b.name);
+    }
+    if (level === 'beginner') {
+      const scoreA =
+        Math.abs(da.compositeDifficulty - band.center) +
+        demandLevelRank(da.technicalComplexity) * 0.25 +
+        demandLevelRank(da.balance) * 0.15 +
+        (isSkillHeavy(a) ? 1 : 0);
+      const scoreB =
+        Math.abs(db.compositeDifficulty - band.center) +
+        demandLevelRank(db.technicalComplexity) * 0.25 +
+        demandLevelRank(db.balance) * 0.15 +
+        (isSkillHeavy(b) ? 1 : 0);
+      return scoreA - scoreB || a.name.localeCompare(b.name);
+    }
+    // Intermediate: closest to band center
+    return (
+      Math.abs(da.compositeDifficulty - band.center) -
+        Math.abs(db.compositeDifficulty - band.center) || a.name.localeCompare(b.name)
+    );
+  });
 }
 
 function hasEquipment(ex: ExerciseData, items: Equipment[]): boolean {

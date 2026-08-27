@@ -26,7 +26,10 @@ import { AppTheme } from '../../theme/appVisualTheme';
 import { useSubscription } from '../../context/SubscriptionContext';
 import { PremiumRequiredError } from '../../utils/subscription';
 import { compressImageForVision } from '../../utils/compressImageForVision';
-import { parseWorkoutSpreadsheetImage } from '../../services/workoutSpreadsheetParseService';
+import {
+  MAX_WORKOUT_SCAN_IMAGES,
+  parseWorkoutSpreadsheetImages,
+} from '../../services/workoutSpreadsheetParseService';
 import { matchedRoutineToEditableProgram } from '../../utils/parsedWorkoutToPlan';
 import type {
   ExerciseMatchConfidence,
@@ -98,7 +101,7 @@ export default function ScanWorkoutSpreadsheetModal({
   );
   const [phase, setPhase] = useState<Phase>('capture');
   const [statusLine, setStatusLine] = useState(
-    'Photograph a spreadsheet, printed plan, or handwritten workout log.'
+    'Photograph a plan, or choose one or more photos from your library.'
   );
   const [routine, setRoutine] = useState<MatchedSpreadsheetRoutine | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +122,7 @@ export default function ScanWorkoutSpreadsheetModal({
     setSuppressModal(false);
     setCapturing(false);
     setSaving(false);
-    setStatusLine('Photograph a spreadsheet, printed plan, or handwritten workout log.');
+    setStatusLine('Photograph a plan, or choose one or more photos from your library.');
   }, [visible]);
 
   const waitForModalDismiss = () =>
@@ -138,20 +141,36 @@ export default function ScanWorkoutSpreadsheetModal({
   }, [routine]);
 
   const runParse = useCallback(
-    async (uri: string) => {
+    async (uris: string | string[]) => {
       if (!isPremium) {
         presentUpgrade();
         return;
       }
+      const list = (Array.isArray(uris) ? uris : [uris])
+        .map((u) => u?.trim())
+        .filter((u): u is string => Boolean(u));
+      if (!list.length) return;
+      if (list.length > MAX_WORKOUT_SCAN_IMAGES) {
+        setError(`Select at most ${MAX_WORKOUT_SCAN_IMAGES} photos.`);
+        setPhase('capture');
+        return;
+      }
+
       setError(null);
       setPhase('analyzing');
-      setStatusLine('Reading your program…');
+      setStatusLine(
+        list.length > 1
+          ? `Reading ${list.length} photos as one program…`
+          : 'Reading your program…'
+      );
       try {
-        const compressed = await compressImageForVision(uri);
-        const matched = await parseWorkoutSpreadsheetImage({
-          base64: compressed.base64,
-          mimeType: compressed.mimeType,
-        });
+        const compressed = await Promise.all(list.map((uri) => compressImageForVision(uri)));
+        const matched = await parseWorkoutSpreadsheetImages(
+          compressed.map((c) => ({
+            base64: c.base64,
+            mimeType: c.mimeType,
+          }))
+        );
         setRoutine(cloneRoutine(matched));
         setPhase('review');
         setStatusLine('Review exercises, then save into your builder.');
@@ -165,7 +184,9 @@ export default function ScanWorkoutSpreadsheetModal({
         setError(msg);
         setPhase('capture');
         setStatusLine(
-          'Could not read that photo. Use bright, even light and fill the frame with the writing.'
+          list.length > 1
+            ? 'Could not read those photos. Use bright light and include every page of the plan.'
+            : 'Could not read that photo. Use bright, even light and fill the frame with the writing.'
         );
       }
     },
@@ -194,7 +215,7 @@ export default function ScanWorkoutSpreadsheetModal({
         setSuppressModal(false);
         Alert.alert(
           'Photo access needed',
-          'Allow photo library access so you can pick a spreadsheet or handwritten workout photo from your camera roll.',
+          'Allow photo library access so you can pick one or more spreadsheet or handwritten workout photos from your camera roll.',
           [
             { text: 'Not now', style: 'cancel' },
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
@@ -203,30 +224,33 @@ export default function ScanWorkoutSpreadsheetModal({
         return;
       }
 
-      // Opens the device Photos / gallery picker (current library contents).
+      // Opens the device Photos / gallery picker — multi-page plans can select several images.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 1,
         allowsEditing: false,
-        allowsMultipleSelection: false,
-        selectionLimit: 1,
+        allowsMultipleSelection: true,
+        selectionLimit: MAX_WORKOUT_SCAN_IMAGES,
         ...(Platform.OS === 'android' ? { defaultTab: 'photos' as const } : {}),
       });
 
       setSuppressModal(false);
 
-      let uri = !result.canceled ? result.assets?.[0]?.uri : undefined;
+      let uris =
+        !result.canceled && result.assets?.length
+          ? result.assets.map((a) => a.uri).filter(Boolean)
+          : [];
 
       // Android can destroy the activity while the picker is open — recover the selection.
-      if (!uri && Platform.OS === 'android') {
+      if (!uris.length && Platform.OS === 'android') {
         const pending = await ImagePicker.getPendingResultAsync();
-        if (pending && 'assets' in pending && pending.assets?.[0]?.uri) {
-          uri = pending.assets[0].uri;
+        if (pending && 'assets' in pending && pending.assets?.length) {
+          uris = pending.assets.map((a) => a.uri).filter(Boolean);
         }
       }
 
-      if (!uri) return;
-      await runParse(uri);
+      if (!uris.length) return;
+      await runParse(uris);
     } catch (e) {
       setSuppressModal(false);
       const msg = e instanceof Error ? e.message : String(e);
@@ -454,8 +478,9 @@ export default function ScanWorkoutSpreadsheetModal({
           <View style={styles.captureBody}>
             <Text style={styles.heroTitle}>Photo → workout</Text>
             <Text style={styles.heroBody}>
-              Snap a spreadsheet, whiteboard, printed plan, or handwritten pen-and-paper log. We read the
-              writing, extract exercises, sets, and reps, and drop them into Build Your Own Workout.
+              Snap a spreadsheet, whiteboard, printed plan, or handwritten log — or choose multiple
+              photos for a multi-page program. We read the writing, extract exercises, sets, and reps,
+              and drop them into Build Your Own Workout.
             </Text>
             {!isPremium ? (
               <View style={styles.premiumCard}>
@@ -475,6 +500,9 @@ export default function ScanWorkoutSpreadsheetModal({
                 <TouchableOpacity style={styles.secondaryBtn} onPress={pickFromLibrary} activeOpacity={0.88}>
                   <Text style={styles.secondaryBtnText}>Choose from library</Text>
                 </TouchableOpacity>
+                <Text style={styles.multiHint}>
+                  Tip: select up to {MAX_WORKOUT_SCAN_IMAGES} photos at once for multi-page plans.
+                </Text>
               </View>
             )}
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -690,11 +718,11 @@ export default function ScanWorkoutSpreadsheetModal({
                   setError(null);
                   setPhase('capture');
                   setStatusLine(
-                    'Photograph a spreadsheet, printed plan, or handwritten workout log.'
+                    'Photograph a plan, or choose one or more photos from your library.'
                   );
                 }}
               >
-                <Text style={styles.secondaryBtnText}>Scan another photo</Text>
+                <Text style={styles.secondaryBtnText}>Scan again</Text>
               </TouchableOpacity>
             </ScrollView>
 
@@ -888,6 +916,13 @@ const styles = StyleSheet.create({
     color: AppTheme.textPrimary,
     fontSize: 15,
     fontWeight: '600',
+  },
+  multiHint: {
+    color: AppTheme.textFaint,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginTop: 4,
   },
   errorText: {
     color: '#F87171',

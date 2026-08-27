@@ -197,6 +197,7 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
           <Text style={styles.sectionTitle}>Exercises</Text>
           {session.exercises.map((exercise, index) => {
             const completedSets = exercise.sets.filter(s => s.completed);
+            const missedSets = exercise.sets.filter(s => !s.completed);
             const totalVolume = completedSets.reduce((sum, set) => sum + (set.weight * set.reps), 0);
             
             // Group sets by weight and reps combination
@@ -216,7 +217,9 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
                   <View style={styles.exerciseInfo}>
                     <Text style={styles.exerciseName}>{exercise.name}</Text>
                     <Text style={styles.exerciseStats}>
-                      {completedSets.length} sets completed
+                      {missedSets.length > 0
+                        ? `${completedSets.length} of ${exercise.sets.length} sets completed · ${missedSets.length} missed`
+                        : `${completedSets.length} sets completed`}
                       {totalVolume > 0 && ` • ${totalVolume} lbs total volume`}
                     </Text>
                   </View>
@@ -273,6 +276,14 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
                       </View>
                     );
                   })}
+                  {missedSets.map((set) => (
+                    <View key={`ex-${index}-missed-${set.setNumber}`} style={styles.missedSetItem}>
+                      <View style={styles.missedSetBadge}>
+                        <Text style={styles.missedSetBadgeText}>Set {set.setNumber}</Text>
+                      </View>
+                      <Text style={styles.missedSetText}>Missed</Text>
+                    </View>
+                  ))}
                 </View>
               </View>
             );
@@ -416,6 +427,34 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
+  },
+  missedSetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(248,113,113,0.08)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.25)',
+    padding: 12,
+    marginBottom: 8,
+  },
+  missedSetBadge: {
+    backgroundColor: 'rgba(248,113,113,0.2)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 12,
+  },
+  missedSetBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#F87171',
+  },
+  missedSetText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F87171',
   },
   setNumberBadge: {
     backgroundColor: '#00ff88',

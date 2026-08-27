@@ -544,7 +544,17 @@ export default function ProgramExecutionScreen({
           .map((exercise) => ({
             exerciseId: exercise.exerciseId,
             name: exercise.name,
-            sets: exercise.skipped ? [] : exercise.sets.filter((set) => set.completed),
+            // Keep prescribed set slots so unfinished sets show as missed in history.
+            sets: exercise.skipped
+              ? []
+              : exercise.sets.map((set) => ({
+                  setNumber: set.setNumber,
+                  reps: set.completed ? set.reps : 0,
+                  weight: set.completed ? set.weight : 0,
+                  restTime: set.restTime,
+                  completed: set.completed,
+                  ...(set.completed && set.rir != null ? { rir: set.rir } : {}),
+                })),
           }));
 
         let healthMetrics;
@@ -776,20 +786,39 @@ export default function ProgramExecutionScreen({
       promptThenFinish(exerciseData, notes);
       return;
     }
-    Alert.alert(
-      'Finish workout?',
-      'Remaining incomplete exercises will not be logged as complete sets.',
-      [
-        { text: 'Keep going', style: 'cancel' },
-        {
-          text: 'Log workout',
-          style: 'default',
-          onPress: () => {
-            promptThenFinish(exerciseData, notes);
-          },
+
+    const missedSetCount = exerciseData.reduce((n, exercise) => {
+      if (exercise.skipped) return n;
+      // Only count missed sets on exercises the user actually started.
+      if (!exercise.sets.some((set) => set.completed)) return n;
+      return n + exercise.sets.filter((set) => !set.completed).length;
+    }, 0);
+    const untouchedExercises = exerciseData.filter(
+      (exercise) => !exercise.skipped && !exercise.sets.some((set) => set.completed)
+    ).length;
+
+    const parts: string[] = ['Your completed sets will be saved.'];
+    if (missedSetCount > 0) {
+      parts.push(
+        `${missedSetCount} unfinished set${missedSetCount === 1 ? '' : 's'} will be marked as missed.`
+      );
+    }
+    if (untouchedExercises > 0) {
+      parts.push(
+        `${untouchedExercises} exercise${untouchedExercises === 1 ? '' : 's'} you didn't start won't be logged.`
+      );
+    }
+
+    Alert.alert('Finish workout?', parts.join(' '), [
+      { text: 'Keep going', style: 'cancel' },
+      {
+        text: 'Log workout',
+        style: 'default',
+        onPress: () => {
+          promptThenFinish(exerciseData, notes);
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const goToSet = (exerciseIndex: number, setIndex: number) => {
@@ -959,8 +988,37 @@ export default function ProgramExecutionScreen({
         >
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{program.name}</Text>
-        <View style={styles.placeholder} />
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {program.name}
+        </Text>
+        {(() => {
+          const hasProgress = exerciseData.some(
+            (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
+          );
+          if (!hasProgress && !isFinishingWorkout) {
+            return <View style={styles.placeholder} />;
+          }
+          const allDone = isWorkoutFullyDone(exerciseData);
+          if (isFinishingWorkout) {
+            return (
+              <View style={styles.headerFinishBtnDisabled}>
+                <Text style={styles.headerFinishBtnText}>Saving…</Text>
+              </View>
+            );
+          }
+          return (
+            <TouchableOpacity
+              style={styles.headerFinishBtn}
+              onPress={handleFinishWorkoutPress}
+              accessibilityRole="button"
+              accessibilityLabel={allDone ? 'Done' : 'Finish workout'}
+            >
+              <Text style={styles.headerFinishBtnText}>
+                {allDone ? 'Done' : 'Finish'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })()}
       </View>
 
       {/* Progress */}
@@ -1100,9 +1158,6 @@ export default function ProgramExecutionScreen({
                             loggedSecs
                           );
                         }}
-                        onFinishWorkout={
-                          isWorkoutFullyDone(exerciseData) ? handleFinishWorkoutPress : undefined
-                        }
                         onEdit={() => handleEditSet(currentExerciseIndex, currentSetIndex)}
                         onPrevious={() => {
                           if (currentSetIndex > 0) {
@@ -1126,9 +1181,6 @@ export default function ProgramExecutionScreen({
                   setIndex={currentSetIndex}
                   totalSets={currentExerciseData.sets.length}
                   targetRepsLabel={currentExercise.repsPrescription}
-                  onFinishWorkout={
-                    isWorkoutFullyDone(exerciseData) ? handleFinishWorkoutPress : undefined
-                  }
                   onComplete={(weight, reps, rir) =>
                     handleSetComplete(currentExerciseIndex, currentSetIndex, weight, reps, rir)
                   }
@@ -1376,46 +1428,6 @@ export default function ProgramExecutionScreen({
         </View>
       </ScrollView>
 
-      {(() => {
-        const hasProgress = exerciseData.some(
-          (exercise) => exercise.skipped || exercise.sets.some((set) => set.completed)
-        );
-        if (!hasProgress && !isFinishingWorkout) return null;
-        const allDone = isWorkoutFullyDone(exerciseData);
-        return (
-          <View style={styles.stickyFinishBar}>
-            {isFinishingWorkout ? (
-              <View style={styles.doneWorkoutButton}>
-                <Text style={styles.doneWorkoutButtonText}>Saving workout…</Text>
-              </View>
-            ) : (
-              <>
-                <TouchableOpacity
-                  style={styles.doneWorkoutButton}
-                  onPress={handleFinishWorkoutPress}
-                  accessibilityRole="button"
-                  accessibilityLabel={allDone ? 'Done' : 'Finish workout'}
-                >
-                  <Text style={styles.doneWorkoutButtonText}>
-                    {allDone ? 'Done' : 'Finish Workout'}
-                  </Text>
-                </TouchableOpacity>
-                {allDone ? (
-                  <DiscomfortReportCTA
-                    compact
-                    label="Report discomfort"
-                    onPress={() => {
-                      setDiscomfortExerciseName(currentExercise?.name ?? null);
-                      setDiscomfortVisible(true);
-                    }}
-                  />
-                ) : null}
-              </>
-            )}
-          </View>
-        );
-      })()}
-
       <DiscomfortAssessmentFlow
         visible={discomfortVisible}
         exerciseName={discomfortExerciseName}
@@ -1506,7 +1518,6 @@ interface SetTrackerProps {
   setIndex: number;
   totalSets: number;
   onComplete: (weight: number, reps: number, rir?: number) => void;
-  onFinishWorkout?: () => void;
   onEdit?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
@@ -1520,7 +1531,7 @@ interface SetTrackerProps {
   };
 }
 
-const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, onNext, canGoPrevious, canGoNext, previousSetData, targetRepsLabel, onFinishWorkout }: SetTrackerProps) => {
+const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, onNext, canGoPrevious, canGoNext, previousSetData, targetRepsLabel }: SetTrackerProps) => {
   // All hooks must be called before any conditional returns
   const [weight, setWeight] = useState(() => {
     const weightValue = set?.weight;
@@ -1693,20 +1704,9 @@ const SetTracker = ({ set, setIndex, totalSets, onComplete, onEdit, onPrevious, 
         </TouchableOpacity>
       ) : (
         <View style={styles.completedSetContainer}>
-          {onFinishWorkout ? (
-            <TouchableOpacity
-              style={styles.completeSetButton}
-              onPress={onFinishWorkout}
-              accessibilityRole="button"
-              accessibilityLabel="Done"
-            >
-              <Text style={styles.completeSetButtonText}>Done</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.completedSet}>
-              <Text style={styles.completedSetText}>✓ DONE</Text>
-            </View>
-          )}
+          <View style={styles.completedSet}>
+            <Text style={styles.completedSetText}>✓ DONE</Text>
+          </View>
           {onEdit && (
             <TouchableOpacity style={styles.editSetButton} onPress={onEdit}>
               <Text style={styles.editSetButtonText}>Edit</Text>
@@ -1727,12 +1727,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
+    gap: 4,
   },
   backButton: {
+    minWidth: 44,
     padding: 8,
   },
   backButtonText: {
@@ -1741,12 +1743,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   headerTitle: {
-    fontSize: 20,
+    flex: 1,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
+    textAlign: 'center',
+    marginHorizontal: 8,
   },
   placeholder: {
-    width: 40,
+    minWidth: 64,
+  },
+  headerFinishBtn: {
+    minWidth: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#00ff88',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerFinishBtnDisabled: {
+    minWidth: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#2a2a2a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerFinishBtnText: {
+    color: '#003322',
+    fontSize: 14,
+    fontWeight: '800',
   },
   progressSection: {
     padding: 20,
@@ -1936,20 +1964,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#00ff88',
   },
-  finishWorkoutButton: {
-    backgroundColor: 'transparent',
-    borderRadius: 12,
-    padding: 14,
-    alignItems: 'center',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#00ff88',
-  },
-  finishWorkoutButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#00ff88',
-  },
   setNavigation: {
     flexDirection: 'row',
     gap: 10,
@@ -2003,26 +2017,6 @@ const styles = StyleSheet.create({
   },
   nextExerciseButtonText: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  stickyFinishBar: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 12,
-    backgroundColor: '#1a1a1a',
-    borderTopWidth: 1,
-    borderTopColor: '#333',
-  },
-  doneWorkoutButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginTop: 0,
-  },
-  doneWorkoutButtonText: {
-    fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
   },

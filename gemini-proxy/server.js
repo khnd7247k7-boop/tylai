@@ -243,28 +243,47 @@ function extractJsonObject(text) {
  */
 app.post('/api/workouts/parse-spreadsheet', requireAuth, geminiLimiter, async (req, res) => {
   try {
-    const image = req.body?.image;
-    if (
-      !image ||
-      typeof image !== 'object' ||
-      typeof image.data !== 'string' ||
-      !image.data.trim() ||
-      typeof image.mimeType !== 'string' ||
-      !image.mimeType.trim()
-    ) {
+    /** Normalize single `image` or multi `images[]` into a validated list (max 6). */
+    const rawImages = Array.isArray(req.body?.images)
+      ? req.body.images
+      : req.body?.image
+        ? [req.body.image]
+        : [];
+
+    if (!rawImages.length) {
       return res.status(400).json({
-        error: 'Missing image payload. Expected { image: { mimeType, data } } with base64 data.',
+        error:
+          'Missing image payload. Expected { image: { mimeType, data } } or { images: [{ mimeType, data }, ...] }.',
       });
     }
-
-    const mimeType = String(image.mimeType).trim();
-    const data = String(image.data).replace(/^data:[^;]+;base64,/, '').trim();
-    if (!data) {
-      return res.status(400).json({ error: 'image.data must be non-empty base64.' });
+    if (rawImages.length > 6) {
+      return res.status(400).json({ error: 'Too many images. Send at most 6 photos per scan.' });
     }
-    // ~3MB base64 ceiling after client compression
-    if (data.length > 4_000_000) {
-      return res.status(413).json({ error: 'Image too large. Compress and try again.' });
+
+    const images = [];
+    for (const image of rawImages) {
+      if (
+        !image ||
+        typeof image !== 'object' ||
+        typeof image.data !== 'string' ||
+        !image.data.trim() ||
+        typeof image.mimeType !== 'string' ||
+        !image.mimeType.trim()
+      ) {
+        return res.status(400).json({
+          error: 'Each image must be { mimeType, data } with non-empty base64 data.',
+        });
+      }
+      const mimeType = String(image.mimeType).trim();
+      const data = String(image.data).replace(/^data:[^;]+;base64,/, '').trim();
+      if (!data) {
+        return res.status(400).json({ error: 'image.data must be non-empty base64.' });
+      }
+      // ~3MB base64 ceiling after client compression (per image)
+      if (data.length > 4_000_000) {
+        return res.status(413).json({ error: 'An image is too large. Compress and try again.' });
+      }
+      images.push({ mimeType, data });
     }
 
     const model =
@@ -272,7 +291,14 @@ app.post('/api/workouts/parse-spreadsheet', requireAuth, geminiLimiter, async (r
         ? req.body.model.trim()
         : DEFAULT_MODEL;
 
-    const prompt = `[system]\n${WORKOUT_SPREADSHEET_SYSTEM}\n\n[user]\nExtract the workout program from this image (printed spreadsheet, whiteboard, OR handwritten pen-and-paper log).
+    const multiPageHint =
+      images.length > 1
+        ? `\nThese ${images.length} photos are pages/parts of the SAME workout program (in order). Merge them into one routine — do not treat each photo as a separate unrelated program. Prefer day order across pages; dedupe identical repeated headers.`
+        : '';
+
+    const prompt = `[system]\n${WORKOUT_SPREADSHEET_SYSTEM}\n\n[user]\nExtract the workout program from ${
+      images.length > 1 ? `these ${images.length} images` : 'this image'
+    } (printed spreadsheet, whiteboard, OR handwritten pen-and-paper log).${multiPageHint}
 Return JSON matching this schema exactly:
 ${WORKOUT_SPREADSHEET_SCHEMA_HINT}
 
@@ -290,7 +316,7 @@ For multi-page style notes in one photo, include every readable session in days[
 
     const result = await modelClient.generateContent([
       { text: prompt },
-      { inlineData: { mimeType, data } },
+      ...images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
     ]);
     const text = result.response?.text?.() || '';
     const routine = extractJsonObject(text);

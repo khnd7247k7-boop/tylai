@@ -23,6 +23,7 @@ import {
   enrichExercisePoolWithMi,
   mergeExcludedWithMi,
   miBiasedShuffle,
+  orderPoolForExperience,
   pickMiSupportAccessories,
   type WorkoutBuilderMiContext,
 } from './src/services/WorkoutBuilderMiIntegration';
@@ -65,7 +66,6 @@ import {
 import { PRIMARY_GOAL_LABELS } from './src/types/coachingProfile';
 import type { CoachingProfile } from './src/types/coachingProfile';
 import {
-  allowedDifficulties,
   buildWorkoutGenerationModifiers,
   type WorkoutGenerationModifiers,
 } from './src/services/GoalDrivenCoaching';
@@ -844,10 +844,7 @@ export default function WorkoutScreen({
       exercisesPerDay = Math.max(3, exercisesPerDay - 1);
     }
 
-    const difficultyAllow = allowedDifficulties(
-      level,
-      coachingMods?.difficultyBias ?? 0
-    );
+    const difficultyBias = coachingMods?.difficultyBias ?? 0;
 
     // ─── Movement Intelligence → Exercise Selection (modular; does not replace builder) ───
     let miContext: WorkoutBuilderMiContext;
@@ -857,10 +854,11 @@ export default function WorkoutScreen({
         generatorGoal: resolvedGoal,
         primaryGoal: coachingMods?.primaryGoal ?? null,
         baseExcluded: excludedExercises,
+        difficultyBias,
       });
     } catch (e) {
       console.warn('[WorkoutBuilder] MI context unavailable; using base pool', e);
-      miContext = emptyWorkoutBuilderMiContext(level, resolvedGoal);
+      miContext = emptyWorkoutBuilderMiContext(level, resolvedGoal, difficultyBias);
     }
     const effectiveExcluded = mergeExcludedWithMi(excludedExercises, miContext);
     if (miContext.summary && miContext.summary !== 'mi_skipped') {
@@ -868,6 +866,7 @@ export default function WorkoutScreen({
     }
 
     // ─── Step 5: Select movements (equipment + injuries/limitations + goal + split) ───
+    // Complexity/difficulty comes from MI demands (via enrichExercisePoolWithMi), not catalog labels alone.
     const getExercisePool = (): ExerciseData[] => {
       let pool: ExerciseData[] = [];
       if (resolvedGoal === 'strength' || resolvedGoal === 'muscle_gain') {
@@ -906,24 +905,14 @@ export default function WorkoutScreen({
           });
         }
       }
-      pool = pool.filter(ex => {
-        return difficultyAllow.has(ex.difficulty as 'beginner' | 'intermediate' | 'advanced');
-      });
       pool = pool.filter(ex => !effectiveExcluded.includes(ex.name));
-      // MI re-ranks within the goal/equipment/difficulty pool (goal remains primary).
+      // MI complexity gate + selection ranking for beginner / intermediate / advanced toggle.
       return enrichExercisePoolWithMi(pool, miContext);
     };
     const exercisePool = getExercisePool();
 
     const getFilteredPlyometricPool = (): ExerciseData[] => {
       let candidates = exerciseDatabase.filter(ex => PLYOMETRIC_EXERCISE_IDS.has(ex.id));
-      candidates = candidates.filter(ex => {
-        if (level === 'beginner') return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate';
-        if (level === 'intermediate') {
-          return ex.difficulty === 'beginner' || ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
-        }
-        return ex.difficulty === 'intermediate' || ex.difficulty === 'advanced';
-      });
       candidates = candidates.filter(ex => !effectiveExcluded.includes(ex.name));
       if (userEquipment && userEquipment !== 'full gym' && userEquipment !== 'all') {
         const getEquipment = (ex: ExerciseData) => ex.equipmentRequired || ex.equipment || [];
@@ -941,7 +930,7 @@ export default function WorkoutScreen({
           });
         }
       }
-      // Soft MI demotion of high-balance plyos when stability is developing
+      // MI gates plyo complexity to experience level (beginner skips high skill/balance hops).
       return enrichExercisePoolWithMi(candidates, miContext);
     };
 
@@ -1211,7 +1200,14 @@ export default function WorkoutScreen({
     // Helper function to shuffle and select exercises
     // MI-biased: prefers higher-ranked pool items while keeping Option 1/2/3 variation.
     const shuffleArray = <T extends { id?: string; name?: string }>(array: T[]): T[] => {
-      return miBiasedShuffle(array, exercisePool, variationIndex);
+      // Rank by MI experience complexity within this subset (beginner → safer first, advanced → harder first).
+      const looksLikeExerciseData =
+        array.length > 0 &&
+        typeof (array[0] as ExerciseData).primaryMuscleGroup === 'string';
+      const poolOrder = looksLikeExerciseData
+        ? orderPoolForExperience(array as unknown as ExerciseData[], miContext.experienceLevel)
+        : exercisePool;
+      return miBiasedShuffle(array, poolOrder, variationIndex);
     };
 
     const exerciseIsCompoundLift = (ex: Exercise): boolean => (ex.muscleGroups?.length ?? 0) > 1;
@@ -1321,8 +1317,11 @@ export default function WorkoutScreen({
       usedRegions: Set<string>,
       count: number
     ): ExerciseData[] => {
-      const muscleGroupExercises = availableExercises.filter(e => 
-        e.primaryMuscleGroup.toLowerCase() === targetMuscleGroup.toLowerCase()
+      const muscleGroupExercises = orderPoolForExperience(
+        availableExercises.filter(e =>
+          e.primaryMuscleGroup.toLowerCase() === targetMuscleGroup.toLowerCase()
+        ),
+        miContext.experienceLevel
       );
       
       if (muscleGroupExercises.length === 0) return [];
@@ -1353,8 +1352,8 @@ export default function WorkoutScreen({
         if (selected.length >= count) break;
         const regionExercises = exercisesByRegion.get(region) || [];
         if (regionExercises.length > 0) {
-          const randomEx = regionExercises[Math.floor(Math.random() * regionExercises.length)];
-          selected.push(randomEx);
+          // Already MI-ordered within region lists (parent pool was ordered); take front.
+          selected.push(regionExercises[0]);
           usedRegions.add(`${targetMuscleGroup}-${region}`);
         }
       }
@@ -1397,10 +1396,8 @@ export default function WorkoutScreen({
             return e.category === 'strength' &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
-          if (level === 'advanced' && chestBackExercises.length > 0) {
-            const advancedExercises = chestBackExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = chestBackExercises.filter(e => e.difficulty === 'intermediate');
-            chestBackExercises = [...advancedExercises, ...intermediateExercises];
+          if (chestBackExercises.length > 0) {
+            chestBackExercises = orderPoolForExperience(chestBackExercises, miContext.experienceLevel);
           }
           if (chestBackExercises.length > 0) {
             const selectedExercises: ExerciseData[] = [];
@@ -1421,10 +1418,8 @@ export default function WorkoutScreen({
             return e.category === 'strength' &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
-          if (level === 'advanced' && armShoulderExercises.length > 0) {
-            const advancedExercises = armShoulderExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = armShoulderExercises.filter(e => e.difficulty === 'intermediate');
-            armShoulderExercises = [...advancedExercises, ...intermediateExercises];
+          if (armShoulderExercises.length > 0) {
+            armShoulderExercises = orderPoolForExperience(armShoulderExercises, miContext.experienceLevel);
           }
           if (armShoulderExercises.length > 0) {
             const selectedExercises: ExerciseData[] = [];
@@ -1448,10 +1443,8 @@ export default function WorkoutScreen({
               exerciseDataFitsDayFocus(e, focus) &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
-          if (level === 'advanced' && quadCalfExercises.length > 0) {
-            const advancedExercises = quadCalfExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = quadCalfExercises.filter(e => e.difficulty === 'intermediate');
-            quadCalfExercises = [...advancedExercises, ...intermediateExercises];
+          if (quadCalfExercises.length > 0) {
+            quadCalfExercises = orderPoolForExperience(quadCalfExercises, miContext.experienceLevel);
           }
           if (quadCalfExercises.length > 0) {
             const selectedExercises: ExerciseData[] = [];
@@ -1473,10 +1466,8 @@ export default function WorkoutScreen({
               exerciseDataFitsDayFocus(e, focus) &&
               muscleGroups.some(mg => targetMuscles.some(tm => mg.toLowerCase().includes(tm)));
           });
-          if (level === 'advanced' && gluteHamExercises.length > 0) {
-            const advancedExercises = gluteHamExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = gluteHamExercises.filter(e => e.difficulty === 'intermediate');
-            gluteHamExercises = [...advancedExercises, ...intermediateExercises];
+          if (gluteHamExercises.length > 0) {
+            gluteHamExercises = orderPoolForExperience(gluteHamExercises, miContext.experienceLevel);
           }
           if (gluteHamExercises.length > 0) {
             const selectedExercises: ExerciseData[] = [];
@@ -1499,12 +1490,9 @@ export default function WorkoutScreen({
                    muscleGroups.some(mg => upperBodyMuscleGroups.some(umg => mg.toLowerCase().includes(umg.toLowerCase())));
           });
           
-          // For advanced users, prioritize advanced exercises
-          if (level === 'advanced' && upperBodyExercises.length > 0) {
-            const advancedExercises = upperBodyExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = upperBodyExercises.filter(e => e.difficulty === 'intermediate');
-            // Prefer advanced exercises, but include some intermediate for variety
-            upperBodyExercises = [...advancedExercises, ...intermediateExercises];
+          // Prioritize by MI complexity for experience toggle (not catalog difficulty labels).
+          if (upperBodyExercises.length > 0) {
+            upperBodyExercises = orderPoolForExperience(upperBodyExercises, miContext.experienceLevel);
           }
           
           // Select exercises ensuring different muscle regions for each muscle group
@@ -1578,11 +1566,9 @@ export default function WorkoutScreen({
                    muscleGroups.some(mg => lowerBodyMuscleGroups.some(lmg => mg.toLowerCase().includes(lmg.toLowerCase())));
           });
           
-          // For advanced users, prioritize advanced exercises
-          if (level === 'advanced' && lowerBodyExercises.length > 0) {
-            const advancedExercises = lowerBodyExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = lowerBodyExercises.filter(e => e.difficulty === 'intermediate');
-            lowerBodyExercises = [...advancedExercises, ...intermediateExercises];
+          // Prioritize by MI complexity for experience toggle (not catalog difficulty labels).
+          if (lowerBodyExercises.length > 0) {
+            lowerBodyExercises = orderPoolForExperience(lowerBodyExercises, miContext.experienceLevel);
           }
           
           // Select exercises ensuring different muscle regions for each muscle group
@@ -1659,11 +1645,9 @@ export default function WorkoutScreen({
             e.category === 'strength' && e.movementPattern === 'push'
           );
           
-          // For advanced users, prioritize advanced exercises
-          if (level === 'advanced' && pushExercises.length > 0) {
-            const advancedExercises = pushExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = pushExercises.filter(e => e.difficulty === 'intermediate');
-            pushExercises = [...advancedExercises, ...intermediateExercises];
+          // Prioritize by MI complexity for experience toggle (not catalog difficulty labels).
+          if (pushExercises.length > 0) {
+            pushExercises = orderPoolForExperience(pushExercises, miContext.experienceLevel);
           }
           
           // Select exercises ensuring different muscle regions for chest, shoulders, triceps
@@ -1729,11 +1713,9 @@ export default function WorkoutScreen({
             e.category === 'strength' && e.movementPattern === 'pull'
           );
           
-          // For advanced users, prioritize advanced exercises
-          if (level === 'advanced' && pullExercises.length > 0) {
-            const advancedExercises = pullExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = pullExercises.filter(e => e.difficulty === 'intermediate');
-            pullExercises = [...advancedExercises, ...intermediateExercises];
+          // Prioritize by MI complexity for experience toggle (not catalog difficulty labels).
+          if (pullExercises.length > 0) {
+            pullExercises = orderPoolForExperience(pullExercises, miContext.experienceLevel);
           }
           
           // Select exercises ensuring different muscle regions for back, biceps
@@ -1787,11 +1769,9 @@ export default function WorkoutScreen({
                     muscleGroups.some(mg => legMuscleGroups.some(lmg => mg.toLowerCase().includes(lmg.toLowerCase()))));
           });
           
-          // For advanced users, prioritize advanced exercises
-          if (level === 'advanced' && legExercises.length > 0) {
-            const advancedExercises = legExercises.filter(e => e.difficulty === 'advanced');
-            const intermediateExercises = legExercises.filter(e => e.difficulty === 'intermediate');
-            legExercises = [...advancedExercises, ...intermediateExercises];
+          // Prioritize by MI complexity for experience toggle (not catalog difficulty labels).
+          if (legExercises.length > 0) {
+            legExercises = orderPoolForExperience(legExercises, miContext.experienceLevel);
           }
           
           // Select exercises ensuring different muscle regions for each muscle group

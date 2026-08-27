@@ -31,6 +31,8 @@ import {
 import { COMPETENCY_LEVEL_RANK } from '../types/exerciseCompetency';
 import type { SelectionExperienceLevel } from '../types/exerciseSelection';
 import {
+  exerciseFitsExperienceComplexity,
+  orderPoolForExperience,
   rankExercisesForExperience,
   toSelectionExperienceLevel,
 } from './exerciseSelectionRanking';
@@ -63,6 +65,8 @@ export type WorkoutBuilderMiContext = {
   /** Soft demote / prefer from modify constraints. */
   preferredVariations: string[];
   modifyExerciseNames: string[];
+  /** Challenge dial bias — widens/narrows MI complexity gate. */
+  difficultyBias: number;
   /** exerciseId → selection score from Exercise Selection Engine. */
   selectionScoreById: Map<string, number>;
   /** Ordered catalog ids from selection engine (best first). */
@@ -273,7 +277,8 @@ export function miAdjustmentForExercise(
 
 /**
  * Re-rank an existing builder pool with Selection Engine scores + MI adjustments.
- * Does not expand into a rehab program — only reorders / soft-filters within the pool.
+ * Hard-filters by experience complexity (technical / coordination / composite demand).
+ * Does not expand into a rehab program — only reorders within the goal pool.
  */
 export function enrichExercisePoolWithMi(
   pool: ExerciseData[],
@@ -282,8 +287,17 @@ export function enrichExercisePoolWithMi(
   if (!pool.length) return pool;
 
   const hard = new Set(ctx.hardAvoidNames.map(nameKey));
-  const scored = pool
-    .filter((ex) => !hard.has(nameKey(ex.name)))
+  const complexityFiltered = pool.filter(
+    (ex) =>
+      !hard.has(nameKey(ex.name)) &&
+      exerciseFitsExperienceComplexity(ex, ctx.experienceLevel, {
+        difficultyBias: ctx.difficultyBias,
+      })
+  );
+  // If MI gate emptied the pool (sparse equipment), fall back to avoid-only filter.
+  const usable = complexityFiltered.length > 0 ? complexityFiltered : pool.filter((ex) => !hard.has(nameKey(ex.name)));
+
+  const scored = usable
     .map((ex) => {
       const base = ctx.selectionScoreById.get(ex.id) ?? 50;
       const adj = miAdjustmentForExercise(ex, ctx);
@@ -293,6 +307,9 @@ export function enrichExercisePoolWithMi(
 
   return scored.map((s) => s.ex);
 }
+
+/** Re-export for Workout Builder day composition. */
+export { orderPoolForExperience, exerciseFitsExperienceComplexity };
 
 /**
  * Shuffle that preserves MI preference: higher-ranked pool items stay likelier early.
@@ -414,6 +431,9 @@ function buildSummary(ctx: Omit<WorkoutBuilderMiContext, 'summary'>): string {
   const parts: string[] = [];
   parts.push(`goal=${ctx.primaryGoal ?? ctx.generatorGoal}`);
   parts.push(`level=${ctx.experienceLevel}`);
+  if (ctx.difficultyBias !== 0) {
+    parts.push(`diffBias=${ctx.difficultyBias}`);
+  }
   if (ctx.developingFocuses.length) {
     parts.push(`developing=${ctx.developingFocuses.slice(0, 4).join(',')}`);
   }
@@ -729,10 +749,13 @@ export async function buildWorkoutBuilderMiContext(input: {
   generatorGoal: string;
   primaryGoal?: PrimaryGoal | null;
   baseExcluded?: string[];
+  /** Challenge dial from coaching modifiers (−1…+1-ish). */
+  difficultyBias?: number;
 }): Promise<WorkoutBuilderMiContext> {
   const experienceLevel = toSelectionExperienceLevel(
     input.experienceLevel as ExperienceLevel
   );
+  const difficultyBias = input.difficultyBias ?? 0;
 
   let profile: MovementProfile;
   try {
@@ -837,6 +860,7 @@ export async function buildWorkoutBuilderMiContext(input: {
     hardAvoidNames,
     preferredVariations,
     modifyExerciseNames,
+    difficultyBias,
     selectionScoreById,
     rankedIds,
     recentSessionCount,
@@ -849,7 +873,8 @@ export async function buildWorkoutBuilderMiContext(input: {
 /** Empty context when MI load must be skipped. */
 export function emptyWorkoutBuilderMiContext(
   experienceLevel: string,
-  generatorGoal: string
+  generatorGoal: string,
+  difficultyBias = 0
 ): WorkoutBuilderMiContext {
   const level = toSelectionExperienceLevel(experienceLevel as ExperienceLevel);
   return {
@@ -862,6 +887,7 @@ export function emptyWorkoutBuilderMiContext(
     hardAvoidNames: [],
     preferredVariations: [],
     modifyExerciseNames: [],
+    difficultyBias,
     selectionScoreById: new Map(),
     rankedIds: [],
     recentSessionCount: 0,

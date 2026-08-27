@@ -984,8 +984,8 @@ export default function BuildYourOwnWorkoutScreen({
             <View style={styles.section}>
               <Text style={styles.label}>Scan a workout</Text>
               <Text style={styles.hint}>
-                Photograph a spreadsheet, printed plan, or handwritten pen-and-paper log. AI extracts
-                exercises, sets, and reps into this builder.
+                Photograph a plan or choose multiple photos for multi-page spreadsheets and handwritten
+                logs. AI extracts exercises, sets, and reps into this builder.
               </Text>
               <TouchableOpacity
                 style={styles.scanSpreadsheetBtn}
