@@ -36,8 +36,8 @@ import type { CardioLog } from './data/workoutPrograms';
 interface LogPastWorkoutScreenProps {
   onBack: () => void;
   onComplete: (session: WorkoutSession) => void;
-  /** past = previous session with date picker; daily = today's one-off session. */
-  mode?: 'past' | 'daily';
+  /** past = previous session with date picker; daily = today's one-off; cardio = cardio-only log. */
+  mode?: 'past' | 'daily' | 'cardio';
   /** Called after the user opts to save a daily workout as a reusable program. */
   onProgramsChanged?: () => void;
 }
@@ -83,11 +83,14 @@ export default function LogPastWorkoutScreen({
   onProgramsChanged,
 }: LogPastWorkoutScreenProps) {
   const isDaily = mode === 'daily';
+  const isCardio = mode === 'cardio';
   const { onWorkoutSessionSaved } = useSmallWins();
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
-  const [workoutName, setWorkoutName] = useState(() =>
-    mode === 'daily' ? formatDailyWorkoutTitle(new Date()) : ''
-  );
+  const [workoutName, setWorkoutName] = useState(() => {
+    if (mode === 'daily') return formatDailyWorkoutTitle(new Date());
+    if (mode === 'cardio') return 'Cardio';
+    return '';
+  });
   const [exercises, setExercises] = useState<ExerciseEntry[]>([]);
   const [exerciseSearch, setExerciseSearch] = useState('');
   const deferredExerciseSearch = useDeferredValue(exerciseSearch);
@@ -107,7 +110,11 @@ export default function LogPastWorkoutScreen({
   const [datePickerKey, setDatePickerKey] = useState(0);
   /** Manual adds default expanded; plan-loaded rows start collapsed until the user expands. */
   const [expandOverride, setExpandOverride] = useState<Record<string, boolean>>({});
-  const [cardio, setCardio] = useState<CardioLog | null>(null);
+  const [cardio, setCardio] = useState<CardioLog | null>(() =>
+    mode === 'cardio'
+      ? { activity: 'Running', durationMin: 20, source: 'manual' }
+      : null
+  );
   const cardioWindow = useMemo(() => {
     const center = selectedDate.getTime();
     return {
@@ -473,6 +480,63 @@ export default function LogPastWorkoutScreen({
   };
 
   const handleSave = async () => {
+    if (isCardio) {
+      if (!cardio || cardio.durationMin <= 0) {
+        Alert.alert('Add cardio details', 'Choose an activity and enter how long you went.');
+        return;
+      }
+
+      const workoutDate = new Date(selectedDate);
+      workoutDate.setSeconds(0, 0);
+      const displayName = workoutName.trim() || cardio.activity;
+      const session: WorkoutSession = {
+        id: Date.now().toString(),
+        programId: `cardio-${Date.now()}`,
+        programName: displayName,
+        date: workoutDate.toISOString(),
+        duration: cardio.durationMin,
+        exercises: [],
+        notes: 'Cardio',
+        completed: true,
+        cardio,
+      };
+
+      try {
+        const { appendCompletedWorkoutSession } = await import('./src/utils/workoutHistoryStorage');
+        const { notifyUserDataReady } = await import('./src/utils/userDataEvents');
+        await appendCompletedWorkoutSession(session, { notify: false });
+
+        try {
+          await onWorkoutSessionSaved(session);
+        } catch {
+          /* ignore gamification errors */
+        }
+
+        notifyUserDataReady();
+
+        const { notifyWorkoutCompleted } = await import('./src/utils/workoutCompleteNotifications');
+        void notifyWorkoutCompleted({
+          programName: displayName,
+          duration: session.duration,
+          exerciseCount: 0,
+        });
+
+        Alert.alert('Saved', 'Cardio logged to your history.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              onComplete(session);
+              onBack();
+            },
+          },
+        ]);
+      } catch (error) {
+        console.error('Error saving cardio workout:', error);
+        Alert.alert('Error', 'Failed to save cardio');
+      }
+      return;
+    }
+
     if (!workoutName.trim()) {
       Alert.alert('Error', 'Please enter a workout name');
       return;
@@ -695,7 +759,9 @@ export default function LogPastWorkoutScreen({
         >
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{isDaily ? 'Daily Workout' : 'Past Workout'}</Text>
+        <Text style={styles.headerTitle}>
+          {isCardio ? 'Log Cardio' : isDaily ? 'Daily Workout' : 'Past Workout'}
+        </Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -710,7 +776,19 @@ export default function LogPastWorkoutScreen({
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          {isDaily ? (
+          {isCardio ? (
+            <View style={styles.section}>
+              <Text style={styles.hintText}>
+                Log a run, walk, bike, or other cardio. Pick a type, enter duration, or tap a watch
+                workout if one appears below.
+              </Text>
+              <TouchableOpacity style={styles.dateFieldButton} onPress={openDateModal} activeOpacity={0.85}>
+                <Text style={styles.dateFieldLabel}>When was this session?</Text>
+                <Text style={styles.dateFieldValue}>{formatDateTime(selectedDate)}</Text>
+                <Text style={styles.dateFieldAction}>Change</Text>
+              </TouchableOpacity>
+            </View>
+          ) : isDaily ? (
             <View style={styles.section}>
               <Text style={styles.hintText}>
                 Log a one-off session for today — different from your saved plan. Add each exercise
@@ -732,6 +810,7 @@ export default function LogPastWorkoutScreen({
           </View>
           )}
 
+          {!isCardio ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Workout Name</Text>
             <TextInput
@@ -746,8 +825,20 @@ export default function LogPastWorkoutScreen({
               autoCapitalize="words"
             />
           </View>
+          ) : (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Session name (optional)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Defaults to activity type"
+              value={workoutName}
+              onChangeText={setWorkoutName}
+              autoCapitalize="words"
+            />
+          </View>
+          )}
 
-          {savedPlans.length > 0 && (
+          {!isCardio && savedPlans.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>
                 {isDaily ? 'Start from a saved plan (optional)' : 'Load from Saved Plan (Optional)'}
@@ -777,7 +868,7 @@ export default function LogPastWorkoutScreen({
             </View>
           )}
 
-          {templatePlan && templatePlan.weeklyPlan && templatePlan.weeklyPlan.weekDays && templatePlan.weeklyPlan.weekDays.length > 1 && (
+          {!isCardio && templatePlan && templatePlan.weeklyPlan && templatePlan.weeklyPlan.weekDays && templatePlan.weeklyPlan.weekDays.length > 1 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Workout Day</Text>
               <View style={styles.daySelector}>
@@ -808,6 +899,7 @@ export default function LogPastWorkoutScreen({
             </View>
           )}
 
+          {!isCardio ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Add Exercise</Text>
             <TextInput
@@ -851,8 +943,9 @@ export default function LogPastWorkoutScreen({
               </Text>
             </TouchableOpacity>
           </View>
+          ) : null}
 
-          {exercises.length > 0 ? (
+          {!isCardio && exercises.length > 0 ? (
             <View style={styles.section}>
               <View style={styles.exercisesSectionHeader}>
                 <Text style={[styles.sectionTitle, styles.exercisesSectionTitle]}>
@@ -882,29 +975,38 @@ export default function LogPastWorkoutScreen({
               </View>
               {exercises.map((exercise) => renderExerciseCard(exercise))}
             </View>
-          ) : (
+          ) : !isCardio ? (
             <View style={styles.emptyExercisesBox}>
               <Text style={styles.emptyExercisesText}>
                 Search and tap an exercise above to start logging sets, weight, and reps.
               </Text>
             </View>
-          )}
+          ) : null}
 
           <TrackCardioSection
             value={cardio}
-            onChange={setCardio}
+            onChange={(next) => {
+              setCardio(next);
+              if (isCardio && next?.activity && (!workoutName.trim() || workoutName === 'Cardio')) {
+                setWorkoutName(next.activity);
+              }
+            }}
             windowStart={cardioWindow.start}
             windowEnd={cardioWindow.end}
-            workoutSummary={{
-              name: workoutName.trim() || (isDaily ? 'Daily workout' : 'Logged workout'),
-              exerciseNames: exercises.map((ex) => ex.name).filter(Boolean),
-              durationMin: exercises.length > 0 ? exercises.length * 5 : undefined,
-            }}
+            workoutSummary={
+              isCardio
+                ? null
+                : {
+                    name: workoutName.trim() || (isDaily ? 'Daily workout' : 'Logged workout'),
+                    exerciseNames: exercises.map((ex) => ex.name).filter(Boolean),
+                    durationMin: exercises.length > 0 ? exercises.length * 5 : undefined,
+                  }
+            }
           />
 
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveButtonText}>
-              {isDaily ? 'Finish & Save' : 'Save Workout'}
+              {isCardio ? 'Save Cardio' : isDaily ? 'Finish & Save' : 'Save Workout'}
             </Text>
           </TouchableOpacity>
         </ScrollView>

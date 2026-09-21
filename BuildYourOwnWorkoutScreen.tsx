@@ -65,6 +65,44 @@ interface BuildYourOwnWorkoutScreenProps {
 
 const MAX_PROGRAM_WEEKS = 12;
 const EXERCISE_ROW_HEIGHT = 56;
+const MIN_TIMED_SECONDS = 5;
+const MAX_TIMED_SECONDS = 3600;
+
+function splitDurationSeconds(total: number): { minutes: string; seconds: string } {
+  const safe = Math.max(0, Math.round(total));
+  return {
+    minutes: String(Math.floor(safe / 60)),
+    seconds: String(safe % 60),
+  };
+}
+
+function parseDurationParts(minutesStr: string, secondsStr: string): number | null {
+  const minutes = parseInt(minutesStr.trim() || '0', 10);
+  const seconds = parseInt(secondsStr.trim() || '0', 10);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+  if (minutes < 0 || seconds < 0 || seconds > 59) return null;
+  return minutes * 60 + seconds;
+}
+
+function validateTimedDuration(totalSeconds: number): string | null {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < MIN_TIMED_SECONDS) {
+    return `Enter at least ${MIN_TIMED_SECONDS} seconds total (e.g. 0 min 30 sec).`;
+  }
+  if (totalSeconds > MAX_TIMED_SECONDS) {
+    return 'Maximum duration is 60 minutes.';
+  }
+  return null;
+}
+
+function formatTimedPrescription(sets: string, durationSeconds: number): string {
+  const mins = Math.floor(durationSeconds / 60);
+  const secs = durationSeconds % 60;
+  let time: string;
+  if (mins > 0 && secs > 0) time = `${mins}m ${secs}s`;
+  else if (mins > 0) time = `${mins}m`;
+  else time = `${secs}s`;
+  return `${sets}×${time}`;
+}
 
 const DAYS_OF_WEEK = [
   'Monday',
@@ -136,6 +174,10 @@ export default function BuildYourOwnWorkoutScreen({
   const deferredExerciseSearchQuery = useDeferredValue(exerciseSearchQuery);
   const [showCustomExerciseInput, setShowCustomExerciseInput] = useState(false);
   const [customExerciseName, setCustomExerciseName] = useState('');
+  const [customLoggingMode, setCustomLoggingMode] = useState<'reps' | 'timed'>('reps');
+  const [customTimedRounds, setCustomTimedRounds] = useState('1');
+  const [customTimedMinutes, setCustomTimedMinutes] = useState('1');
+  const [customTimedSeconds, setCustomTimedSeconds] = useState('0');
   /** Local draft so typing the workout name doesn't re-render the exercise list every keystroke. */
   const [dayNameDraft, setDayNameDraft] = useState('');
   
@@ -149,6 +191,7 @@ export default function BuildYourOwnWorkoutScreen({
   const [configRestTime, setConfigRestTime] = useState('60');
   /** 'reps' = sets × reps logging; 'timed' = timed hold(s). */
   const [configLoggingMode, setConfigLoggingMode] = useState<'reps' | 'timed'>('reps');
+  const [configDurationMinutes, setConfigDurationMinutes] = useState('0');
   const [configDurationSeconds, setConfigDurationSeconds] = useState('45');
   /** Exercise ids selected for creating / ungrouping a superset. */
   const [supersetPickIds, setSupersetPickIds] = useState<string[]>([]);
@@ -374,12 +417,46 @@ export default function BuildYourOwnWorkoutScreen({
   );
 
   const handleAddCustomExercise = () => {
-    if (!customExerciseName.trim()) {
+    const name = customExerciseName.trim();
+    if (!name) {
       Alert.alert('Error', 'Please enter an exercise name');
       return;
     }
-    handleAddExerciseToCurrentDay(customExerciseName);
+
+    if (customLoggingMode === 'timed') {
+      const duration = parseDurationParts(customTimedMinutes, customTimedSeconds);
+      const durationErr =
+        duration == null
+          ? 'Seconds must be between 0 and 59.'
+          : validateTimedDuration(duration);
+      if (durationErr) {
+        Alert.alert('Invalid duration', durationErr);
+        return;
+      }
+      const rounds = customTimedRounds.trim();
+      if (!/^(\d+(-\d+)?)$/.test(rounds)) {
+        Alert.alert('Invalid rounds', 'Rounds must be a number (e.g., "1" or "3") or range (e.g., "2-3")');
+        return;
+      }
+      const newExercise: CustomExercise = {
+        id: `exercise-${Date.now()}-${Math.random()}`,
+        name,
+        sets: rounds,
+        reps: String(duration),
+        weight: 0,
+        restTime: 60,
+        durationSeconds: duration,
+      };
+      commitDayExercises([...currentDayExercises, newExercise]);
+    } else {
+      handleAddExerciseToCurrentDay(name);
+    }
+
     setCustomExerciseName('');
+    setCustomLoggingMode('reps');
+    setCustomTimedRounds('1');
+    setCustomTimedMinutes('1');
+    setCustomTimedSeconds('0');
     setShowCustomExerciseInput(false);
   };
 
@@ -453,7 +530,14 @@ export default function BuildYourOwnWorkoutScreen({
       setConfigRestTime(exercise.restTime.toString());
       const timed = (exercise.durationSeconds ?? 0) > 0;
       setConfigLoggingMode(timed ? 'timed' : 'reps');
-      setConfigDurationSeconds(String(timed ? exercise.durationSeconds : 45));
+      if (timed) {
+        const parts = splitDurationSeconds(exercise.durationSeconds ?? 45);
+        setConfigDurationMinutes(parts.minutes);
+        setConfigDurationSeconds(parts.seconds);
+      } else {
+        setConfigDurationMinutes('0');
+        setConfigDurationSeconds('45');
+      }
       setShowExerciseConfigModal(true);
     },
     [currentDayExercises]
@@ -467,9 +551,13 @@ export default function BuildYourOwnWorkoutScreen({
     const restTime = parseInt(configRestTime, 10) || 60;
 
     if (configLoggingMode === 'timed') {
-      const duration = parseInt(configDurationSeconds.trim(), 10);
-      if (!Number.isFinite(duration) || duration < 5 || duration > 600) {
-        Alert.alert('Invalid Duration', 'Enter a time between 5 and 600 seconds.');
+      const duration = parseDurationParts(configDurationMinutes, configDurationSeconds);
+      const durationErr =
+        duration == null
+          ? 'Seconds must be between 0 and 59.'
+          : validateTimedDuration(duration);
+      if (durationErr) {
+        Alert.alert('Invalid Duration', durationErr);
         return;
       }
       if (!setsPattern.test(configSets.trim())) {
@@ -571,7 +659,7 @@ export default function BuildYourOwnWorkoutScreen({
               </Text>
               <Text style={styles.selectedCompactMeta}>
                 {(item.durationSeconds ?? 0) > 0
-                  ? `${item.sets}×${item.durationSeconds}s`
+                  ? formatTimedPrescription(item.sets, item.durationSeconds ?? 0)
                   : `${item.sets}×${item.reps}`}
               </Text>
             </TouchableOpacity>
@@ -1424,6 +1512,80 @@ export default function BuildYourOwnWorkoutScreen({
                     onChangeText={setCustomExerciseName}
                     autoCapitalize="words"
                   />
+                  <Text style={styles.customExerciseFieldLabel}>Logging type</Text>
+                  <View style={styles.loggingModeRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.loggingModeChip,
+                        customLoggingMode === 'reps' && styles.loggingModeChipOn,
+                      ]}
+                      onPress={() => setCustomLoggingMode('reps')}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.loggingModeChipText,
+                          customLoggingMode === 'reps' && styles.loggingModeChipTextOn,
+                        ]}
+                      >
+                        Sets & reps
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.loggingModeChip,
+                        customLoggingMode === 'timed' && styles.loggingModeChipOn,
+                      ]}
+                      onPress={() => setCustomLoggingMode('timed')}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.loggingModeChipText,
+                          customLoggingMode === 'timed' && styles.loggingModeChipTextOn,
+                        ]}
+                      >
+                        Timed
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  {customLoggingMode === 'timed' ? (
+                    <View style={styles.customTimedRow}>
+                      <View style={styles.customTimedField}>
+                        <Text style={styles.customExerciseFieldLabel}>Rounds</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="1"
+                          placeholderTextColor="#666"
+                          keyboardType="default"
+                          value={customTimedRounds}
+                          onChangeText={setCustomTimedRounds}
+                        />
+                      </View>
+                      <View style={styles.customTimedField}>
+                        <Text style={styles.customExerciseFieldLabel}>Minutes</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="1"
+                          placeholderTextColor="#666"
+                          keyboardType="number-pad"
+                          value={customTimedMinutes}
+                          onChangeText={setCustomTimedMinutes}
+                        />
+                      </View>
+                      <View style={styles.customTimedField}>
+                        <Text style={styles.customExerciseFieldLabel}>Seconds</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="0"
+                          placeholderTextColor="#666"
+                          keyboardType="number-pad"
+                          value={customTimedSeconds}
+                          onChangeText={setCustomTimedSeconds}
+                        />
+                      </View>
+                    </View>
+                  ) : null}
                   <View style={styles.customExerciseActions}>
                     <TouchableOpacity style={styles.addButton} onPress={handleAddCustomExercise}>
                       <Text style={styles.addButtonText}>Add</Text>
@@ -1654,11 +1816,23 @@ export default function BuildYourOwnWorkoutScreen({
                       />
                     </View>
                     <View style={styles.modalField}>
-                      <Text style={styles.modalLabel}>Seconds</Text>
+                      <Text style={styles.modalLabel}>Minutes</Text>
                       <Text style={styles.modalHint}>hold / work time</Text>
                       <TextInput
                         style={styles.modalInput}
-                        placeholder="45"
+                        placeholder="1"
+                        placeholderTextColor="#666"
+                        keyboardType="number-pad"
+                        value={configDurationMinutes}
+                        onChangeText={setConfigDurationMinutes}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Seconds</Text>
+                      <Text style={styles.modalHint}>0–59</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="30"
                         placeholderTextColor="#666"
                         keyboardType="number-pad"
                         value={configDurationSeconds}
@@ -1998,7 +2172,7 @@ export default function BuildYourOwnWorkoutScreen({
                               </Text>
                               <Text style={styles.reviewExerciseDetails}>
                                 {(item.durationSeconds ?? 0) > 0
-                                  ? `${item.sets} × ${item.durationSeconds}s`
+                                  ? `${formatTimedPrescription(item.sets, item.durationSeconds ?? 0).replace('×', ' × ')}`
                                   : `${item.sets} sets × ${item.reps} reps`}
                                 {item.weight > 0 && ` @ ${item.weight} lbs`}
                                 {' • '}{item.restTime}s rest
@@ -2619,6 +2793,21 @@ const styles = StyleSheet.create({
   },
   customExerciseInput: {
     marginBottom: 15,
+  },
+  customExerciseFieldLabel: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  customTimedRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  customTimedField: {
+    flex: 1,
   },
   customExerciseActions: {
     flexDirection: 'row',

@@ -193,6 +193,7 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
         )}
 
         {/* Exercises */}
+        {session.exercises.length > 0 ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Exercises</Text>
           {session.exercises.map((exercise, index) => {
@@ -289,6 +290,7 @@ export default function WorkoutHistoryDetailScreen({ session, onBack }: WorkoutH
             );
           })}
         </View>
+        ) : null}
 
         {/* Notes */}
         {session.notes && (

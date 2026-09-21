@@ -31,6 +31,32 @@ export function getBetaPaymentUrl(): string {
   return readEnvString('EXPO_PUBLIC_BETA_PAYMENT_URL') || 'https://tyl-ai.com/join.html#pricing';
 }
 
+export function getManageSubscriptionPageUrl(): string {
+  return readEnvString('EXPO_PUBLIC_MANAGE_SUBSCRIPTION_URL') || 'https://tyl-ai.com/manage';
+}
+
+export function getPasswordResetPageUrl(email?: string): string {
+  const base = readEnvString('EXPO_PUBLIC_PASSWORD_RESET_URL') || 'https://tyl-ai.com/reset';
+  const trimmed = (email || '').trim();
+  if (!trimmed) return base;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}email=${encodeURIComponent(trimmed)}`;
+}
+
+export async function openPasswordResetPage(email?: string): Promise<void> {
+  const url = getPasswordResetPageUrl(email);
+  try {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert('Reset password', url);
+      return;
+    }
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert('Reset password', `Open this page in your browser:\n\n${url}`);
+  }
+}
+
 /**
  * Stripe paid check for TestFlight premium.
  * Returns `null` when the check could not be verified (network/auth/API error) —
@@ -127,10 +153,13 @@ export async function fetchStripeSubscriptionStatus(): Promise<StripeSubscriptio
   }
 }
 
-export async function openStripeBillingPortal(): Promise<boolean> {
+export async function openStripeBillingPortal(opts?: { alertOnFail?: boolean }): Promise<boolean> {
+  const alertOnFail = opts?.alertOnFail !== false;
   const user = auth?.currentUser;
   if (!user?.email || auth?._isMock) {
-    Alert.alert('Sign in required', 'Sign in with the same email you used at Stripe checkout.');
+    if (alertOnFail) {
+      Alert.alert('Sign in required', 'Sign in with the same email you used at Stripe checkout.');
+    }
     return false;
   }
 
@@ -145,11 +174,13 @@ export async function openStripeBillingPortal(): Promise<boolean> {
     const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
 
     if (!res.ok || !data.url) {
-      Alert.alert(
-        'Billing unavailable',
-        data.error ||
-          'We could not open billing management. Make sure you subscribed with this email, or contact support.'
-      );
+      if (alertOnFail) {
+        Alert.alert(
+          'Billing unavailable',
+          data.error ||
+            'We could not open billing management. Make sure you subscribed with this email, or contact support.'
+        );
+      }
       return false;
     }
 
@@ -157,7 +188,9 @@ export async function openStripeBillingPortal(): Promise<boolean> {
     return true;
   } catch (error) {
     console.warn('[billing] portal open failed', error);
-    Alert.alert('Billing unavailable', 'Could not open the billing page. Check your connection and try again.');
+    if (alertOnFail) {
+      Alert.alert('Billing unavailable', 'Could not open the billing page. Check your connection and try again.');
+    }
     return false;
   }
 }

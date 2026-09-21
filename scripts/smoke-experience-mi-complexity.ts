@@ -41,7 +41,20 @@ async function main() {
     '../src/services/WorkoutBuilderMiIntegration'
   );
 
-  const strength = exerciseDatabase.filter((e) => e.category === 'strength').slice(0, 200);
+  const {
+    applyMiDemandToPrescription,
+    biasSplitFocusesForExperience,
+    designSessionShape,
+    orderPlanExercisesForExperience,
+  } = await import('../src/services/experienceMiPlanDesign');
+
+  const byId = (id: string) => {
+    const ex = exerciseDatabase.find((e) => e.id === id);
+    if (!ex) throw new Error(`Missing catalog exercise ${id}`);
+    return ex;
+  };
+
+  const strength = exerciseDatabase.filter((e) => e.category === 'strength');
 
   const beginnerCtx = emptyWorkoutBuilderMiContext('beginner', 'muscle_gain', 0);
   const advancedCtx = emptyWorkoutBuilderMiContext('advanced', 'muscle_gain', 0);
@@ -90,6 +103,95 @@ async function main() {
   }
   if (advancedRejected.length !== 0) {
     throw new Error('Advanced gate should allow full spectrum');
+  }
+
+  const goblet = byId('goblet-squats');
+  const powerClean = byId('power-cleans-barbell');
+  const bodyweightSquat = byId('bodyweight-squats');
+  const pecDeck = byId('pec-deck-machine');
+
+  if (exerciseFitsExperienceComplexity(powerClean, 'beginner', { difficultyBias: 0 })) {
+    throw new Error('Expected beginner MI gate to reject Power Cleans');
+  }
+
+  const beginnerMain = applyMiDemandToPrescription(
+    { sets: 3, reps: 8, restTime: 90 },
+    goblet,
+    'beginner',
+    { goal: 'strength', role: 'main' }
+  );
+  const advancedMain = applyMiDemandToPrescription(
+    { sets: 4, reps: 5, restTime: 150 },
+    powerClean,
+    'advanced',
+    { goal: 'strength', role: 'main' }
+  );
+  const advancedIsolation = applyMiDemandToPrescription(
+    { sets: 4, reps: 5, restTime: 150 },
+    pecDeck,
+    'advanced',
+    { goal: 'strength', role: 'accessory' }
+  );
+
+  console.log('--- Experience MI plan design ---');
+  console.log(
+    `beginner goblet: ${beginnerMain.sets}x${beginnerMain.reps} rest ${beginnerMain.restTime}`
+  );
+  console.log(
+    `advanced power clean: ${advancedMain.sets}x${advancedMain.reps} rest ${advancedMain.restTime}`
+  );
+  console.log(
+    `advanced pec deck accessory: ${advancedIsolation.sets}x${advancedIsolation.reps} rest ${advancedIsolation.restTime}`
+  );
+
+  if (beginnerMain.reps < 8) {
+    throw new Error('Beginner main lift should keep technique-volume reps (>=8)');
+  }
+  if (beginnerMain.sets > 3) {
+    throw new Error('Beginner main lift should not exceed 3 working sets');
+  }
+  if ((advancedMain.restTime ?? 0) < (beginnerMain.restTime ?? 0)) {
+    throw new Error('Advanced high-complexity main lift should rest at least as long as beginner');
+  }
+  if (advancedIsolation.reps <= advancedMain.reps) {
+    throw new Error('Advanced isolation accessory should use higher reps than a high-demand main lift');
+  }
+
+  const begOrdered = orderPlanExercisesForExperience(
+    [powerClean, goblet, bodyweightSquat],
+    (ex) => ex,
+    'beginner'
+  );
+  const advOrdered = orderPlanExercisesForExperience(
+    [bodyweightSquat, goblet, powerClean],
+    (ex) => ex,
+    'advanced'
+  );
+  if (begOrdered[0].id === 'power-cleans-barbell') {
+    throw new Error('Beginner main-lift order should not lead with Power Cleans');
+  }
+  if (advOrdered[0].id === 'bodyweight-squats') {
+    throw new Error('Advanced main-lift order should not lead with Bodyweight Squats');
+  }
+
+  const beginnerSplit = biasSplitFocusesForExperience(
+    ['Push', 'Pull', 'Legs', 'Push', 'Pull'],
+    'beginner',
+    5
+  );
+  const advancedSplit = biasSplitFocusesForExperience(
+    ['Push', 'Pull', 'Legs', 'Push', 'Pull'],
+    'advanced',
+    5
+  );
+  if (beginnerSplit.some((f) => /^(Push|Pull|Legs)$/.test(f))) {
+    throw new Error('Beginner PPL should remap to upper/lower/full-body frequency');
+  }
+  if (advancedSplit.join('|') !== 'Push|Pull|Legs|Push|Pull') {
+    throw new Error('Advanced PPL split should stay intact');
+  }
+  if (designSessionShape('beginner').exercisesPerDay >= designSessionShape('advanced').exercisesPerDay) {
+    throw new Error('Advanced sessions should include more exercises than beginner');
   }
 
   console.log('OK');

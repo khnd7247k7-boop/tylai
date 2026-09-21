@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Linking, type AppStateStatus } from 'react-native';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from '../../firebaseConfig';
 import {
@@ -26,7 +26,7 @@ import {
 } from '../utils/subscription';
 import {
   fetchStripeSubscriptionStatus,
-  openStripeBillingPortal,
+  getManageSubscriptionPageUrl,
   type StripeSubscriptionStatus,
 } from '../services/betaAccessService';
 
@@ -204,7 +204,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   }, [refreshTier]);
 
   const manageBilling = useCallback(async () => {
-    return openStripeBillingPortal();
+    try {
+      await Linking.openURL(getManageSubscriptionPageUrl());
+      return true;
+    } catch (error) {
+      console.warn('[Subscription] manage page open failed', error);
+      return false;
+    }
   }, []);
 
   const value = useMemo<SubscriptionContextValue>(

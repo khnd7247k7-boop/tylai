@@ -58,7 +58,7 @@ export function createAppTourSteps(nav: TourNavHandlers): TourStep[] {
       targetSelector: tourSelector(TOUR_TARGET_IDS.fitnessMyPlans),
       title: 'Log Workout',
       content:
-        'Log a past session or a one-off daily workout when you train something different from your saved plan.',
+        'Choose daily workout, cardio, or a past session — each opens a focused logging screen.',
       placement: 'top',
       requireActualClick: true,
       spotlightPadding: 10,

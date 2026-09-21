@@ -7,6 +7,7 @@ import {
   LEGAL_GOVERNING_COUNTRY,
   LEGAL_GOVERNING_STATE,
   LEGAL_LAST_UPDATED,
+  LEGAL_MANAGE_SUBSCRIPTION_URL,
   LEGAL_WEBSITE,
 } from './legalMeta';
 
@@ -176,7 +177,7 @@ Free trials or promotional offers, if any, convert to paid subscriptions unless 
 
 5. Cancellations and Refunds
 ----------------------------
-You may cancel a subscription through your Apple or Google account subscription settings, or through billing tools we provide for Stripe-managed plans. Cancellation stops future charges; access typically continues until the end of the current billing period.
+You may cancel or update a card for a Stripe-managed Premium plan at ${LEGAL_MANAGE_SUBSCRIPTION_URL}. Enter the email you used at checkout, then choose update payment or cancel. To switch monthly and yearly, use ${LEGAL_WEBSITE}/join.html#pricing. You may also cancel through Apple or Google account settings if you purchased there. Cancellation stops future charges; access typically continues until the end of the current billing period.
 
 Refunds are handled according to the policies of the platform where you purchased (Apple, Google, or Stripe) and applicable law. Except where required by law or platform policy, fees are non-refundable for partial billing periods. Contact ${LEGAL_CONTACT_EMAIL} for billing questions.
 

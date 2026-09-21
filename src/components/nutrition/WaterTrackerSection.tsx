@@ -5,11 +5,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   Keyboard,
+  Platform,
 } from 'react-native';
 import { AppTextInput as TextInput } from '../AppTextInput';
 import { AppTheme } from '../../theme/appVisualTheme';
 import { useToast } from '../ToastProvider';
 import { subscribeUserDataReady } from '../../utils/userDataEvents';
+import {
+  NUMERIC_INPUT_ACCESSORY_ID,
+  setNumericAccessoryChain,
+} from '../../keyboard/NumericInputAccessory';
 import {
   addWaterOunces,
   getTodayWaterTotal,
@@ -122,6 +127,8 @@ export default function WaterTrackerSection({
             placeholderTextColor={AppTheme.textFaint}
             keyboardType="decimal-pad"
             returnKeyType="done"
+            inputAccessoryViewID={Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined}
+            onFocus={() => setNumericAccessoryChain({})}
             onSubmitEditing={handleAddCustom}
             editable={!saving}
           />

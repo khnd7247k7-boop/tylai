@@ -16,7 +16,9 @@ import {
   Keyboard,
   AppState,
   useWindowDimensions,
+  findNodeHandle,
 } from 'react-native';
+import type { TextInput as RNTextInput } from 'react-native';
 import { AppTextInput as TextInput } from './src/components/AppTextInput';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -26,6 +28,7 @@ import BuildYourOwnWorkoutScreen from './BuildYourOwnWorkoutScreen';
 import SavedPlanViewScreen from './SavedPlanViewScreen';
 import WorkoutHistoryDetailScreen from './WorkoutHistoryDetailScreen';
 import LogPastWorkoutScreen from './LogPastWorkoutScreen';
+import LogWorkoutMenuScreen, { type LogWorkoutMenuMode } from './LogWorkoutMenuScreen';
 import { workoutPrograms, WorkoutProgram, WorkoutSession } from './data/workoutPrograms';
 
 type DateTimePickerEvent = { type: string };
@@ -73,7 +76,12 @@ import {
 import { logFoodFormHasMicronutrients } from './src/utils/fdcMicronutrients';
 
 type WorkoutQuickPanel = 'templates' | null;
-import { tapOutsideToDismissKeyboard } from './src/keyboard';
+import {
+  tapOutsideToDismissKeyboard,
+  NumericInputAccessory,
+  NUMERIC_INPUT_ACCESSORY_ID,
+  setNumericAccessoryChain,
+} from './src/keyboard';
 import { SimplePortionControl } from './src/components/nutrition/SimplePortionControl';
 import { ServingTypeWheelPicker } from './src/components/nutrition/ServingTypeWheelPicker';
 import { FatSecretAttribution } from './src/components/nutrition/FatSecretAttribution';
@@ -125,6 +133,14 @@ import RecurringMealScheduleModal from './src/components/nutrition/RecurringMeal
 import type { RecurringMealTemplate } from './src/types/recurringMeals';
 import AIService, { ProgramAdaptation } from './AIService';
 import HealthService from './src/services/HealthService';
+import DailyHealthMetricsCard from './src/components/health/DailyHealthMetricsCard';
+import {
+  dailyHealthHasActivity,
+  formatCompactSteps,
+  loadDailyHealthSummaries,
+  monthRangeLocal,
+  type DailyHealthSummary,
+} from './src/services/dailyHealthSummaryService';
 import { AppTheme } from './src/theme/appVisualTheme';
 import { useSmallWins } from './src/context/SmallWinsContext';
 import { useToast } from './src/components/ToastProvider';
@@ -397,6 +413,8 @@ export default function FitnessScreen({
       loadActivePlans();
     } else if (showLogPastWorkout) {
       setShowLogPastWorkout(false);
+    } else if (showLogWorkoutMenu) {
+      setShowLogWorkoutMenu(false);
     } else if (showLogFoodModal) {
       setShowLogFoodModal(false);
     } else if (fitnessTabHistoryRef.current.length > 0) {
@@ -442,6 +460,7 @@ export default function FitnessScreen({
   useEffect(() => {
     setShowWorkoutScreen(false);
     setShowLogPastWorkout(false);
+    setShowLogWorkoutMenu(false);
     setShowBuildYourOwnScreen(false);
     setShowEatingOutCoachModal(false);
     setPlanToEdit(null);
@@ -482,6 +501,15 @@ export default function FitnessScreen({
   const [logFoodNameInputFocused, setLogFoodNameInputFocused] = useState(false);
   const logFoodScrollRef = useRef<ScrollView | null>(null);
   const logFoodNutritionSectionY = useRef(0);
+  const logFoodProteinRef = useRef<RNTextInput | null>(null);
+  const logFoodCarbsRef = useRef<RNTextInput | null>(null);
+  const logFoodFatRef = useRef<RNTextInput | null>(null);
+  const logFoodServingSizeRef = useRef<RNTextInput | null>(null);
+  const logFoodServingsRef = useRef<RNTextInput | null>(null);
+  const adjustGoalProteinRef = useRef<RNTextInput | null>(null);
+  const adjustGoalCarbsRef = useRef<RNTextInput | null>(null);
+  const adjustGoalFatRef = useRef<RNTextInput | null>(null);
+  const adjustGoalWaterRef = useRef<RNTextInput | null>(null);
   const logFoodNameBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Macros + micros for exactly one whole item while Log Food is in “simple” portion mode. */
   const logFoodMacrosPerWholeRef = useRef<MacroMicroSnapshot | null>(null);
@@ -554,6 +582,10 @@ export default function FitnessScreen({
   const [selectedHistorySession, setSelectedHistorySession] = useState<WorkoutSession | null>(null);
   const [historyCalendarMonth, setHistoryCalendarMonth] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [historyHealthByDate, setHistoryHealthByDate] = useState<
+    Record<string, DailyHealthSummary>
+  >({});
+  const [historyHealthLoading, setHistoryHealthLoading] = useState(false);
   const [expandedDayItems, setExpandedDayItems] = useState<Set<string>>(new Set());
   const [mealCopyPending, setMealCopyPending] = useState<Meal | null>(null);
   const [dayCopyPending, setDayCopyPending] = useState<string | null>(null);
@@ -580,15 +612,16 @@ export default function FitnessScreen({
     }
   }, [dismissNotification]);
 
+  const [showLogWorkoutMenu, setShowLogWorkoutMenu] = useState(false);
   const [showLogPastWorkout, setShowLogPastWorkout] = useState(false);
-  const [logWorkoutMode, setLogWorkoutMode] = useState<'past' | 'daily'>('past');
+  const [logWorkoutMode, setLogWorkoutMode] = useState<LogWorkoutMenuMode>('daily');
 
   React.useEffect(() => {
     (FitnessScreen as any).internalBackHandler = handleInternalBack;
     return () => {
       delete (FitnessScreen as any).internalBackHandler;
     };
-  }, [activeWorkout?.isPresented, selectedHistorySession, selectedSavedPlan, showBuildYourOwnScreen, showWorkoutScreen, showLogPastWorkout]);
+  }, [activeWorkout?.isPresented, selectedHistorySession, selectedSavedPlan, showBuildYourOwnScreen, showWorkoutScreen, showLogPastWorkout, showLogWorkoutMenu]);
 
   const [savedWorkoutPlans, setSavedWorkoutPlans] = useState<any[]>([]);
   const [activePlans, setActivePlans] = useState<string[]>([]);
@@ -690,6 +723,23 @@ export default function FitnessScreen({
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    let cancelled = false;
+    (async () => {
+      setHistoryHealthLoading(true);
+      const { start, end } = monthRangeLocal(historyCalendarMonth);
+      const map = await loadDailyHealthSummaries(start, end);
+      if (!cancelled) {
+        setHistoryHealthByDate(map);
+        setHistoryHealthLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, historyCalendarMonth]);
+
   const { onWorkoutLoggerOpened } = useSmallWins();
   useEffect(() => {
     if (activeTab === 'workouts') {
@@ -767,24 +817,8 @@ export default function FitnessScreen({
     }
   };
 
-  const openLogWorkoutPicker = () => {
-    Alert.alert('Log workout', 'Choose how you want to log this session.', [
-      {
-        text: 'Past workout',
-        onPress: () => {
-          setLogWorkoutMode('past');
-          setShowLogPastWorkout(true);
-        },
-      },
-      {
-        text: 'Daily workout',
-        onPress: () => {
-          setLogWorkoutMode('daily');
-          setShowLogPastWorkout(true);
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  const openLogWorkoutMenu = () => {
+    setShowLogWorkoutMenu(true);
   };
 
   const deletePlan = async (planId: string) => {
@@ -2224,6 +2258,24 @@ export default function FitnessScreen({
     logFoodScrollRef.current?.scrollTo({ y: targetY, animated: false });
   }, []);
 
+  const scrollLogFoodNodeIntoView = useCallback((target: RNTextInput | null) => {
+    const scroll = logFoodScrollRef.current;
+    if (!target || !scroll) return;
+    const nativeScroll = findNodeHandle(scroll);
+    if (nativeScroll == null) return;
+    const run = () => {
+      target.measureLayout(
+        nativeScroll,
+        (_x, y) => {
+          scroll.scrollTo({ y: Math.max(0, y - 28), animated: true });
+        },
+        () => {}
+      );
+    };
+    requestAnimationFrame(run);
+    setTimeout(run, 320);
+  }, []);
+
   const setNutritionLoggingModeWithPersist = useCallback((mode: NutritionLoggingMode) => {
     setNutritionLoggingMode(mode);
     void saveNutritionLoggingMode(mode);
@@ -2852,7 +2904,7 @@ export default function FitnessScreen({
                 style={[styles.nuQuickTile, styles.nuQuickPurple]}
                 ref={fitnessMyPlansRef}
                 onPress={() => {
-                  openLogWorkoutPicker();
+                  openLogWorkoutMenu();
                   fireTourTargetIfNeeded(TOUR_TARGET_IDS.fitnessMyPlans);
                 }}
                 activeOpacity={0.85}
@@ -3304,7 +3356,10 @@ export default function FitnessScreen({
             const isToday = isCurrentMonth && day === today.getDate();
             const workouts = dateKey ? workoutsByDate[dateKey] || [] : [];
             const dayMeals = dateKey ? mealsByDate[dateKey] || [] : [];
-            const hasLoggedActivity = hasWorkout || hasMeals;
+            const dayHealth = dateKey ? historyHealthByDate[dateKey] : undefined;
+            const hasWatchWorkout = !!(dayHealth && dayHealth.workouts.length);
+            const stepsLabel = formatCompactSteps(dayHealth?.steps ?? 0);
+            const hasLoggedActivity = hasWorkout || hasMeals || hasWatchWorkout;
             const isPastDay = !!dateKey && dateKey < todayKey;
             const isMissedDay =
               isPastDay &&
@@ -3360,6 +3415,16 @@ export default function FitnessScreen({
                 ]}>
                   {day}
                 </Text>
+                <Text
+                  style={[
+                    styles.calendarDaySteps,
+                    stepsLabel ? styles.calendarDayStepsOn : styles.calendarDayStepsOff,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {stepsLabel || '—'}
+                </Text>
+                {hasWatchWorkout ? <View style={styles.calendarDayWatchDot} /> : null}
               </TouchableOpacity>
             );
           })}
@@ -3393,6 +3458,11 @@ export default function FitnessScreen({
                 <Text style={styles.closeDayDetailsText}>×</Text>
               </TouchableOpacity>
             </View>
+
+            <DailyHealthMetricsCard
+              summary={historyHealthByDate[selectedCalendarDate]}
+              loading={historyHealthLoading}
+            />
 
             {/* Workouts */}
             {workoutsByDate[selectedCalendarDate] && workoutsByDate[selectedCalendarDate].length > 0 && (
@@ -3565,6 +3635,7 @@ export default function FitnessScreen({
 
             {!workoutsByDate[selectedCalendarDate] &&
               selectedDayMeals.length === 0 &&
+              !dailyHealthHasActivity(historyHealthByDate[selectedCalendarDate]) &&
               !expandedDayItems.has(`nutrition-${selectedCalendarDate}`) && (
               <Text style={styles.dayDetailEmpty}>No workouts logged — open Nutrition to add meals</Text>
             )}
@@ -3585,8 +3656,15 @@ export default function FitnessScreen({
           <Text style={styles.legendText}>•</Text>
           <Text style={styles.legendText}>Today highlighted in green</Text>
         </View>
+        <Text style={styles.healthCalendarHint}>
+          {historyHealthLoading
+            ? 'Loading Apple Health…'
+            : 'Each day shows step count from Apple Health. A green dot means a Watch workout.'}
+        </Text>
 
-        {(!workoutHistory || workoutHistory.length === 0) && (!meals || meals.length === 0) && (
+        {(!workoutHistory || workoutHistory.length === 0) &&
+          (!meals || meals.length === 0) &&
+          !Object.values(historyHealthByDate).some((s) => dailyHealthHasActivity(s)) && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No workouts or meals recorded yet</Text>
             <Text style={styles.emptyStateSubtext}>Start tracking to see your history here</Text>
@@ -4521,12 +4599,14 @@ export default function FitnessScreen({
     return (
       <>
         <View style={[styles.tabContent, styles.nuRoot]}>
+          <NumericInputAccessory />
           <ScrollView
             style={styles.nutritionContentScroll}
             contentContainerStyle={styles.nuScrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            automaticallyAdjustKeyboardInsets
           >
             <View style={styles.nuCard}>
               <Text style={styles.nuCardHeading}>Calories</Text>
@@ -4747,8 +4827,10 @@ export default function FitnessScreen({
               behavior={Platform.OS === 'ios' ? 'padding' : undefined}
               style={styles.logFoodKeyboardWrap}
               pointerEvents="box-none"
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
             >
-              <View style={[styles.nuModalCard, styles.logFoodModalCard]} pointerEvents="box-none">
+              <View style={[styles.nuModalCard, styles.logFoodModalCard]}>
+                  <NumericInputAccessory />
                   <View style={styles.logFoodModalHeader}>
                     {logFoodSavedPickerOpen ? (
                       <TouchableOpacity
@@ -4844,10 +4926,13 @@ export default function FitnessScreen({
 
                   <ScrollView
                     ref={logFoodScrollRef}
+                    style={styles.logFoodScroll}
                     keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
+                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                    automaticallyAdjustKeyboardInsets
                     showsVerticalScrollIndicator={false}
                     bounces={Platform.OS === 'ios'}
+                    contentContainerStyle={styles.logFoodScrollContent}
                   >
                     {logFoodSavedPickerOpen ? (
                       <>
@@ -4983,6 +5068,7 @@ export default function FitnessScreen({
                           items={logFoodItems}
                           onChange={handleLogFoodItemsChange}
                           onRemoveLastItem={confirmDeleteEditingMeal}
+                          onInputFocus={scrollLogFoodNodeIntoView}
                         />
                       </>
                     ) : nutritionLoggingMode === 'ai' ? (
@@ -5152,6 +5238,7 @@ export default function FitnessScreen({
                         items={logFoodItems}
                         onChange={handleLogFoodItemsChange}
                         onRemoveLastItem={() => setLogFoodItems([])}
+                        onInputFocus={scrollLogFoodNodeIntoView}
                       />
                     ) : null}
 
@@ -5177,39 +5264,89 @@ export default function FitnessScreen({
                         </View>
                       ) : null}
                       <View style={styles.logFoodMacroRow}>
-                        <View style={styles.logFoodMacroCol}>
+                        <Pressable
+                          style={styles.logFoodMacroCol}
+                          onPress={() => logFoodProteinRef.current?.focus()}
+                        >
                           <Text style={styles.logFoodMacroLabel}>Protein (g)</Text>
                           <TextInput
+                            ref={logFoodProteinRef}
                             style={[styles.logFoodMacroInput, styles.logFoodMacroInputProtein]}
                             placeholder="0"
                             placeholderTextColor={AppTheme.textFaint}
                             keyboardType="decimal-pad"
                             value={mealInput.protein}
                             onChangeText={(text) => updateLogFoodNutritionMacro('protein', text)}
+                            inputAccessoryViewID={
+                              Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined
+                            }
+                            returnKeyType="next"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => logFoodCarbsRef.current?.focus()}
+                            onFocus={() => {
+                              setNumericAccessoryChain({
+                                focusNext: () => logFoodCarbsRef.current?.focus(),
+                              });
+                              scrollLogFoodNodeIntoView(logFoodProteinRef.current);
+                            }}
                           />
-                        </View>
-                        <View style={styles.logFoodMacroCol}>
+                        </Pressable>
+                        <Pressable
+                          style={styles.logFoodMacroCol}
+                          onPress={() => logFoodCarbsRef.current?.focus()}
+                        >
                           <Text style={styles.logFoodMacroLabel}>Carbs (g)</Text>
                           <TextInput
+                            ref={logFoodCarbsRef}
                             style={[styles.logFoodMacroInput, styles.logFoodMacroInputCarbs]}
                             placeholder="0"
                             placeholderTextColor={AppTheme.textFaint}
                             keyboardType="decimal-pad"
                             value={mealInput.carbs}
                             onChangeText={(text) => updateLogFoodNutritionMacro('carbs', text)}
+                            inputAccessoryViewID={
+                              Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined
+                            }
+                            returnKeyType="next"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => logFoodFatRef.current?.focus()}
+                            onFocus={() => {
+                              setNumericAccessoryChain({
+                                focusPrev: () => logFoodProteinRef.current?.focus(),
+                                focusNext: () => logFoodFatRef.current?.focus(),
+                              });
+                              scrollLogFoodNodeIntoView(logFoodCarbsRef.current);
+                            }}
                           />
-                        </View>
-                        <View style={styles.logFoodMacroCol}>
+                        </Pressable>
+                        <Pressable
+                          style={styles.logFoodMacroCol}
+                          onPress={() => logFoodFatRef.current?.focus()}
+                        >
                           <Text style={styles.logFoodMacroLabel}>Fat (g)</Text>
                           <TextInput
+                            ref={logFoodFatRef}
                             style={[styles.logFoodMacroInput, styles.logFoodMacroInputFat]}
                             placeholder="0"
                             placeholderTextColor={AppTheme.textFaint}
                             keyboardType="decimal-pad"
                             value={mealInput.fat}
                             onChangeText={(text) => updateLogFoodNutritionMacro('fat', text)}
+                            inputAccessoryViewID={
+                              Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined
+                            }
+                            returnKeyType="next"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => logFoodServingSizeRef.current?.focus()}
+                            onFocus={() => {
+                              setNumericAccessoryChain({
+                                focusPrev: () => logFoodCarbsRef.current?.focus(),
+                                focusNext: () => logFoodServingSizeRef.current?.focus(),
+                              });
+                              scrollLogFoodNodeIntoView(logFoodFatRef.current);
+                            }}
                           />
-                        </View>
+                        </Pressable>
                       </View>
 
                       <TouchableOpacity
@@ -5364,12 +5501,26 @@ export default function FitnessScreen({
                             <Text style={styles.logFoodStepBtnText}>−</Text>
                           </TouchableOpacity>
                           <TextInput
+                            ref={logFoodServingSizeRef}
                             style={styles.logFoodStepperInput}
                             placeholder="1"
                             placeholderTextColor={AppTheme.textFaint}
                             keyboardType="decimal-pad"
                             value={mealInput.baseServingSize}
                             onChangeText={(text) => updateLogFoodPortion({ baseServingSize: text })}
+                            inputAccessoryViewID={
+                              Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined
+                            }
+                            returnKeyType="next"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => logFoodServingsRef.current?.focus()}
+                            onFocus={() => {
+                              setNumericAccessoryChain({
+                                focusPrev: () => logFoodFatRef.current?.focus(),
+                                focusNext: () => logFoodServingsRef.current?.focus(),
+                              });
+                              scrollLogFoodNodeIntoView(logFoodServingSizeRef.current);
+                            }}
                           />
                           <TouchableOpacity style={styles.logFoodStepBtn} onPress={() => bumpLogServingSize(0.25)} accessibilityLabel="Increase serving size">
                             <Text style={styles.logFoodStepBtnText}>+</Text>
@@ -5384,12 +5535,25 @@ export default function FitnessScreen({
                             <Text style={styles.logFoodStepBtnText}>−</Text>
                           </TouchableOpacity>
                           <TextInput
+                            ref={logFoodServingsRef}
                             style={styles.logFoodStepperInput}
                             placeholder="1"
                             placeholderTextColor={AppTheme.textFaint}
                             keyboardType="decimal-pad"
                             value={mealInput.servings}
                             onChangeText={(text) => updateLogFoodPortion({ servings: text })}
+                            inputAccessoryViewID={
+                              Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined
+                            }
+                            returnKeyType="done"
+                            blurOnSubmit
+                            onSubmitEditing={() => Keyboard.dismiss()}
+                            onFocus={() => {
+                              setNumericAccessoryChain({
+                                focusPrev: () => logFoodServingSizeRef.current?.focus(),
+                              });
+                              scrollLogFoodNodeIntoView(logFoodServingsRef.current);
+                            }}
                           />
                           <TouchableOpacity style={styles.logFoodStepBtn} onPress={() => bumpLogServings(0.25)} accessibilityLabel="Increase servings">
                             <Text style={styles.logFoodStepBtnText}>+</Text>
@@ -5464,7 +5628,8 @@ export default function FitnessScreen({
               pointerEvents="box-none"
               keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
             >
-              <View style={[styles.nuModalCard, styles.logFoodModalCard]} pointerEvents="box-none">
+              <View style={[styles.nuModalCard, styles.logFoodModalCard]}>
+                <NumericInputAccessory />
                 <ScrollView
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -5698,51 +5863,103 @@ export default function FitnessScreen({
         </Modal>
 
         <Modal visible={showAdjustGoalsModal} transparent animationType="none" onRequestClose={() => setShowAdjustGoalsModal(false)}>
-          <View style={styles.nuModalOverlay}>
-            <View style={[styles.nuModalCard, { maxHeight: '88%' }]}>
+          <KeyboardAvoidingView
+            style={styles.nuModalOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+          >
+            <View style={[styles.nuModalCard, styles.nuModalAvoid]}>
+              <NumericInputAccessory />
               <Text style={styles.nuModalTitle}>Adjust macro goals</Text>
-              <ScrollView keyboardShouldPersistTaps="handled">
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                automaticallyAdjustKeyboardInsets
+                showsVerticalScrollIndicator={false}
+              >
                 <View style={styles.editGoalsForm}>
-                  <View style={styles.editGoalRow}>
+                  <Pressable style={styles.editGoalRow} onPress={() => adjustGoalProteinRef.current?.focus()}>
                     <Text style={styles.editGoalLabel}>Protein (g)</Text>
                     <TextInput
+                      ref={adjustGoalProteinRef}
                       style={styles.editGoalInput}
                       value={editGoals.protein}
                       onChangeText={(text) => setEditGoals((prev) => ({ ...prev, protein: text }))}
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       placeholder="150"
+                      inputAccessoryViewID={Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => adjustGoalCarbsRef.current?.focus()}
+                      onFocus={() =>
+                        setNumericAccessoryChain({
+                          focusNext: () => adjustGoalCarbsRef.current?.focus(),
+                        })
+                      }
                     />
-                  </View>
-                  <View style={styles.editGoalRow}>
+                  </Pressable>
+                  <Pressable style={styles.editGoalRow} onPress={() => adjustGoalCarbsRef.current?.focus()}>
                     <Text style={styles.editGoalLabel}>Carbs (g)</Text>
                     <TextInput
+                      ref={adjustGoalCarbsRef}
                       style={styles.editGoalInput}
                       value={editGoals.carbs}
                       onChangeText={(text) => setEditGoals((prev) => ({ ...prev, carbs: text }))}
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       placeholder="250"
+                      inputAccessoryViewID={Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => adjustGoalFatRef.current?.focus()}
+                      onFocus={() =>
+                        setNumericAccessoryChain({
+                          focusPrev: () => adjustGoalProteinRef.current?.focus(),
+                          focusNext: () => adjustGoalFatRef.current?.focus(),
+                        })
+                      }
                     />
-                  </View>
-                  <View style={styles.editGoalRow}>
+                  </Pressable>
+                  <Pressable style={styles.editGoalRow} onPress={() => adjustGoalFatRef.current?.focus()}>
                     <Text style={styles.editGoalLabel}>Fat (g)</Text>
                     <TextInput
+                      ref={adjustGoalFatRef}
                       style={styles.editGoalInput}
                       value={editGoals.fat}
                       onChangeText={(text) => setEditGoals((prev) => ({ ...prev, fat: text }))}
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       placeholder="80"
+                      inputAccessoryViewID={Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => adjustGoalWaterRef.current?.focus()}
+                      onFocus={() =>
+                        setNumericAccessoryChain({
+                          focusPrev: () => adjustGoalCarbsRef.current?.focus(),
+                          focusNext: () => adjustGoalWaterRef.current?.focus(),
+                        })
+                      }
                     />
-                  </View>
-                  <View style={styles.editGoalRow}>
+                  </Pressable>
+                  <Pressable style={styles.editGoalRow} onPress={() => adjustGoalWaterRef.current?.focus()}>
                     <Text style={styles.editGoalLabel}>Water (oz)</Text>
                     <TextInput
+                      ref={adjustGoalWaterRef}
                       style={styles.editGoalInput}
                       value={editGoals.water}
                       onChangeText={(text) => setEditGoals((prev) => ({ ...prev, water: text }))}
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       placeholder="64"
+                      inputAccessoryViewID={Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined}
+                      returnKeyType="done"
+                      blurOnSubmit
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                      onFocus={() =>
+                        setNumericAccessoryChain({
+                          focusPrev: () => adjustGoalFatRef.current?.focus(),
+                        })
+                      }
                     />
-                  </View>
+                  </Pressable>
                   {editGoals.protein && editGoals.carbs && editGoals.fat && (
                     <View style={styles.calculatedCaloriesGoal}>
                       <Text style={styles.calculatedCaloriesGoalText}>
@@ -5778,7 +5995,7 @@ export default function FitnessScreen({
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal
@@ -6235,6 +6452,36 @@ export default function FitnessScreen({
           loadSavedWorkoutPlans();
           loadActivePlans();
         }} 
+      />
+    );
+  }
+
+  if (showLogWorkoutMenu && showLogPastWorkout) {
+    return (
+      <LogPastWorkoutScreen
+        mode={logWorkoutMode}
+        onBack={() => setShowLogPastWorkout(false)}
+        onComplete={async (session) => {
+          await handleWorkoutComplete(session);
+          setShowLogPastWorkout(false);
+          setShowLogWorkoutMenu(false);
+        }}
+        onProgramsChanged={() => {
+          loadSavedWorkoutPlans();
+          loadActivePlans();
+        }}
+      />
+    );
+  }
+
+  if (showLogWorkoutMenu) {
+    return (
+      <LogWorkoutMenuScreen
+        onBack={() => setShowLogWorkoutMenu(false)}
+        onSelect={(mode) => {
+          setLogWorkoutMode(mode);
+          setShowLogPastWorkout(true);
+        }}
       />
     );
   }
@@ -7394,6 +7641,7 @@ const styles = StyleSheet.create({
   },
   nuModalAvoid: {
     maxHeight: '92%',
+    width: '100%',
   },
   nuModalCard: {
     backgroundColor: '#1a1a1a',
@@ -7556,6 +7804,13 @@ const styles = StyleSheet.create({
     borderColor: AppTheme.border,
     paddingBottom: 28,
     maxHeight: '94%',
+  },
+  logFoodScroll: {
+    flexGrow: 1,
+    flexShrink: 1,
+  },
+  logFoodScrollContent: {
+    paddingBottom: 48,
   },
   logFoodModalHeader: {
     flexDirection: 'row',
@@ -7913,7 +8168,8 @@ const styles = StyleSheet.create({
   logFoodMacroInput: {
     backgroundColor: 'transparent',
     borderBottomWidth: 3,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    minHeight: 44,
     fontSize: 16,
     fontWeight: '700',
     color: AppTheme.textPrimary,
@@ -8701,13 +8957,40 @@ const styles = StyleSheet.create({
   },
   calendarDay: {
     width: '14.28%',
-    aspectRatio: 1,
+    aspectRatio: 0.82,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 6,
     borderRadius: 8,
     // Reserve border space so selection outline does not shift the digit
     borderWidth: 2,
     borderColor: 'transparent',
+  },
+  calendarDaySteps: {
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  calendarDayStepsOn: {
+    color: '#00ff88',
+  },
+  calendarDayStepsOff: {
+    color: '#666',
+  },
+  calendarDayWatchDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#00ff88',
+    marginTop: 2,
+  },
+  healthCalendarHint: {
+    fontSize: 11,
+    color: '#888',
+    textAlign: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    lineHeight: 16,
   },
   calendarDayToday: {
     backgroundColor: '#2a4a2a',

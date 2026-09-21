@@ -7,7 +7,6 @@ import {
   Alert,
   ScrollView,
   SafeAreaView,
-  Modal,
   AppState,
   Keyboard,
   Platform,
@@ -33,12 +32,11 @@ import { useToast } from './src/components/ToastProvider';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { updateNotificationSchedule, requestNotificationPermissions } from './src/utils/notifications';
 import { auth } from './firebaseConfig';
-import { 
+import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
-  sendPasswordResetEmail
 } from 'firebase/auth';
 import UserDataInitializer from './src/services/UserDataInitializer';
 import { useNetworkStatus, checkNetworkConnection } from './src/utils/networkUtils';
@@ -60,7 +58,6 @@ import {
 import {
   KeyboardInsetsProvider,
   KeyboardSafeView,
-  KeyboardModalFrame,
   DismissKeyboardSurface,
 } from './src/keyboard';
 import { SmallWinsProvider } from './src/context/SmallWinsContext';
@@ -91,6 +88,7 @@ import AppBootScreen from './src/components/AppBootScreen';
 import { SettingsProvider } from './SettingsProvider';
 import { SubscriptionProvider } from './src/context/SubscriptionContext';
 import { firebaseEnvConfigured } from './firebaseConfig';
+import { openPasswordResetPage } from './src/services/betaAccessService';
 
 type LoggedInScreen =
   | 'dashboard'
@@ -138,9 +136,6 @@ function AppInner() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [resetEmail, setResetEmail] = useState('');
-  const [resetMethod, setResetMethod] = useState<'email' | null>(null);
   const [medicalDisclaimerGate, setMedicalDisclaimerGate] = useState(false);
   const [medicalDisclaimerResolved, setMedicalDisclaimerResolved] = useState(false);
   const [onboardingWizardVisible, setOnboardingWizardVisible] = useState(false);
@@ -809,70 +804,8 @@ function AppInner() {
     setName('');
   };
 
-  const handleForgotPassword = async () => {
-    // Check network connectivity first
-    const isConnected = await checkNetworkConnection();
-    if (!isConnected) {
-      Alert.alert(
-        'No Internet Connection',
-        'An internet connection is required to reset your password. Please check your connection and try again.',
-        [{ text: 'OK' }]
-      );
-      showToast('No internet connection. Please check your network settings.', 'error');
-      return;
-    }
-
-    if (!resetEmail.trim()) {
-      Alert.alert('Error', 'Please enter your email address');
-      return;
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(resetEmail)) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return;
-    }
-
-    try {
-      await sendPasswordResetEmail(auth, resetEmail);
-      Alert.alert(
-        'Password Reset Email Sent',
-        'Check your email for instructions to reset your password. The email may take a few minutes to arrive.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              setShowForgotPassword(false);
-              setResetEmail('');
-              setResetMethod(null);
-            }
-          }
-        ]
-      );
-      showToast('Password reset email sent!', 'success');
-    } catch (error: any) {
-      console.error('Password reset error:', error);
-      let errorMessage = 'Failed to send password reset email. Please try again.';
-      
-      if (error && error.code) {
-        switch (error.code) {
-          case 'auth/user-not-found':
-            errorMessage = 'No account found with this email address.';
-            break;
-          case 'auth/invalid-email':
-            errorMessage = 'Invalid email address.';
-            break;
-          case 'auth/too-many-requests':
-            errorMessage = 'Too many requests. Please try again later.';
-            break;
-          default:
-            errorMessage = error.message || errorMessage;
-        }
-      }
-      
-      Alert.alert('Error', errorMessage);
-    }
+  const handleForgotPassword = () => {
+    void openPasswordResetPage(email);
   };
 
   const handleLogout = async () => {
@@ -1695,12 +1628,9 @@ function AppInner() {
             </TouchableOpacity>
 
             {isLogin && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.forgotPassword}
-                onPress={() => {
-                  setResetEmail(email); // Pre-fill with current email if available
-                  setShowForgotPassword(true);
-                }}
+                onPress={handleForgotPassword}
               >
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
               </TouchableOpacity>
@@ -1709,95 +1639,6 @@ function AppInner() {
         </ScrollView>
         </DismissKeyboardSurface>
       </KeyboardSafeView>
-
-      {/* Forgot Password Modal */}
-      <Modal
-        visible={showForgotPassword}
-        animationType="none"
-        transparent={true}
-        onRequestClose={() => {
-          setShowForgotPassword(false);
-          setResetEmail('');
-          setResetMethod(null);
-        }}
-      >
-        <KeyboardModalFrame justifyContent="center">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Reset Password</Text>
-            <Text style={styles.modalSubtitle}>
-              Choose how you'd like to reset your password
-            </Text>
-
-            {!resetMethod ? (
-              <>
-                <TouchableOpacity
-                  style={styles.resetMethodButton}
-                  onPress={() => setResetMethod('email')}
-                >
-                  <Text style={styles.resetMethodIcon}>📧</Text>
-                  <View style={styles.resetMethodTextContainer}>
-                    <Text style={styles.resetMethodTitle}>Email</Text>
-                    <Text style={styles.resetMethodDescription}>
-                      Send a password reset link to your email address
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.modalCancelButton}
-                  onPress={() => {
-                    setShowForgotPassword(false);
-                    setResetEmail('');
-                    setResetMethod(null);
-                  }}
-                >
-                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </>
-            ) : resetMethod === 'email' ? (
-              <>
-                <Text style={styles.modalLabel}>Enter your email address</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="your.email@example.com"
-                  placeholderTextColor="#666"
-                  value={resetEmail}
-                  onChangeText={setResetEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoFocus
-                />
-                <Text style={styles.modalHint}>
-                  We'll send you a link to reset your password
-                </Text>
-
-                <View style={styles.modalButtonContainer}>
-                  <TouchableOpacity
-                    style={styles.modalButton}
-                    onPress={handleForgotPassword}
-                  >
-                    <Text style={styles.modalButtonText}>Send Reset Link</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.modalBackButton}
-                    onPress={() => {
-                      setResetMethod(null);
-                      setResetEmail('');
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Go back"
-                  >
-                    <Text style={styles.modalBackButtonText}>←</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : null}
-          </View>
-        </View>
-        </KeyboardModalFrame>
-      </Modal>
     </SafeAreaView>
   );
 }

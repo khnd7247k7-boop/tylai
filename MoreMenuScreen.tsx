@@ -12,6 +12,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { AppTheme } from './src/theme/appVisualTheme';
 import { useSubscription } from './src/context/SubscriptionContext';
+import { getManageSubscriptionPageUrl, openPasswordResetPage } from './src/services/betaAccessService';
 
 const SUPPORT_EMAIL = 'travis@tyl-ai.com';
 
@@ -29,7 +30,7 @@ type MoreTarget =
   | 'movementIntelligence';
 
 type RowDef = {
-  key: MoreTarget | 'premium' | 'support' | 'feedback';
+  key: MoreTarget | 'premium' | 'manage' | 'resetPassword' | 'support' | 'feedback';
   title: string;
   subtitle: string;
   premiumOnly?: boolean;
@@ -48,6 +49,16 @@ const SECTIONS: SectionDef[] = [
         key: 'premium',
         title: 'TYL Premium',
         subtitle: 'AI Coach, Food coach, and AI Workout builder',
+      },
+      {
+        key: 'manage',
+        title: 'Manage subscription',
+        subtitle: 'Update payment, change plan, or cancel in your browser',
+      },
+      {
+        key: 'resetPassword',
+        title: 'Reset password',
+        subtitle: 'Opens tyl-ai.com to send a reset link to your email',
       },
       {
         key: 'profile',
@@ -131,12 +142,34 @@ async function openMail(subject: string, body?: string) {
   }
 }
 
+async function openManageSubscription() {
+  const url = getManageSubscriptionPageUrl();
+  try {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert('Manage subscription', url);
+      return;
+    }
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert('Manage subscription', `Open this page in your browser:\n\n${url}`);
+  }
+}
+
 export default function MoreMenuScreen({ onOpen }: MoreMenuScreenProps) {
   const { isPremium, presentUpgrade } = useSubscription();
 
   const handlePress = (row: RowDef) => {
     if (row.key === 'premium') {
       presentUpgrade();
+      return;
+    }
+    if (row.key === 'manage') {
+      void openManageSubscription();
+      return;
+    }
+    if (row.key === 'resetPassword') {
+      void openPasswordResetPage();
       return;
     }
     if (row.key === 'support') {
@@ -151,7 +184,7 @@ export default function MoreMenuScreen({ onOpen }: MoreMenuScreenProps) {
       presentUpgrade();
       return;
     }
-    onOpen(row.key);
+    onOpen(row.key as MoreTarget);
   };
 
   return (

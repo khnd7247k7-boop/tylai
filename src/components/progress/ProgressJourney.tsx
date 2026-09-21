@@ -28,6 +28,14 @@ import {
 } from '../../services/PhotoService';
 import { buildMetricsBySessionId, buildBodyVitalsForDate } from '../../services/sessionProgressMetricsService';
 import {
+  dailyHealthToMetricValues,
+  loadDailyHealthSummaries,
+  monthRangeLocal,
+  type DailyHealthSummary,
+} from '../../services/dailyHealthSummaryService';
+import DailyHealthMetricsCard from '../health/DailyHealthMetricsCard';
+import HealthActivityCalendar from '../health/HealthActivityCalendar';
+import {
   isMediaLibraryAvailable,
   mediaLibraryUnavailableMessage,
   requestCameraRollPermission,
@@ -124,6 +132,9 @@ export default function ProgressJourney({
   const [inlineCompare, setInlineCompare] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayLabel, setReplayLabel] = useState('');
+  const [healthMonth, setHealthMonth] = useState(() => new Date());
+  const [healthByDate, setHealthByDate] = useState<Record<string, DailyHealthSummary>>({});
+  const [healthLoading, setHealthLoading] = useState(false);
   const replayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Only scrub / chart / metrics should rewrite the Progress week — not default photo pick. */
   const userDrivenWeekRef = useRef(false);
@@ -141,6 +152,32 @@ export default function ProgressJourney({
     reload();
     return subscribeUserDataReady(reload);
   }, [reload]);
+
+  useEffect(() => {
+    if (!selectedProgressDate) return;
+    const [y, m] = selectedProgressDate.split('-').map(Number);
+    if (!y || !m) return;
+    setHealthMonth((prev) => {
+      if (prev.getFullYear() === y && prev.getMonth() === m - 1) return prev;
+      return new Date(y, m - 1, 1);
+    });
+  }, [selectedProgressDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setHealthLoading(true);
+      const { start, end } = monthRangeLocal(healthMonth);
+      const map = await loadDailyHealthSummaries(start, end);
+      if (!cancelled) {
+        setHealthByDate(map);
+        setHealthLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [healthMonth]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -208,10 +245,23 @@ export default function ProgressJourney({
     selectedSession?.date?.slice(0, 10) ??
     selectedProgressDate?.slice(0, 10) ??
     localDateKey();
+  const healthFocusDate = selectedProgressDate?.slice(0, 10) ?? focusDate;
 
   /** Always resolve body metrics for the focused day so Save → vitals works without photos. */
   const displayMetrics = useMemo((): SessionProgressMetrics | null => {
-    if (!dataBundle) return selectedMetrics;
+    const healthExtras = dailyHealthToMetricValues(healthByDate[healthFocusDate]);
+    const mergeExtras = (base?: SessionProgressMetrics['extraMeasurements']) => [
+      ...(base ?? []),
+      ...healthExtras,
+    ];
+    if (!dataBundle) {
+      if (!selectedMetrics && healthExtras.length === 0) return selectedMetrics;
+      if (!selectedMetrics) return null;
+      return {
+        ...selectedMetrics,
+        extraMeasurements: mergeExtras(selectedMetrics.extraMeasurements),
+      };
+    }
     const body = buildBodyVitalsForDate(focusDate, {
       weightEntries: dataBundle.weightEntries,
       measurementEntries: dataBundle.measurementEntries ?? [],
@@ -221,11 +271,14 @@ export default function ProgressJourney({
         ...selectedMetrics,
         weight: body.weight,
         measurements: body.measurements,
-        extraMeasurements: body.extraMeasurements,
+        extraMeasurements: mergeExtras(body.extraMeasurements),
       };
     }
-    return body;
-  }, [dataBundle, focusDate, selectedMetrics]);
+    return {
+      ...body,
+      extraMeasurements: mergeExtras(body.extraMeasurements),
+    };
+  }, [dataBundle, focusDate, healthFocusDate, selectedMetrics, healthByDate]);
 
   const selectedIndex = selectedSession
     ? sortedSessions.findIndex((s) => s.id === selectedSession.id)
@@ -515,6 +568,23 @@ export default function ProgressJourney({
       ) : null}
 
       <ProgressWeekVitals metrics={displayMetrics} />
+
+      <HealthActivityCalendar
+        month={healthMonth}
+        summaries={healthByDate}
+        selectedDateKey={healthFocusDate}
+        loading={healthLoading}
+        onMonthChange={setHealthMonth}
+        onSelectDate={(dateKey) => {
+          stopReplay();
+          userDrivenWeekRef.current = true;
+          onProgressDateChange(dateKey);
+        }}
+      />
+      <DailyHealthMetricsCard
+        summary={healthByDate[healthFocusDate]}
+        loading={healthLoading}
+      />
 
       <TouchableOpacity
         style={styles.logMetricsBtn}

@@ -623,9 +623,9 @@ class HealthService {
 
   /**
    * Apple Watch / Health discrete workouts overlapping a window.
-   * Used to prefill Track Cardio and merge watch calories/distance with user type + duration.
+   * Used for History/Progress day views and to prefill Track Cardio.
    */
-  async fetchNearbyCardioWorkouts(
+  async fetchWatchWorkouts(
     start: Date,
     end: Date
   ): Promise<HealthKitWorkoutSample[]> {
@@ -633,7 +633,19 @@ class HealthService {
       if (!(await this.isHealthDataSyncEnabled())) return [];
       if (!isHealthKitBridgeAvailable()) return [];
       if (!(await this.checkPermissions())) return [];
-      const rows = await fetchWorkoutsNative(start, end);
+      return fetchWorkoutsNative(start, end);
+    } catch (error) {
+      console.warn('[HealthService] fetchWatchWorkouts failed:', error);
+      return [];
+    }
+  }
+
+  async fetchNearbyCardioWorkouts(
+    start: Date,
+    end: Date
+  ): Promise<HealthKitWorkoutSample[]> {
+    try {
+      const rows = await this.fetchWatchWorkouts(start, end);
       return rows.filter((w) => {
         const label = String(w.activityLabel || '').toLowerCase();
         return !/strength|core|flexibility/.test(label);

@@ -17,3 +17,7 @@ export const LEGAL_GOVERNING_STATE = 'Utah';
 export const LEGAL_GOVERNING_COUNTRY = 'United States';
 
 export const LEGAL_WEBSITE = 'https://tyl-ai.com';
+
+export const LEGAL_MANAGE_SUBSCRIPTION_URL = 'https://tyl-ai.com/manage';
+
+export const LEGAL_PASSWORD_RESET_URL = 'https://tyl-ai.com/reset';

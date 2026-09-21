@@ -374,6 +374,13 @@ export function pickMiSupportAccessories(
     if (!ex) return;
     if (usedNames.has(ex.name) || picks.some((p) => p.name === ex.name)) return;
     if (ctx.hardAvoidNames.some((a) => nameKey(a) === nameKey(ex.name))) return;
+    if (
+      !exerciseFitsExperienceComplexity(ex, ctx.experienceLevel, {
+        difficultyBias: ctx.difficultyBias,
+      })
+    ) {
+      return;
+    }
     picks.push(ex);
   };
 

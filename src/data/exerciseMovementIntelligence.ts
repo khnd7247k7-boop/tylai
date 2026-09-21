@@ -9,7 +9,8 @@
  *
  * Assignments are derived from each exercise's pattern, muscles, laterality,
  * category, and difficulty — plus curated overrides/edges for key lifts.
- * Does NOT change workout generation in this phase.
+ * Workout generation reads these demands to match experience (beginner / advanced)
+ * and to design the plan's complexity, volume, and rest.
  */
 
 import type {

@@ -109,7 +109,15 @@ export default function ProgressWeekVitals({
         <Vital metric={toBench(metrics)} decimals={0} />
         <Vital metric={{ ...metrics.recovery, label: 'Recovery' }} decimals={0} />
         {extras.map((m) => (
-          <Vital key={`${m.label}-${m.unit ?? ''}`} metric={m} decimals={1} />
+          <Vital
+            key={`${m.label}-${m.unit ?? ''}`}
+            metric={m}
+            decimals={
+              m.label === 'Steps' || m.label === 'HR' || m.label === 'Watch' || m.unit === 'bpm'
+                ? 0
+                : 1
+            }
+          />
         ))}
       </View>
     </View>

@@ -9,7 +9,8 @@
  * - Equipment, difficulty, risks, alternatives
  * - Movement Intelligence fields (qualities, joint demands, regressions/progressions)
  *
- * Workout generation is unchanged in this phase; MI metadata is for future adaptive programming.
+ * Workout generation uses this MI metadata to gate/rank exercises by experience
+ * (beginner vs advanced) and to design sets, reps, rest, and session shape.
  */
 
 import {

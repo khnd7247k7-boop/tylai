@@ -27,6 +27,13 @@ import {
   pickMiSupportAccessories,
   type WorkoutBuilderMiContext,
 } from './src/services/WorkoutBuilderMiIntegration';
+import {
+  applyMiDemandToPrescription,
+  biasSplitFocusesForExperience,
+  designSessionShape,
+  orderPlanExercisesForExperience,
+  toSelectionExperienceLevel,
+} from './src/services/experienceMiPlanDesign';
 import { AppTheme } from './src/theme/appVisualTheme';
 import DiscomfortAssessmentFlow, {
   DiscomfortReportCTA,
@@ -294,21 +301,34 @@ export default function WorkoutScreen({
       ReturnType<typeof getExerciseData>
     >[];
 
-    const toExercise = (data: NonNullable<ReturnType<typeof getExerciseData>>) => ({
-      id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
-      name: data.name,
-      sets: level === 'beginner' ? 3 : 4,
-      reps: 10,
-      weight: 0,
-      completed: false,
-      category: 'strength' as const,
-      restTime: 60,
-      movementPattern: data.movementPattern,
-      muscleGroups: data.muscleGroups || [data.primaryMuscleGroup, ...(data.secondaryMuscleGroups || [])],
-      equipment: data.equipment || data.equipmentRequired,
-      difficulty: data.difficulty,
-      alternatives: data.alternatives,
-    });
+    const experienceLevel = toSelectionExperienceLevel(level);
+    const toExercise = (data: NonNullable<ReturnType<typeof getExerciseData>>) => {
+      const miRx = applyMiDemandToPrescription(
+        {
+          sets: experienceLevel === 'beginner' ? 3 : 4,
+          reps: 10,
+          restTime: 60,
+        },
+        data,
+        experienceLevel,
+        { goal, role: 'general' }
+      );
+      return {
+        id: data.id || data.name.toLowerCase().replace(/\s+/g, '-'),
+        name: data.name,
+        sets: miRx.sets,
+        reps: miRx.reps,
+        weight: 0,
+        completed: false,
+        category: 'strength' as const,
+        restTime: miRx.restTime ?? 60,
+        movementPattern: data.movementPattern,
+        muscleGroups: data.muscleGroups || [data.primaryMuscleGroup, ...(data.secondaryMuscleGroups || [])],
+        equipment: data.equipment || data.equipmentRequired,
+        difficulty: data.difficulty,
+        alternatives: data.alternatives,
+      };
+    };
 
     const dayExercises =
       pool.length > 0
@@ -814,13 +834,19 @@ export default function WorkoutScreen({
       return { focuses, workoutDayIndices };
     };
     const { focuses: splitFocusesRaw, workoutDayIndices } = getSplitStructure();
+    const experienceLevel = toSelectionExperienceLevel(level);
+    const sessionShape = designSessionShape(experienceLevel);
 
     // ─── Systemic tax: age + activity → weekly set targets, MRV, deload, split/session bias ───
     const systemicVolumeContext = computeSystemicVolumeContext({
       ageStr: userProfile?.age,
       activityDescription: userProfile?.activityLevel || '',
     });
-    const splitFocuses = adjustSplitFocusesForSystemicTax(splitFocusesRaw, days, systemicVolumeContext);
+    const splitFocuses = biasSplitFocusesForExperience(
+      adjustSplitFocusesForSystemicTax(splitFocusesRaw, days, systemicVolumeContext),
+      experienceLevel,
+      days
+    );
 
     // ─── Step 3: Determine progression stage (from experience level question) ───
     const progressionStage = level;
@@ -837,7 +863,7 @@ export default function WorkoutScreen({
 
     // ─── Step 4: Check recovery (from workout history + frequency/length preferences) ───
     const recoveryAdjustment = suggestLighterWeek ? 'reduce_volume' : 'none';
-    const exercisesPerDayBase = level === 'beginner' ? 4 : level === 'intermediate' ? 5 : 6;
+    const exercisesPerDayBase = sessionShape.exercisesPerDay;
     let exercisesPerDay = recoveryAdjustment === 'reduce_volume' ? Math.max(3, exercisesPerDayBase - 1) : exercisesPerDayBase;
     exercisesPerDay = Math.max(3, exercisesPerDay - systemicVolumeContext.sessionExercisePenalty);
     if (coachingMods && coachingMods.recoveryScore < 45) {
@@ -946,29 +972,39 @@ export default function WorkoutScreen({
       let restTime: number | undefined;
       if (exerciseCategory === 'strength') {
         if (resolvedGoal === 'strength') {
-          sets = level === 'beginner' ? 3 : 4;
-          reps = level === 'beginner' ? 8 : level === 'intermediate' ? 6 : 5;
-          restTime = level === 'beginner' ? 90 : level === 'intermediate' ? 120 : 150;
+          sets = experienceLevel === 'beginner' ? 3 : 4;
+          reps = experienceLevel === 'beginner' ? 8 : experienceLevel === 'intermediate' ? 6 : 5;
+          restTime = experienceLevel === 'beginner' ? 90 : experienceLevel === 'intermediate' ? 120 : 150;
         } else if (resolvedGoal === 'muscle_gain') {
-          sets = level === 'beginner' ? 3 : 4;
-          reps = level === 'beginner' ? 10 : level === 'intermediate' ? 10 : 8;
+          sets = experienceLevel === 'beginner' ? 3 : 4;
+          reps = experienceLevel === 'beginner' ? 10 : experienceLevel === 'intermediate' ? 10 : 8;
           restTime = 60;
         } else if (resolvedGoal === 'weight_loss') {
           sets = 3;
-          reps = level === 'beginner' ? 12 : 15;
+          reps = experienceLevel === 'beginner' ? 12 : 15;
           restTime = 45;
         } else {
-          sets = level === 'beginner' ? 3 : 4;
-          reps = level === 'beginner' ? 10 : level === 'intermediate' ? 8 : 6;
+          sets = experienceLevel === 'beginner' ? 3 : 4;
+          reps = experienceLevel === 'beginner' ? 10 : experienceLevel === 'intermediate' ? 8 : 6;
           restTime = 90;
         }
       } else if (exerciseCategory === 'cardio') {
         sets = 1;
-        reps = level === 'beginner' ? 20 : level === 'intermediate' ? 30 : 45;
+        reps = experienceLevel === 'beginner' ? 20 : experienceLevel === 'intermediate' ? 30 : 45;
       } else if (exerciseCategory === 'flexibility' || exerciseCategory === 'balance') {
-        sets = level === 'beginner' ? 1 : level === 'intermediate' ? 2 : 3;
-        reps = level === 'beginner' ? 30 : level === 'intermediate' ? 45 : 60;
+        sets = experienceLevel === 'beginner' ? 1 : experienceLevel === 'intermediate' ? 2 : 3;
+        reps = experienceLevel === 'beginner' ? 30 : experienceLevel === 'intermediate' ? 45 : 60;
       }
+      // Scale this lift by its MI complexity/difficulty, not the catalog label alone.
+      const miRx = applyMiDemandToPrescription(
+        { sets, reps, restTime },
+        exerciseData,
+        experienceLevel,
+        { goal: resolvedGoal, role: 'general' }
+      );
+      sets = miRx.sets;
+      reps = miRx.reps;
+      restTime = miRx.restTime;
       // Goal-based rep caps — heavy compounds stop rep creep and progress via load
       if (exerciseCategory === 'strength') {
         const exShape = {
@@ -1229,7 +1265,11 @@ export default function WorkoutScreen({
       const sorted = [...focusFilteredMain].sort(
         (a, b) => (exerciseIsCompoundLift(b) ? 1 : 0) - (exerciseIsCompoundLift(a) ? 1 : 0)
       );
-      const compounds = sorted.filter(exerciseIsCompoundLift);
+      const compounds = orderPlanExercisesForExperience(
+        sorted.filter(exerciseIsCompoundLift),
+        (ex) => getExerciseData(ex.name),
+        experienceLevel
+      );
       const isolations = sorted.filter(ex => !exerciseIsCompoundLift(ex));
 
       const mainLiftSource = compounds.length > 0 ? compounds[0] : sorted[0];
@@ -1241,7 +1281,7 @@ export default function WorkoutScreen({
       let accessory = isolations
         .filter(ex => ex.name !== mainLiftSource?.name && !secondary.some(s => s.name === ex.name))
         .map(ex => ({ ...ex }));
-      const targetAccessoryCount = level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5;
+      const targetAccessoryCount = sessionShape.accessoryCount;
       const used = new Set([...mainLift, ...secondary, ...accessory].map(e => e.name));
 
       // MI support accessories (≤1): stability/control stimulus without replacing hypertrophy work
@@ -1294,19 +1334,28 @@ export default function WorkoutScreen({
         }
       }
 
+      const prescribeRole = (
+        ex: Exercise,
+        role: 'main' | 'secondary' | 'accessory' | 'finisher',
+        roleSets: number
+      ): Exercise => {
+        const data = getExerciseData(ex.name);
+        const base = { sets: roleSets, reps: ex.reps, restTime: ex.restTime };
+        const next = data
+          ? applyMiDemandToPrescription(base, data, experienceLevel, {
+              goal: resolvedGoal,
+              role,
+            })
+          : base;
+        return { ...ex, sets: next.sets, reps: next.reps, restTime: next.restTime };
+      };
+
       return {
-        mainLift: (mainLift.length > 0 ? mainLift : sorted.slice(0, 1).map(ex => ({ ...ex }))).map(ex => ({
-          ...ex,
-          sets: level === 'beginner' ? 3 : level === 'intermediate' ? 4 : 5,
-        })),
-        secondary: secondary.map(ex => ({
-          ...ex,
-          sets: level === 'beginner' ? 3 : 4,
-        })),
-        accessory: accessory.map(ex => ({
-          ...ex,
-          sets: level === 'beginner' ? 2 : level === 'intermediate' ? 3 : 4,
-        })),
+        mainLift: (mainLift.length > 0 ? mainLift : sorted.slice(0, 1).map(ex => ({ ...ex }))).map(
+          (ex) => prescribeRole(ex, 'main', sessionShape.mainLiftSets)
+        ),
+        secondary: secondary.map((ex) => prescribeRole(ex, 'secondary', sessionShape.secondarySets)),
+        accessory: accessory.map((ex) => prescribeRole(ex, 'accessory', sessionShape.accessorySets)),
         finisher,
       };
     };

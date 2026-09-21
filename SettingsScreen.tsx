@@ -63,7 +63,7 @@ import type { Auth } from 'firebase/auth';
 import { useUserSettings } from './SettingsProvider';
 import { useSubscription } from './src/context/SubscriptionContext';
 import { tierLabel } from './src/constants/featureTiers';
-import { formatStripePlanLabel } from './src/services/betaAccessService';
+import { formatStripePlanLabel, openPasswordResetPage } from './src/services/betaAccessService';
 import {
   loadCoachingProfile,
   saveCoachingProfileDraft,
@@ -400,15 +400,21 @@ export default function SettingsScreen({
         </TouchableOpacity>
       ) : null}
 
-      {stripeStatus?.active ? (
-        <TouchableOpacity
-          style={styles.subscriptionPrimaryBtn}
-          onPress={() => void manageBilling()}
-          activeOpacity={0.88}
-        >
-          <Text style={styles.subscriptionPrimaryBtnText}>Manage billing</Text>
-        </TouchableOpacity>
-      ) : null}
+      <TouchableOpacity
+        style={styles.subscriptionPrimaryBtn}
+        onPress={() => void manageBilling()}
+        activeOpacity={0.88}
+      >
+        <Text style={styles.subscriptionPrimaryBtnText}>Manage subscription</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.subscriptionSecondaryBtn}
+        onPress={() => void openPasswordResetPage()}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.subscriptionSecondaryBtnText}>Reset password</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.subscriptionSecondaryBtn} onPress={() => restorePurchases()} activeOpacity={0.7}>
         <Text style={styles.subscriptionSecondaryBtnText}>Restore purchases</Text>

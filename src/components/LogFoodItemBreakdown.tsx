@@ -1,5 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Pressable,
+  Keyboard,
+  Platform,
+  type TextInput as RNTextInput,
+} from 'react-native';
+import { AppTextInput as TextInput } from './AppTextInput';
 import { AppTheme } from '../theme/appVisualTheme';
 import type { LogFoodItem } from '../types/nutritionLogging';
 import {
@@ -7,12 +17,20 @@ import {
   scaledMacrosForLogFoodItem,
   sumLogFoodItemMacros,
 } from '../utils/logFoodItems';
+import {
+  NUMERIC_INPUT_ACCESSORY_ID,
+  setNumericAccessoryChain,
+} from '../keyboard/NumericInputAccessory';
+
+type MacroField = 'protein' | 'carbs' | 'fat';
 
 type Props = {
   items: LogFoodItem[];
   onChange: (items: LogFoodItem[]) => void;
   /** When the user removes the last remaining item (e.g. delete the whole meal). */
   onRemoveLastItem?: () => void;
+  /** Scroll the sheet so the focused field stays above the keyboard. */
+  onInputFocus?: (input: RNTextInput) => void;
 };
 
 /** Human-friendly quantity string (supports decimals like 0.5 / 1.5). */
@@ -32,7 +50,7 @@ function parseQtyDraft(text: string): number | null {
   return Math.round(n * 1000) / 1000;
 }
 
-function sanitizeQtyInput(text: string): string {
+function sanitizeDecimalInput(text: string): string {
   // Allow digits and a single decimal point so users can type 1.5 / .5 freely.
   let cleaned = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
   const firstDot = cleaned.indexOf('.');
@@ -43,15 +61,42 @@ function sanitizeQtyInput(text: string): string {
   return cleaned;
 }
 
-function parseMacro(text: string): number {
-  const n = parseFloat(text.replace(/,/g, ''));
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : 0;
+function parseMacroDraft(text: string): number | null {
+  const cleaned = text.trim().replace(/,/g, '');
+  if (cleaned === '' || cleaned === '.') return null;
+  if (!/^\d*\.?\d*$/.test(cleaned)) return null;
+  const n = parseFloat(cleaned);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 10) / 10;
 }
 
-export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem }: Props) {
+function formatMacro(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '0';
+  return String(Math.round(n * 10) / 10);
+}
+
+type ItemField = 'name' | 'amount' | 'qty' | MacroField;
+
+export default function LogFoodItemBreakdown({
+  items,
+  onChange,
+  onRemoveLastItem,
+  onInputFocus,
+}: Props) {
   const totals = sumLogFoodItemMacros(items);
   /** Draft qty text per item so partial decimals ("1.", ".5") don't snap back to 1. */
   const [qtyDraftById, setQtyDraftById] = useState<Record<string, string>>({});
+  /** Draft macro text so ".", "10.", and clears stay visible while typing. */
+  const [macroDraftById, setMacroDraftById] = useState<
+    Record<string, Partial<Record<MacroField, string>>>
+  >({});
+
+  const nameRefs = useRef<Record<string, RNTextInput | null>>({});
+  const amountRefs = useRef<Record<string, RNTextInput | null>>({});
+  const qtyRefs = useRef<Record<string, RNTextInput | null>>({});
+  const proteinRefs = useRef<Record<string, RNTextInput | null>>({});
+  const carbsRefs = useRef<Record<string, RNTextInput | null>>({});
+  const fatRefs = useRef<Record<string, RNTextInput | null>>({});
 
   useEffect(() => {
     const ids = new Set(items.map((item) => item.id));
@@ -60,6 +105,15 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
       const next: Record<string, string> = {};
       for (const [id, text] of Object.entries(prev)) {
         if (ids.has(id)) next[id] = text;
+        else changed = true;
+      }
+      return changed || Object.keys(next).length !== Object.keys(prev).length ? next : prev;
+    });
+    setMacroDraftById((prev) => {
+      let changed = false;
+      const next: Record<string, Partial<Record<MacroField, string>>> = {};
+      for (const [id, draft] of Object.entries(prev)) {
+        if (ids.has(id)) next[id] = draft;
         else changed = true;
       }
       return changed || Object.keys(next).length !== Object.keys(prev).length ? next : prev;
@@ -76,7 +130,7 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
       : formatQty(item.quantity);
 
   const handleQtyChange = (id: string, text: string) => {
-    const cleaned = sanitizeQtyInput(text);
+    const cleaned = sanitizeDecimalInput(text);
     setQtyDraftById((prev) => ({ ...prev, [id]: cleaned }));
     const parsed = parseQtyDraft(cleaned);
     if (parsed != null) {
@@ -109,6 +163,44 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
     updateItem(id, { [field]: Math.round((scaledValue / q) * 10) / 10 });
   };
 
+  const macroTextFor = (item: LogFoodItem, field: MacroField, scaledValue: number): string => {
+    const draft = macroDraftById[item.id]?.[field];
+    if (draft != null) return draft;
+    return formatMacro(scaledValue);
+  };
+
+  const handleMacroChange = (id: string, field: MacroField, text: string) => {
+    const cleaned = sanitizeDecimalInput(text);
+    setMacroDraftById((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], [field]: cleaned },
+    }));
+    const parsed = parseMacroDraft(cleaned);
+    if (parsed != null) {
+      const baseField =
+        field === 'protein' ? 'baseProtein' : field === 'carbs' ? 'baseCarbs' : 'baseFat';
+      updateScaledMacro(id, baseField, parsed);
+    }
+  };
+
+  const commitMacro = (id: string, field: MacroField, scaledValue: number) => {
+    const draft = macroDraftById[id]?.[field];
+    const finalVal = draft != null ? parseMacroDraft(draft) ?? 0 : scaledValue;
+    const baseField =
+      field === 'protein' ? 'baseProtein' : field === 'carbs' ? 'baseCarbs' : 'baseFat';
+    updateScaledMacro(id, baseField, finalVal);
+    setMacroDraftById((prev) => {
+      const current = prev[id];
+      if (!current || current[field] == null) return prev;
+      const nextDraft = { ...current };
+      delete nextDraft[field];
+      const next = { ...prev };
+      if (Object.keys(nextDraft).length === 0) delete next[id];
+      else next[id] = nextDraft;
+      return next;
+    });
+  };
+
   const removeItem = (id: string) => {
     if (items.length <= 1) {
       onRemoveLastItem?.();
@@ -123,6 +215,49 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
       createLogFoodItem({ name: 'New item', amount: '1 serving', baseProtein: 0, baseCarbs: 0, baseFat: 0 }),
     ]);
   };
+
+  const refFor = (id: string, field: ItemField): RNTextInput | null => {
+    if (field === 'name') return nameRefs.current[id] ?? null;
+    if (field === 'amount') return amountRefs.current[id] ?? null;
+    if (field === 'qty') return qtyRefs.current[id] ?? null;
+    if (field === 'protein') return proteinRefs.current[id] ?? null;
+    if (field === 'carbs') return carbsRefs.current[id] ?? null;
+    return fatRefs.current[id] ?? null;
+  };
+
+  const fieldOrder: ItemField[] = ['name', 'amount', 'qty', 'protein', 'carbs', 'fat'];
+
+  const neighbor = (itemIndex: number, field: ItemField, dir: -1 | 1): RNTextInput | null => {
+    const fieldIndex = fieldOrder.indexOf(field);
+    const nextFieldIndex = fieldIndex + dir;
+    if (nextFieldIndex >= 0 && nextFieldIndex < fieldOrder.length) {
+      return refFor(items[itemIndex].id, fieldOrder[nextFieldIndex]);
+    }
+    const nextItem = items[itemIndex + dir];
+    if (!nextItem) return null;
+    return refFor(nextItem.id, dir === 1 ? 'name' : 'fat');
+  };
+
+  const focusNeighbor = (itemIndex: number, field: ItemField, dir: -1 | 1) => {
+    const target = neighbor(itemIndex, field, dir);
+    if (target) target.focus();
+    else Keyboard.dismiss();
+  };
+
+  const handleFieldFocus = (itemIndex: number, field: ItemField, input: RNTextInput | null) => {
+    if (input) onInputFocus?.(input);
+    setNumericAccessoryChain({
+      focusPrev: neighbor(itemIndex, field, -1) ? () => focusNeighbor(itemIndex, field, -1) : undefined,
+      focusNext: neighbor(itemIndex, field, 1) ? () => focusNeighbor(itemIndex, field, 1) : undefined,
+    });
+  };
+
+  const numericPadProps = (itemIndex: number, field: ItemField) => ({
+    inputAccessoryViewID: Platform.OS === 'ios' ? NUMERIC_INPUT_ACCESSORY_ID : undefined,
+    returnKeyType: (neighbor(itemIndex, field, 1) ? 'next' : 'done') as 'next' | 'done',
+    blurOnSubmit: false,
+    onSubmitEditing: () => focusNeighbor(itemIndex, field, 1),
+  });
 
   return (
     <View style={styles.panel}>
@@ -149,29 +284,49 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
 
             <Text style={styles.fieldLabel}>Food</Text>
             <TextInput
+              ref={(node) => {
+                nameRefs.current[item.id] = node;
+              }}
               style={styles.textInput}
               value={item.name}
               onChangeText={(text) => updateItem(item.id, { name: text })}
               placeholder="Item name"
               placeholderTextColor={AppTheme.textFaint}
               autoCapitalize="sentences"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => focusNeighbor(index, 'name', 1)}
+              onFocus={() => handleFieldFocus(index, 'name', nameRefs.current[item.id])}
             />
 
             <View style={styles.amountQtyRow}>
               <View style={styles.amountCol}>
                 <Text style={styles.fieldLabel}>Amount</Text>
                 <TextInput
+                  ref={(node) => {
+                    amountRefs.current[item.id] = node;
+                  }}
                   style={styles.textInput}
                   value={item.amount}
                   onChangeText={(text) => updateItem(item.id, { amount: text })}
                   placeholder="e.g. 1 cup, 6 oz"
                   placeholderTextColor={AppTheme.textFaint}
                   autoCapitalize="none"
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => focusNeighbor(index, 'amount', 1)}
+                  onFocus={() => handleFieldFocus(index, 'amount', amountRefs.current[item.id])}
                 />
               </View>
-              <View style={styles.qtyCol}>
+              <Pressable
+                style={styles.qtyCol}
+                onPress={() => qtyRefs.current[item.id]?.focus()}
+              >
                 <Text style={styles.fieldLabel}>× Qty</Text>
                 <TextInput
+                  ref={(node) => {
+                    qtyRefs.current[item.id] = node;
+                  }}
                   style={styles.textInput}
                   value={qtyTextFor(item)}
                   onChangeText={(text) => handleQtyChange(item.id, text)}
@@ -181,44 +336,73 @@ export default function LogFoodItemBreakdown({ items, onChange, onRemoveLastItem
                   keyboardType="decimal-pad"
                   selectTextOnFocus
                   accessibilityLabel={`Quantity multiplier for ${item.name}`}
+                  onFocus={() => handleFieldFocus(index, 'qty', qtyRefs.current[item.id])}
+                  {...numericPadProps(index, 'qty')}
                 />
-              </View>
+              </Pressable>
             </View>
 
             <View style={styles.macroRow}>
-              <View style={styles.macroCol}>
+              <Pressable
+                style={styles.macroCol}
+                onPress={() => proteinRefs.current[item.id]?.focus()}
+              >
                 <Text style={styles.macroLabel}>P (g)</Text>
                 <TextInput
+                  ref={(node) => {
+                    proteinRefs.current[item.id] = node;
+                  }}
                   style={[styles.macroInput, styles.macroProtein]}
-                  value={String(scaled.protein)}
-                  onChangeText={(text) => updateScaledMacro(item.id, 'baseProtein', parseMacro(text))}
+                  value={macroTextFor(item, 'protein', scaled.protein)}
+                  onChangeText={(text) => handleMacroChange(item.id, 'protein', text)}
+                  onBlur={() => commitMacro(item.id, 'protein', scaled.protein)}
                   keyboardType="decimal-pad"
                   placeholder="0"
                   placeholderTextColor={AppTheme.textFaint}
+                  onFocus={() => handleFieldFocus(index, 'protein', proteinRefs.current[item.id])}
+                  {...numericPadProps(index, 'protein')}
                 />
-              </View>
-              <View style={styles.macroCol}>
+              </Pressable>
+              <Pressable
+                style={styles.macroCol}
+                onPress={() => carbsRefs.current[item.id]?.focus()}
+              >
                 <Text style={styles.macroLabel}>C (g)</Text>
                 <TextInput
+                  ref={(node) => {
+                    carbsRefs.current[item.id] = node;
+                  }}
                   style={[styles.macroInput, styles.macroCarbs]}
-                  value={String(scaled.carbs)}
-                  onChangeText={(text) => updateScaledMacro(item.id, 'baseCarbs', parseMacro(text))}
+                  value={macroTextFor(item, 'carbs', scaled.carbs)}
+                  onChangeText={(text) => handleMacroChange(item.id, 'carbs', text)}
+                  onBlur={() => commitMacro(item.id, 'carbs', scaled.carbs)}
                   keyboardType="decimal-pad"
                   placeholder="0"
                   placeholderTextColor={AppTheme.textFaint}
+                  onFocus={() => handleFieldFocus(index, 'carbs', carbsRefs.current[item.id])}
+                  {...numericPadProps(index, 'carbs')}
                 />
-              </View>
-              <View style={styles.macroCol}>
+              </Pressable>
+              <Pressable
+                style={styles.macroCol}
+                onPress={() => fatRefs.current[item.id]?.focus()}
+              >
                 <Text style={styles.macroLabel}>F (g)</Text>
                 <TextInput
+                  ref={(node) => {
+                    fatRefs.current[item.id] = node;
+                  }}
                   style={[styles.macroInput, styles.macroFat]}
-                  value={String(scaled.fat)}
-                  onChangeText={(text) => updateScaledMacro(item.id, 'baseFat', parseMacro(text))}
+                  value={macroTextFor(item, 'fat', scaled.fat)}
+                  onChangeText={(text) => handleMacroChange(item.id, 'fat', text)}
+                  onBlur={() => commitMacro(item.id, 'fat', scaled.fat)}
                   keyboardType="decimal-pad"
                   placeholder="0"
                   placeholderTextColor={AppTheme.textFaint}
+                  onFocus={() => handleFieldFocus(index, 'fat', fatRefs.current[item.id])}
+                  {...numericPadProps(index, 'fat')}
                 />
-              </View>
+              </Pressable>
             </View>
           </View>
         );
@@ -329,7 +513,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: AppTheme.inputBorder,
     paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    minHeight: 44,
     fontSize: 14,
     fontWeight: '600',
     color: AppTheme.textPrimary,
