@@ -40,6 +40,14 @@ import DiscomfortAssessmentFlow, {
 } from './src/components/movement/DiscomfortAssessmentFlow';
 import MovementResponseFeedbackModal from './src/components/movement/MovementResponseFeedbackModal';
 import { shouldPromptMovementResponseFeedback } from './src/services/MovementFeedbackLoopService';
+import EditSessionExercisesModal from './src/components/EditSessionExercisesModal';
+import { useExerciseRestPreferences } from './src/hooks/useExerciseRestPreferences';
+import { useSmartRestContext } from './src/hooks/useSmartRestContext';
+import { movementRestHint, suggestedRestForExerciseName } from './src/utils/smartExerciseRest';
+import {
+  confirmWorkoutEditScope,
+  persistExercisesToSavedPlan,
+} from './src/utils/sessionPlanExercises';
 
 /** Plyometric exercises (by id) — used when user wants athleticism, mobility, or stability */
 const PLYOMETRIC_EXERCISE_IDS = new Set([
@@ -223,6 +231,12 @@ export default function WorkoutScreen({
   const [coachingProfile, setCoachingProfile] = useState<CoachingProfile | null>(null);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const { showPredictiveWeight, autoRestTimer } = useUserSettings();
+  const [showEditExercisesModal, setShowEditExercisesModal] = useState(false);
+  const { resolveRestSeconds, setExerciseRest, isAutoApply } = useExerciseRestPreferences();
+  const smartRestContext = useSmartRestContext({
+    goal: currentWorkout?.goal,
+    level: currentWorkout?.level ?? coachingProfile?.experienceProfile?.level,
+  });
 
   const trackingExercises = useMemo(
     () => (currentWorkout?.exercises?.length ? buildTrackingExercises(currentWorkout.exercises) : []),
@@ -2701,6 +2715,106 @@ export default function WorkoutScreen({
     return true;
   };
 
+  const persistWorkoutExercisesIfRequested = async (
+    scope: 'session' | 'plan' | 'cancel',
+    exercises: Exercise[]
+  ) => {
+    if (scope !== 'plan' || !currentWorkout?.id) return;
+    const result = await persistExercisesToSavedPlan({
+      planId: currentWorkout.id,
+      exercises: exercises.map((ex) => ({
+        id: ex.id,
+        name: ex.name,
+        sets: ex.sets,
+        reps: ex.reps,
+        weight: ex.weight,
+        restTime: ex.restTime ?? 90,
+        category: ex.category,
+      })),
+      weekIndex: selectedDay != null ? 0 : undefined,
+      dayIndex: selectedDay ?? undefined,
+    });
+    if (!result.ok) {
+      Alert.alert(
+        'Saved for this workout',
+        'Couldn’t update the saved plan. The change stays on this session.'
+      );
+    }
+  };
+
+  const handleAddSessionExercise = async (data: ExerciseData) => {
+    if (!currentWorkout) return;
+    const scope = await confirmWorkoutEditScope({
+      actionTitle: 'Add exercise?',
+      detail: `Add ${data.name} to the end of this workout.`,
+      canUpdatePlan: savedPlans.some((plan) => plan.id === currentWorkout.id),
+    });
+    if (scope === 'cancel') return;
+    const restTime = resolveRestSeconds(
+      data.name,
+      suggestedRestForExerciseName(data.name, smartRestContext)
+    );
+    const category =
+      data.category === 'stability'
+        ? 'balance'
+        : data.category === 'cardio' || data.category === 'flexibility' || data.category === 'balance'
+          ? data.category
+          : 'strength';
+    const next: Exercise = {
+      id: data.id || `exercise-${Date.now()}`,
+      name: data.name,
+      sets: 3,
+      reps: 10,
+      weight: 0,
+      completed: false,
+      category,
+      restTime,
+    };
+    const nextExercises = [...currentWorkout.exercises, next];
+    setCurrentWorkout({ ...currentWorkout, exercises: nextExercises });
+    setExerciseLogs((prev) => [...prev, ...initExerciseLogs([next])]);
+    setCurrentExerciseIndex(Math.max(0, trackingExercises.length));
+    setCurrentSetIndex(0);
+    await persistWorkoutExercisesIfRequested(scope, nextExercises);
+  };
+
+  const handleRemoveSessionExercise = async (index: number) => {
+    if (!currentWorkout) return;
+    const removing = trackingExercises[index];
+    if (!removing) return;
+    if (removing.isWarmupBlock || removing.isCooldownBlock) {
+      Alert.alert('Keep this block', 'Warm-up and cool-down stay on the plan. Remove individual lifts instead.');
+      return;
+    }
+    const removable = trackingExercises.filter((ex) => !ex.isWarmupBlock && !ex.isCooldownBlock);
+    if (removable.length <= 1) {
+      Alert.alert('Keep at least one', 'A workout needs at least one exercise.');
+      return;
+    }
+    const scope = await confirmWorkoutEditScope({
+      actionTitle: 'Remove exercise?',
+      detail: `Remove ${removing.name} from this workout.`,
+      canUpdatePlan: savedPlans.some((plan) => plan.id === currentWorkout.id),
+    });
+    if (scope === 'cancel') return;
+    let nextExercises = currentWorkout.exercises.filter(
+      (ex) => ex.id !== removing.id && ex.name !== removing.name
+    );
+    if (nextExercises.length === currentWorkout.exercises.length) {
+      nextExercises = currentWorkout.exercises.filter((_, i) => i !== index);
+    }
+    const nextLogs = exerciseLogs.filter((_, i) => i !== index);
+    const nextIndex = Math.min(
+      index < currentExerciseIndex ? currentExerciseIndex - 1 : currentExerciseIndex,
+      Math.max(0, trackingExercises.length - 2)
+    );
+    setCurrentWorkout({ ...currentWorkout, exercises: nextExercises });
+    setExerciseLogs(nextLogs);
+    setCurrentExerciseIndex(Math.max(0, nextIndex));
+    setCurrentSetIndex(0);
+    await persistWorkoutExercisesIfRequested(scope, nextExercises);
+  };
+
   const updateCurrentSetWeight = (nextWeight: number) => {
     if (!exerciseLogs[currentExerciseIndex]) return;
     const newLogs = [...exerciseLogs];
@@ -3280,6 +3394,43 @@ export default function WorkoutScreen({
                     priorReps={exerciseLogs[currentExerciseIndex].sets[currentSetIndex - 1]?.reps || trackingExercises[currentExerciseIndex]?.reps || 0}
                     showPredictiveWeight={showPredictiveWeight}
                     autoRestTimer={autoRestTimer}
+                    restDurationSeconds={resolveRestSeconds(
+                      trackingExercises[currentExerciseIndex]?.name || '',
+                      trackingExercises[currentExerciseIndex]?.restTime ||
+                        suggestedRestForExerciseName(
+                          trackingExercises[currentExerciseIndex]?.name || '',
+                          smartRestContext
+                        )
+                    )}
+                    suggestedRestSeconds={suggestedRestForExerciseName(
+                      trackingExercises[currentExerciseIndex]?.name || '',
+                      smartRestContext
+                    )}
+                    restHint={movementRestHint(
+                      { name: trackingExercises[currentExerciseIndex]?.name },
+                      suggestedRestForExerciseName(
+                        trackingExercises[currentExerciseIndex]?.name || '',
+                        smartRestContext
+                      ),
+                      smartRestContext
+                    )}
+                    onRestDurationChange={(seconds) => {
+                      const name = trackingExercises[currentExerciseIndex]?.name;
+                      if (!name) return;
+                      setCurrentWorkout((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              exercises: prev.exercises.map((ex) =>
+                                ex.name === name ? { ...ex, restTime: seconds } : ex
+                              ),
+                            }
+                          : prev
+                      );
+                      if (isAutoApply(name)) {
+                        void setExerciseRest(name, seconds, true);
+                      }
+                    }}
                     onWeightChange={updateCurrentSetWeight}
                     onRepsChange={updateCurrentSetReps}
                     onLogSet={handleSetComplete}
@@ -3342,6 +3493,14 @@ export default function WorkoutScreen({
                   );
                 }}
               />
+              <TouchableOpacity
+                style={styles.editExercisesButton}
+                onPress={() => setShowEditExercisesModal(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Add or remove exercises"
+              >
+                <Text style={styles.editExercisesButtonText}>Add or remove exercises</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Notes */}
@@ -3402,6 +3561,24 @@ export default function WorkoutScreen({
         visible={discomfortVisible}
         exerciseName={discomfortExerciseName}
         onClose={() => setDiscomfortVisible(false)}
+      />
+
+      <EditSessionExercisesModal
+        visible={showEditExercisesModal}
+        exercises={trackingExercises.map((ex) => ({
+          id: ex.id,
+          name: ex.name,
+          sets: ex.sets,
+          reps: ex.reps,
+          canRemove: !ex.isWarmupBlock && !ex.isCooldownBlock,
+        }))}
+        onClose={() => setShowEditExercisesModal(false)}
+        onAdd={(data) => {
+          void handleAddSessionExercise(data);
+        }}
+        onRemove={(index) => {
+          void handleRemoveSessionExercise(index);
+        }}
       />
 
       <MovementResponseFeedbackModal
@@ -3880,6 +4057,20 @@ const styles = StyleSheet.create({
   },
   exerciseList: {
     marginBottom: 30,
+  },
+  editExercisesButton: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#00ff88',
+    backgroundColor: '#143d2a',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  editExercisesButtonText: {
+    color: '#00ff88',
+    fontSize: 16,
+    fontWeight: '700',
   },
   exerciseListTitle: {
     fontSize: 20,

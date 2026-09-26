@@ -25,6 +25,7 @@ import { saveUserData, loadUserData } from './src/utils/userStorage';
 import { useActiveWorkout } from './src/context/ActiveWorkoutContext';
 import { deleteSavedWorkoutPlan } from './src/utils/savedWorkoutPlanActions';
 import { exerciseDatabase } from './src/data/exerciseDatabase';
+import RestDurationPicker from './src/components/RestDurationPicker';
 import { AppTheme } from './src/theme/appVisualTheme';
 import {
   type CustomExercise,
@@ -1884,14 +1885,10 @@ export default function BuildYourOwnWorkoutScreen({
                     </View>
                   ) : null}
                   <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Rest (seconds)</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="60"
-                      placeholderTextColor="#666"
-                      keyboardType="numeric"
-                      value={configRestTime}
-                      onChangeText={setConfigRestTime}
+                    <Text style={styles.modalLabel}>Rest between sets</Text>
+                    <RestDurationPicker
+                      valueSeconds={parseInt(configRestTime, 10) || 60}
+                      onChange={(seconds) => setConfigRestTime(String(seconds))}
                     />
                   </View>
                 </View>

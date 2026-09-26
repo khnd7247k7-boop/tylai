@@ -18,9 +18,20 @@ import { useSmallWins } from './src/context/SmallWinsContext';
 import { exerciseDatabase, getExerciseData, ExerciseData } from './src/data/exerciseDatabase';
 import ExerciseVideoPlayer from './src/components/ExerciseVideoPlayer';
 import RestTimerModal, { REST_TIMER_ENABLED_STORAGE_KEY } from './src/components/RestTimerModal';
+import RestDurationPicker from './src/components/RestDurationPicker';
+import EditSessionExercisesModal from './src/components/EditSessionExercisesModal';
 import StretchHoldTracker from './src/components/StretchHoldTracker';
 import ExerciseNamePickerModal from './src/components/workout/ExerciseNamePickerModal';
 import { suggestExerciseNames } from './src/utils/exerciseNameMatch';
+import { useExerciseRestPreferences } from './src/hooks/useExerciseRestPreferences';
+import { useSmartRestContext } from './src/hooks/useSmartRestContext';
+import { formatRestDuration } from './src/utils/exerciseRestTimer';
+import { movementRestHint, suggestedRestForExerciseName } from './src/utils/smartExerciseRest';
+import {
+  confirmWorkoutEditScope,
+  exerciseFromLibrary,
+  persistExercisesToSavedPlan,
+} from './src/utils/sessionPlanExercises';
 import {
   persistExerciseSubstitutionInSavedPlan,
   type ExerciseSubstitutionPersistTarget,
@@ -149,12 +160,46 @@ export default function ProgramExecutionScreen({
   const [restTimerEnabled, setRestTimerEnabled] = useState(true);
   const [restModalVisible, setRestModalVisible] = useState(false);
   const [restModalSeconds, setRestModalSeconds] = useState(90);
+  const [restApplyToExercise, setRestApplyToExercise] = useState(false);
+  const [showEditExercisesModal, setShowEditExercisesModal] = useState(false);
+  const { resolveRestSeconds, isAutoApply, setExerciseRest } = useExerciseRestPreferences();
+  const smartRestContext = useSmartRestContext({
+    goal: program?.category === 'muscle_building' ? 'muscle_gain' : program?.category,
+    level: program?.level,
+  });
   const initializedProgramIdRef = useRef<string | null>(
     resumeSnapshot ? program.id : null
   );
   const skipNextProgressSyncRef = useRef(Boolean(resumeSnapshot));
   const onProgressChangeRef = useRef(onProgressChange);
   onProgressChangeRef.current = onProgressChange;
+
+  const applyRestToExerciseSets = (exerciseIndex: number, seconds: number) => {
+    setExerciseData((prev) => {
+      if (!prev[exerciseIndex]) return prev;
+      const next = [...prev];
+      next[exerciseIndex] = {
+        ...next[exerciseIndex],
+        sets: next[exerciseIndex].sets.map((set) => ({ ...set, restTime: seconds })),
+      };
+      return next;
+    });
+  };
+
+  const handleRestDurationChange = (seconds: number, exerciseIndex: number, exerciseName: string) => {
+    setRestModalSeconds(seconds);
+    applyRestToExerciseSets(exerciseIndex, seconds);
+    if (isAutoApply(exerciseName)) {
+      void setExerciseRest(exerciseName, seconds, true);
+    }
+  };
+
+  const handleRestApplyChange = (apply: boolean, exerciseName: string, seconds: number) => {
+    setRestApplyToExercise(apply);
+    if (!exerciseName) return;
+    void setExerciseRest(exerciseName, seconds, apply);
+    if (apply) applyRestToExerciseSets(currentExerciseIndex, seconds);
+  };
 
   // Only reset when a different workout program is loaded — not on every parent re-render.
   useEffect(() => {
@@ -177,7 +222,15 @@ export default function ProgramExecutionScreen({
           setNumber: index + 1,
           reps: exercise.reps,
           weight: exercise.weight || 0,
-          restTime: exercise.restTime,
+          restTime: resolveRestSeconds(
+            exercise.name,
+            Number(exercise.restTime) > 0
+              ? exercise.restTime
+              : suggestedRestForExerciseName(exercise.name, {
+                  goal: program?.category === 'muscle_building' ? 'muscle_gain' : program?.category,
+                  level: program?.level,
+                })
+          ),
           completed: false,
         })),
       }));
@@ -349,6 +402,105 @@ export default function ProgramExecutionScreen({
   }
   
   const currentProgram = modifiedProgram || program;
+
+  const persistIfRequested = async (scope: 'session' | 'plan' | 'cancel', exercises: Exercise[]) => {
+    if (scope !== 'plan') return;
+    if (!persistTarget?.planId) {
+      Alert.alert(
+        'Saved for this workout',
+        'This isn’t in My Plans, so the change stays on this session only.'
+      );
+      return;
+    }
+    try {
+      const result = await persistExercisesToSavedPlan({
+        planId: persistTarget.planId,
+        weekIndex: persistTarget.weekIndex,
+        dayIndex: persistTarget.dayIndex,
+        exercises,
+      });
+      if (!result.ok) {
+        Alert.alert(
+          'Couldn’t update program',
+          'The change still applies to this session. Try editing the plan from Build Your Own Workout.'
+        );
+        return;
+      }
+      if (result.updatedPlan && onProgramPermanentlyUpdated) {
+        onProgramPermanentlyUpdated(result.updatedPlan);
+      }
+    } catch (error) {
+      console.error('Error updating saved plan exercises:', error);
+      Alert.alert('Plan not updated', 'The change is still on this workout.');
+    }
+  };
+
+  const handleAddSessionExercise = async (data: ExerciseData) => {
+    const scope = await confirmWorkoutEditScope({
+      actionTitle: 'Add exercise?',
+      detail: `Add ${data.name} to the end of this workout.`,
+      canUpdatePlan: Boolean(persistTarget?.planId),
+    });
+    if (scope === 'cancel') return;
+
+    const restTime = resolveRestSeconds(
+      data.name,
+      suggestedRestForExerciseName(data.name, smartRestContext)
+    );
+    const nextExercise = exerciseFromLibrary(data, restTime, {
+      sets: 3,
+      reps: 10,
+      weight: 0,
+    });
+    const nextExercises = [...currentProgram.exercises, nextExercise];
+    const setCount = Math.max(1, resolveSetSlotCount(nextExercise.sets));
+    const nextData = [
+      ...exerciseData,
+      {
+        exerciseId: nextExercise.id,
+        name: nextExercise.name,
+        sets: Array.from({ length: setCount }, (_, index) => ({
+          setNumber: index + 1,
+          reps: nextExercise.reps,
+          weight: nextExercise.weight || 0,
+          restTime,
+          completed: false,
+        })),
+      },
+    ];
+    setModifiedProgram({ ...currentProgram, exercises: nextExercises });
+    setExerciseData(nextData);
+    setCurrentExerciseIndex(nextExercises.length - 1);
+    setCurrentSetIndex(0);
+    await persistIfRequested(scope, nextExercises);
+  };
+
+  const handleRemoveSessionExercise = async (index: number) => {
+    if (currentProgram.exercises.length <= 1) {
+      Alert.alert('Keep at least one', 'A workout needs at least one exercise.');
+      return;
+    }
+    const removing = currentProgram.exercises[index];
+    if (!removing) return;
+    const scope = await confirmWorkoutEditScope({
+      actionTitle: 'Remove exercise?',
+      detail: `Remove ${removing.name} from this workout.`,
+      canUpdatePlan: Boolean(persistTarget?.planId),
+    });
+    if (scope === 'cancel') return;
+
+    const nextExercises = currentProgram.exercises.filter((_, i) => i !== index);
+    const nextData = exerciseData.filter((_, i) => i !== index);
+    const nextIndex = Math.min(
+      index < currentExerciseIndex ? currentExerciseIndex - 1 : currentExerciseIndex,
+      nextExercises.length - 1
+    );
+    setModifiedProgram({ ...currentProgram, exercises: nextExercises });
+    setExerciseData(nextData);
+    setCurrentExerciseIndex(Math.max(0, nextIndex));
+    setCurrentSetIndex(0);
+    await persistIfRequested(scope, nextExercises);
+  };
 
   // Function to find similar exercises for substitution
   const findSimilarExercises = (exerciseName: string): ExerciseData[] => {
@@ -702,7 +854,12 @@ export default function ProgramExecutionScreen({
     };
     const restSec = isStretchLoggingExercise(currentProgram.exercises[exerciseIndex] ?? {})
       ? 0
-      : Math.max(0, newData[exerciseIndex].sets[setIndex].restTime ?? 90);
+      : resolveRestSeconds(
+          newData[exerciseIndex].name,
+          Number(newData[exerciseIndex].sets[setIndex].restTime) > 0
+            ? newData[exerciseIndex].sets[setIndex].restTime
+            : suggestedRestForExerciseName(newData[exerciseIndex].name, smartRestContext)
+        );
 
     const next = findNextSupersetCursor(
       currentProgram.exercises,
@@ -727,6 +884,7 @@ export default function ProgramExecutionScreen({
     // the cardio sheet used to swallow the Done/Finish tap.
 
     if (restTimerEnabled && next != null && restSec > 0) {
+      setRestApplyToExercise(isAutoApply(newData[exerciseIndex].name));
       setRestModalSeconds(restSec);
       setRestModalVisible(true);
     }
@@ -1023,7 +1181,18 @@ export default function ProgramExecutionScreen({
 
       {/* Progress */}
       <View style={styles.progressSection}>
-        <Text style={styles.progressText}>{getCompletionRate()}% Complete</Text>
+        <View style={styles.progressHeaderRow}>
+          <Text style={styles.progressText}>{getCompletionRate()}% Complete</Text>
+          {healthMetricsEnabled && currentHeartRate ? (
+            <View
+              style={styles.heartRateChip}
+              accessibilityLabel={`Heart rate ${currentHeartRate} beats per minute`}
+            >
+              <Text style={styles.heartRateChipValue}>{currentHeartRate}</Text>
+              <Text style={styles.heartRateChipUnit}>bpm</Text>
+            </View>
+          ) : null}
+        </View>
         <View style={styles.progressBar}>
           <View 
             style={[
@@ -1032,13 +1201,6 @@ export default function ProgramExecutionScreen({
             ]} 
           />
         </View>
-        {/* Real-time Heart Rate Display */}
-        {healthMetricsEnabled && currentHeartRate && (
-          <View style={styles.heartRateDisplay}>
-            <Text style={styles.heartRateLabel}>Heart Rate</Text>
-            <Text style={styles.heartRateValue}>{currentHeartRate} bpm</Text>
-          </View>
-        )}
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -1101,6 +1263,7 @@ export default function ProgramExecutionScreen({
           <Text style={styles.exerciseInstructions}>{currentExercise.instructions}</Text>
           )}
           {!isStretchLoggingExercise(currentExercise) && (
+          <>
           <View style={styles.restTimerRow}>
             <Text style={styles.restTimerLabel}>Rest timer</Text>
             <Switch
@@ -1113,6 +1276,64 @@ export default function ProgramExecutionScreen({
               thumbColor={restTimerEnabled ? '#00ff88' : '#888'}
             />
           </View>
+          <View style={styles.restPresetBlock}>
+            <Text style={styles.restPresetLabel}>
+              Rest between sets · {formatRestDuration(
+                resolveRestSeconds(
+                  currentExercise.name,
+                  currentExerciseData?.sets[currentSetIndex]?.restTime ??
+                    currentExercise.restTime ??
+                    suggestedRestForExerciseName(currentExercise.name, smartRestContext)
+                )
+              )}
+            </Text>
+            <Text style={styles.restPresetHint}>
+              {movementRestHint(
+                { name: currentExercise.name, category: currentExercise.category },
+                suggestedRestForExerciseName(currentExercise.name, smartRestContext),
+                smartRestContext
+              )}
+            </Text>
+            <RestDurationPicker
+              valueSeconds={resolveRestSeconds(
+                currentExercise.name,
+                currentExerciseData?.sets[currentSetIndex]?.restTime ??
+                  currentExercise.restTime ??
+                  suggestedRestForExerciseName(currentExercise.name, smartRestContext)
+              )}
+              suggestedSeconds={suggestedRestForExerciseName(currentExercise.name, smartRestContext)}
+              onChange={(seconds) => {
+                handleRestDurationChange(seconds, currentExerciseIndex, currentExercise.name);
+              }}
+            />
+            <View style={styles.restApplyRow}>
+              <View style={styles.restApplyCopy}>
+                <Text style={styles.restApplyLabel}>Always use this rest for this exercise</Text>
+                <Text style={styles.restApplyHint}>
+                  Saved rest wins over the suggestion next time you train {currentExercise.name}
+                </Text>
+              </View>
+              <Switch
+                value={isAutoApply(currentExercise.name)}
+                onValueChange={(apply) =>
+                  handleRestApplyChange(
+                    apply,
+                    currentExercise.name,
+                    resolveRestSeconds(
+                      currentExercise.name,
+                      currentExerciseData?.sets[currentSetIndex]?.restTime ??
+                        currentExercise.restTime ??
+                        suggestedRestForExerciseName(currentExercise.name, smartRestContext)
+                    )
+                  )
+                }
+                trackColor={{ false: '#444', true: '#006644' }}
+                thumbColor={isAutoApply(currentExercise.name) ? '#00ff88' : '#888'}
+                accessibilityLabel={`Always use this rest time for ${currentExercise.name}`}
+              />
+            </View>
+          </View>
+          </>
           )}
           
           {/* Show only current set */}
@@ -1405,6 +1626,14 @@ export default function ProgramExecutionScreen({
             );
           }) || null;
           })()}
+          <TouchableOpacity
+            style={styles.editExercisesButton}
+            onPress={() => setShowEditExercisesModal(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Add or remove exercises"
+          >
+            <Text style={styles.editExercisesButtonText}>Add or remove exercises</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Notes */}
@@ -1437,7 +1666,55 @@ export default function ProgramExecutionScreen({
       <RestTimerModal
         visible={restModalVisible}
         seconds={restModalSeconds}
+        exerciseName={currentExercise?.name}
+        applyToExercise={restApplyToExercise}
+        suggestedSeconds={
+          currentExercise
+            ? suggestedRestForExerciseName(currentExercise.name, smartRestContext)
+            : undefined
+        }
+        suggestionHint={
+          currentExercise
+            ? movementRestHint(
+                { name: currentExercise.name, category: currentExercise.category },
+                suggestedRestForExerciseName(currentExercise.name, smartRestContext),
+                smartRestContext
+              )
+            : undefined
+        }
+        onApplyToExerciseChange={(apply) =>
+          handleRestApplyChange(
+            apply,
+            currentExercise?.name ?? '',
+            restModalSeconds
+          )
+        }
+        onDurationChange={(seconds) =>
+          handleRestDurationChange(
+            seconds,
+            currentExerciseIndex,
+            currentExercise?.name ?? ''
+          )
+        }
         onDismiss={() => setRestModalVisible(false)}
+      />
+
+      <EditSessionExercisesModal
+        visible={showEditExercisesModal}
+        exercises={(currentProgram.exercises || []).map((ex) => ({
+          id: ex.id,
+          name: ex.name,
+          sets: ex.sets,
+          reps: ex.reps,
+          canRemove: (currentProgram.exercises || []).length > 1,
+        }))}
+        onClose={() => setShowEditExercisesModal(false)}
+        onAdd={(data) => {
+          void handleAddSessionExercise(data);
+        }}
+        onRemove={(index) => {
+          void handleRemoveSessionExercise(index);
+        }}
       />
 
       {/* Exercise Video Modal */}
@@ -1777,15 +2054,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   progressSection: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     backgroundColor: '#2a2a2a',
-    marginBottom: 20,
+    marginBottom: 8,
+  },
+  progressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    gap: 8,
   },
   progressText: {
     fontSize: 16,
     color: '#fff',
-    marginBottom: 10,
-    textAlign: 'center',
+    flex: 1,
   },
   progressBar: {
     height: 8,
@@ -1797,24 +2081,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#00ff88',
     borderRadius: 4,
   },
-  heartRateDisplay: {
-    marginTop: 15,
-    padding: 12,
-    backgroundColor: '#1a1a1a',
+  heartRateChip: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 8,
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#00ff88',
+    backgroundColor: '#143d2a',
   },
-  heartRateLabel: {
-    fontSize: 12,
-    color: '#888',
-    marginBottom: 4,
-  },
-  heartRateValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  heartRateChipValue: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#00ff88',
+  },
+  heartRateChipUnit: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#9ad9b0',
+    marginLeft: 3,
   },
   scrollView: {
     flex: 1,
@@ -2367,6 +2653,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     flex: 1,
     marginRight: 8,
+  },
+  restPresetBlock: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#242424',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    gap: 10,
+  },
+  restPresetLabel: {
+    color: '#ccc',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  restPresetHint: {
+    color: '#9ad9b0',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  restApplyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  restApplyCopy: {
+    flex: 1,
+  },
+  restApplyLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  restApplyHint: {
+    color: '#888',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  editExercisesButton: {
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#00ff88',
+    backgroundColor: '#143d2a',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  editExercisesButtonText: {
+    color: '#00ff88',
+    fontSize: 16,
+    fontWeight: '700',
   },
   exerciseNameRow: {
     flexDirection: 'row',

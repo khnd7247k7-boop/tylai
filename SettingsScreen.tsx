@@ -837,8 +837,9 @@ export default function SettingsScreen({
           <View style={styles.settingLabelContainer}>
             <Text style={styles.settingLabel}>Auto rest timer after set log</Text>
             <Text style={styles.settingDescription}>
-              Automatically starts a 2:00 timer when a set is logged. The timer keeps running if you
-              lock your phone or leave the app.
+              Automatically starts a rest timer when a set is logged. Suggested time scales with the
+              exercise, your experience, and recovery. You can always change it, and it keeps running
+              if you lock your phone or leave the app.
             </Text>
           </View>
           <Switch

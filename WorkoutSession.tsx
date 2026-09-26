@@ -16,6 +16,8 @@ import {
   scheduleRestCompleteNotification,
 } from './src/utils/restTimerNotifications';
 import { useUserSettings } from './SettingsProvider';
+import RestDurationPicker from './src/components/RestDurationPicker';
+import { DEFAULT_REST_SECONDS } from './src/utils/exerciseRestTimer';
 
 type WorkoutSessionProps = {
   sessionKey: string;
@@ -28,6 +30,10 @@ type WorkoutSessionProps = {
   priorReps: number;
   showPredictiveWeight: boolean;
   autoRestTimer: boolean;
+  restDurationSeconds?: number;
+  suggestedRestSeconds?: number;
+  restHint?: string;
+  onRestDurationChange?: (seconds: number) => void;
   onWeightChange: (nextWeight: number) => void;
   onRepsChange: (nextReps: number) => void;
   onLogSet: () => boolean;
@@ -36,8 +42,6 @@ type WorkoutSessionProps = {
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-const DEFAULT_REST_SECONDS = 120;
 
 function remainingFromEndsAt(endsAtMs: number): number {
   return Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000));
@@ -54,13 +58,17 @@ export default function WorkoutSession({
   priorReps,
   showPredictiveWeight,
   autoRestTimer,
+  restDurationSeconds = DEFAULT_REST_SECONDS,
+  suggestedRestSeconds,
+  restHint,
+  onRestDurationChange,
   onWeightChange,
   onRepsChange,
   onLogSet,
 }: WorkoutSessionProps) {
   const { restTimerAlert } = useUserSettings();
   const [isLogged, setIsLogged] = useState(false);
-  const [restSeconds, setRestSeconds] = useState(DEFAULT_REST_SECONDS);
+  const [restSeconds, setRestSeconds] = useState(restDurationSeconds);
   const endsAtRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -78,8 +86,8 @@ export default function WorkoutSession({
       void cancelRestCompleteNotification();
     }
     setIsLogged(false);
-    setRestSeconds(DEFAULT_REST_SECONDS);
-  }, [clearTick]);
+    setRestSeconds(restDurationSeconds);
+  }, [clearTick, restDurationSeconds]);
 
   const syncRest = useCallback(() => {
     if (!endsAtRef.current) return;
@@ -117,8 +125,8 @@ export default function WorkoutSession({
     void cancelRestCompleteNotification();
     endsAtRef.current = 0;
     setIsLogged(false);
-    setRestSeconds(DEFAULT_REST_SECONDS);
-  }, [sessionKey, clearTick]);
+    setRestSeconds(restDurationSeconds);
+  }, [sessionKey, clearTick, restDurationSeconds]);
 
   useEffect(() => {
     return () => {
@@ -144,9 +152,10 @@ export default function WorkoutSession({
     if (!didLog) return;
     setIsLogged(true);
     if (autoRestTimer) {
-      const endsAt = Date.now() + DEFAULT_REST_SECONDS * 1000;
+      const duration = Math.max(15, restDurationSeconds);
+      const endsAt = Date.now() + duration * 1000;
       endsAtRef.current = endsAt;
-      setRestSeconds(DEFAULT_REST_SECONDS);
+      setRestSeconds(duration);
       if (restTimerAlert) {
         void scheduleRestCompleteNotification(endsAt);
       } else {
@@ -154,7 +163,7 @@ export default function WorkoutSession({
       }
     } else {
       endsAtRef.current = 0;
-      setRestSeconds(DEFAULT_REST_SECONDS);
+      setRestSeconds(restDurationSeconds);
     }
   };
 
@@ -175,6 +184,17 @@ export default function WorkoutSession({
         <Counter label="Weight" value={currentWeight} onChange={onWeightChange} hit={hit} />
         <Counter label="Reps" value={currentReps} onChange={onRepsChange} hit={hit} />
       </View>
+
+      {onRestDurationChange ? (
+        <View style={styles.restPickerWrap}>
+          {restHint ? <Text style={styles.restHint}>{restHint}</Text> : null}
+          <RestDurationPicker
+            valueSeconds={restDurationSeconds}
+            suggestedSeconds={suggestedRestSeconds}
+            onChange={onRestDurationChange}
+          />
+        </View>
+      ) : null}
 
       <Pressable
         style={[styles.logButton, isLogged && styles.logButtonDone]}
@@ -279,4 +299,6 @@ const styles = StyleSheet.create({
   },
   restLabel: { color: '#9ad9b0', fontWeight: '600' },
   restClock: { color: '#4ADE80', fontSize: 18, fontWeight: '700' },
+  restPickerWrap: { gap: 8 },
+  restHint: { color: '#9ad9b0', fontSize: 12, lineHeight: 17 },
 });
